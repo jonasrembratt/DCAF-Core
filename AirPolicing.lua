@@ -1135,9 +1135,34 @@ function SetRoute( controllable, route )
 
 end
 
-function LandHere( controllable )
+function LandHere( controllable, category, coalition )
 
-  -- TODO
+  local group = getGroup( controllable )
+  if (group == nil) then
+    Debug("LandHere-? :: group not found: "..Dump(controllable).." :: EXITS")
+    return
+  end
+
+  category = category or Airbase.Category.AIRDROME
+
+  local ab = group:GetCoordinate():GetClosestAirbase2( category, coalition )
+  if (ab == nil) then
+    Debug("LandHere-"..group.GroupName.." :: no near airbase found :: EXITS")
+    return
+  end
+
+  local abCoord = ab:GetCoordinate()
+  local landHere = {
+    ["airdromeId"] = ab.AirdromeID,
+    ["action"] = "Landing",
+    ["alt_type"] = "BARO",
+    ["y"] = abCoord.y,
+    ["x"] = abCoord.x,
+    ["alt"] = ab:GetAltitude(),
+    ["type"] = "Land",
+   }
+  group:Route( { landHere } )
+  Debug("LandHere-"..group.GroupName.." :: is tasked with landing at airbase ("..ab.AirbaseName..") :: DONE")
 
 end
 
