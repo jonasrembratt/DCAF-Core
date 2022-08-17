@@ -19,228 +19,214 @@ function GetUnitFromGroupName( groupName, unitNumber )
 
 end
 
--- unit :: MOOSE UNIT to be monitored for 'follow me' signals
--- callback :: function to be invoked when unit performs 'follow me' signal
--- options
-local OnFollowMeSignalledDefaults = {
-  timeout = 120,        -- interceptor have 2 minutes to signal 'follow me' / 'deviate now'
-  rockWings = {         -- when set, script looks for interceptor rocking wings to signal 'follow me' (daytime procedure)
-    minBankAngle = 20,  -- minimum bank angle to register a "wing rock"
-    minCount = 2,       -- no. of times wings must be rocked to trigger callback
-    maxTime = 7         -- max time (seconds) to perform wing rock maneuvre
-  },
-  pumpLights = true,    -- when set, script looks for interceptor flashing nav lights to signal 'follow me' (night time procedure)
-  interval = 0.5        -- how often (seconds) the timer polls for interceptors,
-}
---[[
-  returns object:
-  {
-    interceptor -- MOOSE UNIT (signalled 'follow me')
-  }
-]]--
-function OnFollowMeSignal( unit, callback, options )
+local function isString( value ) return type(value) == "string" end
+local function isNumber( value ) return type(value) == "number" end
+local function isNumber( value ) return type(value) == "table" end
 
-  if (unit == nil) then
-    Debug("OnFollowMeSignal :: unit not specified :: EXITS")
-    return
+
+local function mkIndent( count )
+  local s = ""
+  for i=count,0,-1 do
+    s = s.." "
   end
-  local unitName = unit:GetName()
-  if (callback == nil) then 
-    Debug("OnFollowMeSignal-"..groupName.." :: missing callback function :: EXITS")
-    return 
-  end
-
-  options = options or OnFollowMeSignalledDefaults
-  local rockWings = options.rockWings ~= nil
-  local pumpLights = options.pumpLights or OnFollowMeSignalledDefaults.pumpLights
-  local minBankAngle = options.rockWings.minBankAngle or OnFollowMeSignalledDefaults.rockWings.minBankAngle
-  local minCount = options.rockWings.minCount or OnFollowMeSignalledDefaults.rockWings.minBankAngle
-  local maxTime = options.rockWings.maxTime or OnFollowMeSignalledDefaults.rockWings.maxTime
-  local interval = options.interval or OnFollowMeSignalledDefaults.interval
-  local timeout = options.timeout or OnFollowMeSignalledDefaults.timeout
-
-  local lastMaxBankAngle = nil
-  local bankEvents = {}
-  local isWingRockComplete = false
-  local isLightsFlashedComplete = false 
-  local countEvents = 0
-  local timer = nil
-  local startTime = UTILS.SecondsOfToday()
-  local totalTime = 0
-
-  Debug("OnFollowMeSignal-"..unitName.." :: BEGINS :: "..string.format("rockWings="..tostring(rockWings ~= nil).."; minBankAngle=%d, minCount=%d, maxTime=%d", minBankAngle, minCount, maxTime))
-
-  local function DetectFollowMeSignal()
-
-    local timestamp = UTILS.SecondsOfToday()
-    totalTime = timestamp - startTime
-    local bankAngle = unit:GetRoll()
-    Debug("OnFollowMeSignal :: '"..unitName.." :: "..string.format("bankAngle=%d; lastMaxBankAngle=%d", bankAngle, lastMaxBankAngle or 0))
-    local absBankAngle = math.abs(bankAngle)
-
-    function IsWingRockComplete() 
-      table.insert(bankEvents, 1, timestamp)
-      countEvents = countEvents+1
-      --  Debug("OnFollowMeSignal :: '"..unitName.." :: events="..tostring(countEvents))
-      if (countEvents < minCount) then return false end
-      local prevTimestamp = bankEvents[minCount]
-      local timeSpent = timestamp - prevTimestamp
-      if (timeSpent > maxTime) then
-      --  Debug("OnFollowMeSignal :: '"..unitName.." :: TOO SLOW")
-        return false
-      end
-      return true
-    end
-
-    if (rockWings) then
-      if (bankAngle >= 0) then
-        -- positive bank angle ...
-        if (bankAngle >= minBankAngle and (lastMaxBankAngle == nil or lastMaxBankAngle < 0)) then
-          lastMaxBankAngle = bankAngle
-          isWingRockComplete = IsWingRockComplete(timestamp)
-        end
-      else
-        -- negative bank angle ...
-        if (absBankAngle >= minBankAngle and (lastMaxBankAngle == nil or lastMaxBankAngle > 0)) then
-          lastMaxBankAngle = bankAngle
-          isWingRockComplete = IsWingRockComplete(timestamp)
-        end
-      end
-    end
-
-    --[[
-    if (pumpLights) then
-      local device = GetDevice(11) -- note device '11' is for F-16C external lights. Each model might have different device for this
-      BASE:E(device)
-    end
-    ]]--
-
-    if (not isWingRockComplete and not isLightsFlashedComplete) then
-      if (totalTime >= timeout) then
-        Debug("OnFollowMeSignal :: '"..unitName.." :: Times out :: Timer stops!")
-        timer:Stop()
-        bankEvents = nil
-      end
-      return
-    end
-
-    -- follow me signal detected ...
-    callback( { interceptor = unit } )
-    Debug("OnFollowMeSignal :: '"..unitName.." :: Follow-me signal detected! :: Timer stops!")
-    timer:Stop()
-    bankEvents = nil
-
-  end
-
-  timer = TIMER:New(DetectFollowMeSignal)
-  timer:Start(interval, interval)
-
+  return s
 end
 
-function OnInterceptorClosing( groupName, callback, options )
+function dump(o)
+  if type(o) ~= 'table' then
+      return tostring(o)
+  end
+
+  local s = "{ "
+  for k,v in pairs(o) do
+     if type(k) ~= 'number' then k = '"'..k..'"' end
+     s = s .. '['..k..'] = ' .. dump(v) .. ','
+  end
+  return s .. '} '
+end
+
+function dumpPretty(o, indentlvl, indentcount)
+  if type(o) ~= 'table' then
+      return tostring(o)
+  end
+
+  if (isNumber(indentlvl)) then indentlvl = indentlvl else indentlvl = 0 end
+  if (isNumber(indentcount)) then indentcount = indentcount else indentcount = 2 end
+  local indentLen = indentlvl * indentcount
+  local indent = mkIndent(indentLen)
+  local s = indent..'{\n'
+  local nxtIndent = mkIndent(indentLen + indentcount)
+  for k,v in pairs(o) do
+     if type(k) ~= 'number' then k = '"'..k..'"' end
+     s = s .. nxtIndent.. '['..k..'] = ' .. dump(v, indentlvl+1, indentcount) .. ',\n'
+  end
+  return s .. indent .. '}\n'
+end
+
+local NoMessage = "_none_"
+
+--[[
+OnApproaching
+  Monitors a group and scans a zone* around it for other groups aproaching it
+
+Parameters
+  groupName :: (string) Name of the group to be monitored
+  callback :: function to be invoked when group is detected inside the zone
+
+Callback method parameters
+  (object)
+  {
+    units :: (table with strings) Names of group(s) detected inside the zone
+    monitoredGroup :: (string) Name of monitored group (== 'groupName' parameter)
+    time :: (integer) The time (seconds since game time midnight) of the detection
+    stop :: (boolean, default=true) When set the monitoring will end after the latest callback invocation (can be set by calback function)
+  }
+]]--
+OnInsideGroupZoneDefaults = 
+{
+  monitoredUnitNo = 1,
+  zoneRadius = 250,
+  zoneOffset = {
+    relative_to_unit = true,
+    dx = -100,   -- longitudinal offset (positive = in front; negative = to the back)
+    dy = 0      -- latitudinal offset (positive = right; negative = left)
+  },
+  coalitions = { "blue" },
+  messageToDetected = NoMessage,
+  messageToDetectedDuration = 30,
+  interval = 5
+}
+function OnInsideGroupZone( groupName, callback, options )
   
   if ( groupName == nil) then
-    Debug("OnInterceptorClosing-? :: Group name missing :: EXITS")
+    Debug("OnInsideGroupZone-? :: Group name missing :: EXITS")
     return 
   end
   if (callback == nil) then 
-    Debug("OnInterceptorClosing-"..groupName.." :: missing callback function :: EXITS")
+    Debug("OnInsideGroupZone-"..groupName.." :: missing callback function :: EXITS")
     return 
   end
-  local intruderGroup = GROUP:FindByName( groupName )
-  if (intruderGroup == nil) then 
-    Debug("OnInterceptorClosing-"..groupName.." :: intruder group not found :: EXITS")
+  local monitoredGroup = GROUP:FindByName( groupName )
+  if (monitoredGroup == nil) then 
+    Debug("OnInsideGroupZone-"..groupName.." :: intruder group not found :: EXITS")
     return 
   end
-  local intruderUnit = intruderGroup:GetUnit(1) -- todo Consider making intruder unit (to be intercepted) configurable (options)
-  if (intruderUnit == nil) then 
-    Debug("OnInterceptorClosing-"..groupName.." :: intruder group unit #1 not found :: EXITS")
-    return 
-  end
+
+  options = options or OnInsideGroupZoneDefaults
+  local zoneRadius = options.zoneRadius or OnInsideGroupZoneDefaults.zoneRadius
+  local zoneOffset = options.zoneOffset or OnInsideGroupZoneDefaults.zoneOffset
+  local coalitions = options.coalitions or OnInsideGroupZoneDefaults.coalitions
+  local interval = options.interval or OnInsideGroupZoneDefaults.interval
   
-  local intruderUnitName = intruderUnit:GetName()
-  local zoneRadius = 600 -- todo make configurable (options)
-  local zoneOffset = {   -- todo make configurable (options)
-    relative_to_unit = true,
-    dx = -100,   -- longitudinal offset (positive = in front; negative = to the back)
-    dy = 0,      -- latitudinal offset (positive = right; negative = left)
-    dz = 5       -- vertical offset (positive = up; negative = down)
-  }
-  local coalitions = { "blue" } -- todo make configurable (options)
-  local interval = 5     -- todo make configurable (options)
+  local unitNo = options.monitoredUnitNo or OnInsideGroupZoneDefaults.monitoredUnitNo
+  local monitoredUnit = monitoredGroup:GetUnit(unitNo)
+  if (monitoredUnit == nil) then 
+    Debug("OnInsideGroupZone-"..groupName.." :: monitored group unit #"..tostring(unitNo).." not found :: EXITS")
+    return 
+  end
+
   local timer = nil
   local stopTimerAfter = 0
   local interceptingUnit = nil
-  local interceptZone = ZONE_UNIT:New(intruderUnitName.."-closing", intruderUnit, zoneRadius, zoneOffset)
+  local monitoredUnitName = monitoredUnit:GetName()
+  local interceptZone = ZONE_UNIT:New(monitoredUnitName.."-closing", monitoredUnit, zoneRadius, zoneOffset)
+  --[[ todo Deal with unit getting killed (end monitoring)
+  local groupDeadEvent = EVENT:OnEventForUnit( 
+    monitoredUnitName,
+    function()
+      Debug("OnInsideGroupZone-"..groupName.." :: Monitored unit () was killed :: EXITS")
+      stopTimerAfter = interval
+    end
+    )
+  ]]--
 
-  Debug("OnInterceptorClosing-"..groupName.." :: BEGINS :: "..string.format("zoneRadius=%d; interval=%d", zoneRadius, interval))
+  Debug("OnInsideGroupZone-"..groupName.." :: BEGINS :: "..string.format("zoneRadius=%d; interval=%d", zoneRadius, interval))
 
-  local function FindClosingInterceptors()
+  local function DetectUnits()
 
-    local interceptors = SET_UNIT:New()
+    monitoredUnit = monitoredGroup:GetUnit(unitNo)
+    if (monitoredUnit == nil) then
+      Debug("OnInsideGroupZone-"..groupName.." :: monitored group unit #"..tostring(unitNo).." not found (might be dead) :: Timer stopped!")
+      timer:Stop()      
+      return
+    end
+
+    local units = SET_UNIT:New()
       :FilterCategories({ "plane" })
       :FilterCoalitions( coalitions )
       :FilterZones( { interceptZone } )
       :FilterActive()
       :FilterOnce()
+    local timestamp = UTILS.SecondsOfToday()
   
     --[[
 
-    if the intruder belongs to interceptor(s) coalition it will be included in the `interceptors` set, so needs to be fitered out
+    if the detected unit belongs to interceptor(s) coalition it will be included in the `units` set, so needs to be fitered out
     also, oddly enough, the above filtering doesn't exclude groups flying vertically outside the radius 
     (zone appears to be cylinder rather than orb, not sure if that's a MOOSE bug)
     so we need to filter those out manually 
 
     ]]--
     
-    local pos = Unit.getByName(intruderUnitName):getPoint()
-    local intruderUnitMSL = pos.y
+    local pos = Unit.getByName(monitoredUnitName):getPoint()
+    local monitoredUnitMSL = pos.y
+    local detected = {}
+    local count = 0
 
-    interceptors:ForEach(
-      function(interceptor)
-        if (groupName == interceptor:GetGroup().GroupName) then
-          Debug("OnInterceptorClosing-"..groupName.." :: filters out intruder group units")
+    units:ForEach(
+      function(unit)
+        if (groupName == unit:GetGroup().GroupName) then
+          --Debug("OnInsideGroupZone-"..groupName.." :: filters out monitored group's units")
           return 
         end
-        local interceptorName = interceptor:GetName()
-        local pos = Unit.getByName(interceptorName):getPoint()
-        local interceptorUnitMSL = pos.y
-        local distance = math.abs(interceptorUnitMSL - intruderUnitMSL)
+        local unitName = unit:GetName()
+        local pos = Unit.getByName(unitName):getPoint()
+        local unitUnitMSL = pos.y
+        local distance = math.abs(unitUnitMSL - monitoredUnitMSL)
 
         if (distance > zoneRadius) then 
-          Debug("OnInterceptorClosing-"..groupName.." :: filters out "..interceptorName.." (vertically outside radius) :: EXITS")
+          Debug("OnInsideGroupZone-"..unitName.." :: filters out "..unitName.." (vertically outside radius) :: EXITS")
           return 
         end
-        interceptingUnit = interceptor
-      end, 
-      interceptors)
+        count = count+1
+        table.insert(detected, count, unit:GetName())
+      end)
 
     if (stopTimerAfter > 0) then
       stopTimerAfter = stopTimerAfter - interval
       if (stopTimerAfter <= 0) then
-        Debug("OnInterceptorClosing-"..groupName.." :: TIMER STOPPED")
+        Debug("OnInsideGroupZone-"..groupName.." :: TIMER STOPPED")
         timer:Stop()
       end
       return
     end
 
-    if (interceptingUnit ~= nil) then
-      stopTimerAfter = interval
-      Debug("OnInterceptorClosing-"..groupName.." :: Interception by "..interceptingUnit:GetName())
-      callback({
-        interceptorUnit = interceptingUnit,
-        intruderGroup = intruderGroup
-      })
+    if (count > 0) then
+      Debug("OnInsideGroupZone-"..groupName.." :: "..tostring(count).." units detected inside zone")
+      local args = {
+        units = detected,
+        monitoredGroup = groupName,
+        time = timestamp,
+        stop = true  
+      }
+      callback( args )
+      if (options.messageToDetected ~= NoMessage) then
+        MessageTo( detected, options.messageToDetected, options.messageToDetectedDuration )
+      end
+      if (args.stop) then
+        stopTimerAfter = interval
+      end
     end
 
   end
 
-  timer = TIMER:New(FindClosingInterceptors, interceptZone)
+  timer = TIMER:New(DetectUnits, interceptZone)
   timer:Start(interval, interval)
 end
 
-local OnInterceptedDefaults = {
--- options
+OnInterceptedDefaults = {
+  interceptedUnitNo = 1,
+  zoneRadius = 100,
   zoneOffset = {
     -- default intercept zone is 50 m radius, 55 meters in front of intruder aircraft
     relative_to_unit = true,
@@ -248,7 +234,6 @@ local OnInterceptedDefaults = {
     dy = 0,    -- latitudinal offset (positive = right; negative = left)
     dz = 5     -- vertical offset (positive = up; negative = down)
   },
-  zoneRadius = 100,
   coalitions = { "blue" },
   description = nil,
   delay = 4,         -- time (seconds) required for interceptor to be established in interceopt zone before interception is triggered
@@ -256,7 +241,7 @@ local OnInterceptedDefaults = {
 }
 function OnIntercepted( groupName, callback, options )
 
-  if ( groupName == nil) then
+  if (groupName == nil) then
     Debug("OnIntercepted-? :: Group name missing :: EXITS")
     return 
   end
@@ -264,17 +249,11 @@ function OnIntercepted( groupName, callback, options )
     Debug("OnIntercepted-"..groupName.." :: missing callback function :: EXITS")
     return 
   end
-  local intruderGroup = GROUP:FindByName( groupName )
-  if (intruderGroup == nil) then 
+  local monitoredGroup = GROUP:FindByName( groupName )
+  if (monitoredGroup == nil) then 
     Debug("OnIntercepted-"..groupName.." :: intruder group not found :: EXITS")
     return 
   end
-  local intruderUnit = intruderGroup:GetUnit(1) -- todo Consider making intruder unit (to be intercepted) configurable (options)
-  if (intruderUnit == nil) then 
-    Debug("OnIntercepted-"..groupName.." :: intruder group unit #1 not found :: EXITS")
-    return 
-  end
-  local intruderUnitName = intruderUnit:GetName()
 
   options = options or OnInterceptedDefaults
   local coalitions = options.coalitions or OnInterceptedDefaults.coalitions 
@@ -283,10 +262,18 @@ function OnIntercepted( groupName, callback, options )
   local interval = options.interval or OnInterceptedDefaults.interval
   local description = options.description
 
+  local unitNo = options.interceptedUnitNo or OnInterceptedDefaults.interceptedUnitNo
+  local intruderUnit = monitoredGroup:GetUnit(unitNo) 
+  if (intruderUnit == nil) then 
+    Debug("OnIntercepted-"..groupName.." :: intruder group unit #"..tostring(unitNo).." not found :: EXITS")
+    return 
+  end
+  local intruderUnitName = intruderUnit:GetName()
+
   local countIntercepts = 0
   local stopTimerAfter = 0
   local interceptorInfos = {} -- item structure = { establishedTimestamp=<seconds>, isDescriptionProvided=<bool> }
-  local intruderName = intruderGroup:GetName()
+  local intruderName = monitoredGroup:GetName()
   local zoneOffset = options.zoneOffset or OnInterceptedDefaults.zoneOffset
   local interceptingUnit = nil
   local timer = nil
@@ -298,6 +285,13 @@ function OnIntercepted( groupName, callback, options )
   
   local function FindInterceptors()
 
+    intruderUnit = monitoredGroup:GetUnit(unitNo) 
+    if (intruderUnit == nil) then
+      Debug("OnIntercepted-"..groupName.." :: monitored group unit #"..tostring(unitNo).." not found (might be dead) :: Timer stopped!")
+      timer:Stop()      
+      return
+    end
+
     local interceptors = SET_UNIT:New()
       :FilterCategories({ "plane" })
       :FilterCoalitions( coalitions )
@@ -315,19 +309,19 @@ function OnIntercepted( groupName, callback, options )
     ]]--
     
     local pos = Unit.getByName(intruderUnitName):getPoint()
-    local intruderUnitMSL = pos.y
+    local monitoredUnitMSL = pos.y
     local timestamp = UTILS.SecondsOfToday()
 
     interceptors:ForEach(
       function(interceptor)
         if (groupName == interceptor:GetGroup().GroupName) then
-          Debug("OnInterceptorClosing-"..groupName.." :: filters out intruder group units")
+          --Debug("OnIntercepted-"..groupName.." :: filters out intruder group units")
           return 
         end
         local interceptorName = interceptor:GetName()
         local pos = Unit.getByName(interceptorName):getPoint()
         local interceptorUnitMSL = pos.y
-        local distance = math.abs(interceptorUnitMSL - intruderUnitMSL)
+        local distance = math.abs(interceptorUnitMSL - monitoredUnitMSL)
 
         if (distance > zoneRadius) then 
           --Debug("OnIntercepted-"..groupName.." :: filters out "..interceptorName.." (vertically outside radius)")
@@ -366,8 +360,8 @@ function OnIntercepted( groupName, callback, options )
     if (interceptingUnit ~= nil) then
       stopTimerAfter = 3 -- seconds
       local result = {
-        intruderGroup = intruderGroup,
-        interceptorUnit = interceptingUnit
+        interceptedGroup = monitoredGroup.GroupName,
+        interceptingUnit = interceptingUnit:GetName()
       }
       Debug("OnIntercepted-"..groupName.." :: Intercepted by "..interceptingUnit:GetName())
       callback( result )
@@ -380,7 +374,7 @@ function OnIntercepted( groupName, callback, options )
 
 end
 
-local OnShowOfForceDefaults =
+OnShowOfForceDefaults =
 {
   -- options
   radius = 150,            -- in meters, max distance between interceptor and intruder for show of force oto trigger
@@ -393,9 +387,13 @@ local OnShowOfForceDefaults =
 }
 function OnShowOfForce( groupName, callback, options ) --, radius, minCount, minSpeedKts, coalitions, minTimeBetween, interval)
 
-  local intruderGroup = GROUP:FindByName( groupName )
-  if (intruderGroup == nil) then 
-    Debug("OnShowOfForce-? :: intruder group '"..groupName.."' not found :: EXITS")
+  if (groupName == nil) then
+    Debug("OnShowOfForce-? :: Group name missing :: EXITS")
+    return 
+  end
+  local monitoredGroup = GROUP:FindByName( groupName )
+  if (monitoredGroup == nil) then 
+    Debug("OnShowOfForce-"..groupName.." :: Group not found :: EXITS")
     return 
   end
   if (callback == nil) then 
@@ -417,8 +415,8 @@ function OnShowOfForce( groupName, callback, options ) --, radius, minCount, min
 
   Debug("OnShowOfForce-"..groupName.." :: BEGINS :: "..string.format("radius=%d; minSpeedKts=%d; minCount=%d, minTimeBetween=%d, description=%s", radius, minSpeedKts, minCount, minTimeBetween, description or ""))
 
-  local intruderName = intruderGroup:GetName()
-  local interceptZone = ZONE_GROUP:New(intruderName, intruderGroup, radius)
+  local intruderName = monitoredGroup:GetName()
+  local interceptZone = ZONE_GROUP:New(intruderName, monitoredGroup, radius)
   local interceptorsInfo = {}
 
   --[[ "InterceptorInfo":
@@ -446,7 +444,7 @@ function OnShowOfForce( groupName, callback, options ) --, radius, minCount, min
     -- (not sure if that's a MOOSE bug)
     -- so we need to filter those out manually 
     
-    local intruderCoord = intruderGroup:GetCoordinate()
+    local intruderCoord = monitoredGroup:GetCoordinate()
     local foundInterceptor = nil
     
     interceptors:ForEachGroup(
@@ -462,7 +460,7 @@ function OnShowOfForce( groupName, callback, options ) --, radius, minCount, min
         end
 
         if (groupName == interceptor.GroupName) then
-          Debug("OnShowOfForce-"..groupName.." :: filters out intruder from interceptors")
+          -- Debug("OnShowOfForce-"..groupName.." :: filters out intruder from interceptors")
           return 
         end
 
@@ -515,7 +513,7 @@ function OnShowOfForce( groupName, callback, options ) --, radius, minCount, min
     if (foundInterceptor ~= nil) then
       stopTimerAfter = 5 -- seconds
       local result = {
-        intruder = intruderGroup.GroupName,
+        intruder = monitoredGroup.GroupName,
         interceptors = { foundInterceptor }
       }
       Debug("OnShowOfForce-"..groupName.." :: Found interceptor '"..foundInterceptor.."'")
@@ -529,7 +527,176 @@ function OnShowOfForce( groupName, callback, options ) --, radius, minCount, min
 
 end
 
--- this is a convenient method to send a simple message to all interceptors in a OnIntercepted `result`
+--[[
+OnFollowMe - description
+    Monitors a unit for 'follow me' signalling (typically used in interception procedures). 
+    The unit can either rock its wings more than 20° trhee times (configurable values),
+    which is the normal daytime procedure, or turn its navigation lights on/off (WIP - not supported yet)
+    which is thr normal night time procedure.
+
+Parameters
+    unitName :: Name of the unit to be monitored
+    callback :: function to be invoked when unit performs 'follow me' signal
+    options :: (object, see OnFollowMeDefaults below for structure)
+]]--
+OnFollowMeDefaults = {
+  timeout = 120,        -- interceptor have 2 minutes to signal 'follow me' / 'deviate now'
+  rockWings = {         -- when set, script looks for interceptor rocking wings to signal 'follow me' (daytime procedure)
+    minBankAngle = 20,  -- minimum bank angle to register a "wing rock"
+    minCount = 2,       -- no. of times wings must be rocked to trigger callback
+    maxTime = 7         -- max time (seconds) to perform wing rock maneuvre
+  },
+  pumpLights = true,    -- when set, script looks for interceptor flashing nav lights to signal 'follow me' (night time procedure)
+  interval = 0.5,       -- how often (seconds) the timer polls for interceptors,
+  -- when set to positive number (of seconds) the 'follow me' signal will be triggered automatiucally after this time. 
+  -- Useful for testing wityh AI as interceptors
+  debugTimeoutTrigger = 0 
+}
+--[[
+  returns object:
+  {
+    interceptorUnit,  -- (string) Name of interceptor unit
+    escortedGroup     -- (string) Name of escorted group
+  }
+]]--
+function OnFollowMe( unitName, escortedGroupName, callback, options )
+
+  if (unitName == nil) then
+    Debug("OnFollowMe-? :: unitName not specified :: EXITS")
+    return
+  end
+  local unit = UNIT:FindByName( unitName )
+  if (unit == nil) then
+    Debug("OnFollowMe-"..unitName.." :: Unit was not found :: EXITS")
+    return
+  end
+  if (escortedGroupName == nil) then
+    Debug("OnFollowMe-"..groupName.." :: missing escortedGroupName :: EXITS")
+    return
+  end
+  local escortedGroup = GROUP:FindByName( escortedGroupName )
+  if (escortedGroup == nil) then
+    Debug("OnFollowMe-"..groupName.." :: Escorted group ("..escortedGroupName..") not found :: EXITS")
+    return
+  end
+  if (callback == nil) then 
+    Debug("OnFollowMe-"..groupName.." :: missing callback function :: EXITS")
+    return 
+  end
+
+  options = options or OnFollowMeDefaults
+  local rockWings = options.rockWings ~= nil
+  local pumpLights = options.pumpLights or OnFollowMeDefaults.pumpLights
+  local minBankAngle = options.rockWings.minBankAngle or OnFollowMeDefaults.rockWings.minBankAngle
+  local minCount = options.rockWings.minCount or OnFollowMeDefaults.rockWings.minBankAngle
+  local maxTime = options.rockWings.maxTime or OnFollowMeDefaults.rockWings.maxTime
+  local interval = options.interval or OnFollowMeDefaults.interval
+  local timeout = options.timeout or OnFollowMeDefaults.timeout
+  local autoTriggerTimeout = options.debugTimeoutTrigger or OnFollowMeDefaults.debugTimeoutTrigger
+
+Debug("autoTriggerTimeout = "..autoTriggerTimeout)
+
+  local lastMaxBankAngle = nil
+  local bankEvents = {}
+  local isWingRockComplete = false
+  local isLightsFlashedComplete = false 
+  local countEvents = 0
+  local timer = nil
+  local startTime = UTILS.SecondsOfToday()
+  local totalTime = 0
+
+  Debug("OnFollowMe-"..unitName.." :: BEGINS :: "..string.format("rockWings="..tostring(rockWings ~= nil).."; minBankAngle=%d, minCount=%d, maxTime=%d", minBankAngle, minCount, maxTime))
+
+  local function DetectFollowMeSignal()
+
+    local timestamp = UTILS.SecondsOfToday()
+    totalTime = timestamp - startTime
+    local bankAngle = unit:GetRoll()
+    Debug("OnFollowMe :: '"..unitName.." :: "..string.format("bankAngle=%d; lastMaxBankAngle=%d", bankAngle, lastMaxBankAngle or 0))
+    local absBankAngle = math.abs(bankAngle)
+
+    function IsWingRockComplete() 
+      table.insert(bankEvents, 1, timestamp)
+      countEvents = countEvents+1
+      --  Debug("OnFollowMe :: '"..unitName.." :: events="..tostring(countEvents))
+      if (countEvents < minCount) then return false end
+      local prevTimestamp = bankEvents[minCount]
+      local timeSpent = timestamp - prevTimestamp
+      if (timeSpent > maxTime) then
+      --  Debug("OnFollowMe :: '"..unitName.." :: TOO SLOW")
+        return false
+      end
+      return true
+    end
+
+    if (rockWings) then
+      if (bankAngle >= 0) then
+        -- positive bank angle ...
+        if (bankAngle >= minBankAngle and (lastMaxBankAngle == nil or lastMaxBankAngle < 0)) then
+          lastMaxBankAngle = bankAngle
+          isWingRockComplete = IsWingRockComplete(timestamp)
+        end
+      else
+        -- negative bank angle ...
+        if (absBankAngle >= minBankAngle and (lastMaxBankAngle == nil or lastMaxBankAngle > 0)) then
+          lastMaxBankAngle = bankAngle
+          isWingRockComplete = IsWingRockComplete(timestamp)
+        end
+      end
+    end
+
+    --[[
+    if (pumpLights) then
+      local device = GetDevice(11) -- note device '11' is for F-16C external lights. Each model might have different device for this
+      BASE:E(device)
+    end
+    ]]--
+
+    if (not isWingRockComplete and not isLightsFlashedComplete) then
+      if (totalTime >= timeout) then
+        Debug("OnFollowMe :: '"..unitName.." :: Times out :: Timer stops!")
+        timer:Stop()
+        bankEvents = nil
+      end
+    end
+    if (autoTriggerTimeout <= 0 or totalTime < autoTriggerTimeout) then
+      return
+    else
+      Debug("OnFollowMe :: '"..unitName.." :: Triggers automatically (debug)")
+    end
+
+    -- follow me signal detected ...
+    callback( 
+      { 
+        interceptor = unit:GetName(), 
+        follower = escortedGroupName 
+      })
+    Debug("OnFollowMe :: '"..unitName.." :: Follow-me signal detected! :: Timer stops!")
+    timer:Stop()
+    bankEvents = nil
+
+  end
+
+  timer = TIMER:New(DetectFollowMeSignal)
+  timer:Start(interval, interval)
+
+end
+
+local function IndexOfNamedWaypoint( route, name )
+  if (not isTable(route)) then return -1 end
+  if (not isString(name)) then return -1 end
+  local i = 1
+  for v,wp in pairs(route) do
+    if (wp["name"] == name) then
+      return 1
+    end
+    i = i+1
+  end
+  return -1
+end
+
+local ignoreMessagingGroups = {}
+-- this is a convenient method to send a simple message to groups, clients or lists of groups or clients
 function MessageTo( recipient, message, duration )
 
   if (recipient == nil) then
@@ -541,34 +708,199 @@ function MessageTo( recipient, message, duration )
     return
   end
   duration = duration or 5
-  if (type(recipient) ~= "string") then
-    if (recipient.ClassName == "GROUP") then
-      MESSAGE:New(message, duration):ToGroup(recipient)
-      Debug("MessageTo :: Group "..recipient.GroupName.."' :: "..message)
-    end
+
+  if (type(recipient) == "table") then
     if (recipient.ClassName == "UNIT") then
-      MESSAGE:New(message, duration):ToGroup(recipient:GetGroup())
-      Debug("MessageTo :: Unit Group "..recipient:GetName().."' :: "..message)
+      -- MOOSE doesn't support sending messages to units; send to group and ignore other units from same group ...
+      local group = recipient:GetGroup()
+      local isIgnored = ignoreMessagingGroups[group.GroupName] ~= nil
+      if (not isIgnored) then
+        MessageTo( group, message, duration )
+        ignoreMessagingGroups[group.GroupName] = group.GroupName
+      end
+      return
+    end
+    if (recipient.ClassName == "GROUP") then
+      local isIgnored = ignoreMessagingGroups[recipient.GroupName] ~= nil
+      if (isIgnored) then
+        Debug("MessageTo :: Group "..recipient.GroupName.." is ignored")
+        return
+      end
+      MESSAGE:New(message, duration):ToGroup(recipient)
+      Debug("MessageTo :: Group "..recipient.GroupName.." :: '"..message.."'")
+      return
     end
     if (recipient.ClassName == "CLIENT") then
       MESSAGE:New(message, duration):ToClient(recipient)
-      Debug("MessageTo :: Client "..recipient:GetName().."' :: "..message)
+      Debug("MessageTo :: Client "..recipient:GetName().." :: "..message.."'")
+      return
     end
+
+    for key, value in pairs(recipient) do
+      MessageTo( value, message, duration )
+    end
+    ignoreMessagingGroups = {}
     return
   end
+
   local group = GROUP:FindByName( recipient )
   if (group ~= nil) then
-    Debug("MessageTo"..recipient.." :: "..message)
-    MESSAGE:New(message, duration):ToGroup(group)
+    MessageTo( group, message, duration )
     return
   end
 
-  local unit = CLIENT:FindByName( recipient )
+  local unit = UNIT:FindByName( recipient )
   if (unit ~= nil) then
-    Debug("MessageTo-"..recipient.." :: "..message)
-    MESSAGE:New(message, duration):ToClient(unit)
+    MessageTo( unit, message, duration )
     return
   end
+
+  local function SendMessageToClient( recipient )
+    local unit = CLIENT:FindByName( recipient )
+    if (unit ~= nil) then
+      Debug("MessageTo-"..recipient.." :: "..message)
+      MESSAGE:New(message, duration):ToClient(unit)
+      return
+    end
+  end
+
+  if (pcall(SendMessageToClient(recipient))) then return end
   Debug("MessageTo-"..recipient.." :: Recipient not found")
 
+end
+
+local function CalcGroupOffset( group1, group2 )
+
+  local coord1 = group1:GetCoordinate()
+  local coord2 = group2:GetCoordinate()
+  return {
+    x = coord1.x-coord2.x,
+    y = coord1.y-coord2.y,
+    z = coord1.z-coord2.z
+  }
+
+end
+
+function Follow( followerName, leaderName, offset, lastWaypoint )
+
+  if (not isString(followerName)) then
+    Debug("FollowGroup-? :: Missing followerName :: EXITS")
+    return
+  end
+  local follower = GROUP:FindByName( followerName )
+  if (followerName == nil) then
+    follower = UNIT:FindByName( followerName )
+    if (follower == nil) then
+      Debug("FollowGroup-"..followerName.." :: Group not found="..followerName.." :: EXITS")
+      return
+    else
+      follower = follower:GetGroup()
+    end
+  end
+
+  if (not isString(leaderName)) then
+    Debug("FollowGroup-? :: Missing leaderName :: EXITS")
+    return
+  end
+  local escort = GROUP:FindByName( leaderName )
+  if (escort == nil) then
+    escort = UNIT:FindByName( leaderName )
+    if (escort == nil) then
+      Debug("FollowGroup-"..followerName.." :: Escort not found="..leaderName.." :: EXITS")
+      return
+    else
+      escort = escort:GetGroup()
+    end  
+  end
+
+  if (lastWaypoint == nil) then
+    local escortRoute = escort:CopyRoute()
+Debug("--->\n"..dumpPretty(escortRoute))
+    lastWaypoint = #escortRoute
+  end
+
+  local off = CalcGroupOffset(follower, escort)
+  if (offset ~= nil) then
+    off.x = offset.x or off.x
+    off.y = offset.y or off.y
+    off.z = offset.z or off.z
+  end
+  local task = follower:TaskFollow( escort, off, lastWaypoint)
+  follower:SetTask( task )
+  Debug("FollowGroup-"..followerName.." ::  Group is now following "..leaderName.." to WP #"..tostring(lastWaypoint))
+
+end
+
+local OnInterceptionDefaults = {
+  OnInsideZone = OnInsideGroupZoneDefaults,
+  OnIntercepted = OnInterceptedDefaults,
+  OnFollowMe = OnFollowMeDefaults,
+}
+
+--[[
+Sets the behavior for how the unit needs to rock its wings to signal 'follow me'
+
+Parameters
+  (object):
+  {
+    minBankAngle :: (integer; default = 20) The minimum bank angle needed to detect unit is rocking its wings
+    count :: (integer; default = 2) Number of times unit needs to bank to either side
+    duration :: (integer; default = 7) The maximum time (seconds) allowed to perform the whole wing rocking maneuvre
+    
+  }
+]]--
+
+function OnInterceptionDefaults:MessageOnApproaching( message )
+  if (not isString(message)) then return self end
+  self.OnInsideZone.messageToDetected = message
+  return self
+end
+
+function OnInterceptionDefaults:RockWingsBehavior( options )
+  if (options == nil) then return self end
+  self.OnFollowMe.rockWings.count = options.count or self.OnFollowMe.rockWings.count
+  self.OnFollowMe.rockWings.minBankAngle = options.minBankAngle or self.OnFollowMe.rockWings.minBankAngle
+  self.OnFollowMe.rockWings.maxTime = options.maxTime or self.OnFollowMe.rockWings.maxTime
+  return self
+end
+
+function OnInterceptionDefaults:FollowMeDebugTimeoutTrigger( timeout )
+  if (not isNumber(timeout)) then return self end
+  self.OnFollowMe.debugTimeoutTrigger = timeout
+  return self
+end
+
+function InterceptionOptions()
+  local options = routines.utils.deepCopy( OnInterceptionDefaults )
+  if (messageToApproachingInterceptors and messageToApproachingInterceptors ~= NoMessage) then
+    options.OnInsideZone.messageToDetected = messageToApproachingInterceptors
+  end
+  return options
+end
+
+function OnGroupIntercepted( groupName, callback, options )
+
+  if (groupName == nil) then
+    Debug("OnInterception-? :: Group name missing :: EXITS")
+    return 
+  end
+  if (callback == nil) then
+    Debug("OnInterception-"..groupName.." :: Callback function missing :: EXITS")
+    return 
+  end
+  options = options or OnInterceptionDefaults
+  OnInsideGroupZone( groupName,
+  function( closing )
+
+    OnIntercepted( closing.monitoredGroup, 
+      function( intercepted )
+
+        OnFollowMe(
+          intercepted.interceptingUnit, 
+          intercepted.interceptedGroup,
+          callback,
+          options.OnFollowMe)
+
+      end, options.OnIntercepted)
+    end, options.OnInsideZone)
 end
