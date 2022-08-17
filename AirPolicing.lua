@@ -21,8 +21,7 @@ end
 
 local function isString( value ) return type(value) == "string" end
 local function isNumber( value ) return type(value) == "number" end
-local function isNumber( value ) return type(value) == "table" end
-
+local function isTable( value ) return type(value) == "table" end
 
 local function mkIndent( count )
   local s = ""
@@ -32,41 +31,99 @@ local function mkIndent( count )
   return s
 end
 
-function dump(o)
-  if type(o) ~= 'table' then
-      return tostring(o)
+function Dump(value)
+  if type(value) ~= 'table' then
+      return tostring(value)
   end
 
   local s = "{ "
-  for k,v in pairs(o) do
+  for k,v in pairs(value) do
      if type(k) ~= 'number' then k = '"'..k..'"' end
      s = s .. '['..k..'] = ' .. dump(v) .. ','
   end
   return s .. '} '
 end
 
-function dumpPretty(o, indentlvl, indentcount)
-  if type(o) ~= 'table' then
-      return tostring(o)
+--[[
+Parameters
+  value :: (arbitrary) Value to be serialised and formatted
+  options :: (object)
+  {
+    asJson :: (bool; default = false) Set to serialize as JSON instead of lua (makes it easier to use with many online JSON analysis tools)
+    indentlvl :: (int; default = 0) Specifies indentation level 
+    indentcount :: (int; default = 2) Specifies indentation size (no. of spaces)
+  }
+]]--
+local DumpPrettyDefaults = {
+  asJson = false,
+  indentSize = 2
+}
+function DumpPretty(value, options)
+
+  options = options or DumpPrettyDefaults
+  local idtSize = options.indentSize or DumpPrettyDefaults.indentSize
+  local asJson = options.asJson or DumpPrettyDefaults.asJson
+ 
+  local function dumpRecursive(value, ilvl)
+    if type(value) ~= 'table' then
+      if (isString(value)) then
+        return '"' .. tostring(value) .. '"'
+      end
+      return tostring(value)
+    end
+
+    local s = '{\n'
+    local indent = mkIndent(ilvl * idtSize)
+    for k,v in pairs(value) do
+      if (asJson) then
+        s = s .. indent..'"'..k..'"'..' : '
+      else
+        if type(k) ~= 'number' then k = '"'..k..'"' end
+        s = s .. indent.. '['..k..'] = '
+      end
+      s = s .. dumpRecursive(v, ilvl+1, idtSize) .. ',\n'
+    end
+    return s .. mkIndent((ilvl-1) * idtSize) .. '}'
   end
 
-  if (isNumber(indentlvl)) then indentlvl = indentlvl else indentlvl = 0 end
-  if (isNumber(indentcount)) then indentcount = indentcount else indentcount = 2 end
-  local indentLen = indentlvl * indentcount
-  local indent = mkIndent(indentLen)
-  local s = indent..'{\n'
-  local nxtIndent = mkIndent(indentLen + indentcount)
-  for k,v in pairs(o) do
-     if type(k) ~= 'number' then k = '"'..k..'"' end
-     s = s .. nxtIndent.. '['..k..'] = ' .. dump(v, indentlvl+1, indentcount) .. ',\n'
+  return dumpRecursive(value, 0)
+
+end
+
+function DumpPrettyJson(value, options)
+  options = options or DumpPrettyDefaults
+  options.asJson = true
+  return DumpPretty(value, options)
+end
+
+--[[
+Resolves a GROUP from an arbitrary source
+]]--
+local function getGroup( source )
+
+  if (isString(source)) then
+    local group = GROUP:FindByName( source )
+    if (group ~= nil) then 
+      return group 
+    end
+    local unit = UNIT:FindByName( source )
+    if (unit == nil) then 
+      return nil 
+    end
+    return unit:GetGroup()
   end
-  return s .. indent .. '}\n'
+
+  if (not isTable(source)) then return nil end
+
+  if (source.ClassName == "GROUP") then return source end
+  if (source.ClassName == "UNIT") then return source:GetGroup() end
+
 end
 
 local NoMessage = "_none_"
 
 --[[
-OnApproaching
+OnInsideGroupZone
   Monitors a group and scans a zone* around it for other groups aproaching it
 
 Parameters
@@ -594,8 +651,6 @@ function OnFollowMe( unitName, escortedGroupName, callback, options )
   local timeout = options.timeout or OnFollowMeDefaults.timeout
   local autoTriggerTimeout = options.debugTimeoutTrigger or OnFollowMeDefaults.debugTimeoutTrigger
 
-Debug("autoTriggerTimeout = "..autoTriggerTimeout)
-
   local lastMaxBankAngle = nil
   local bankEvents = {}
   local isWingRockComplete = false
@@ -669,7 +724,7 @@ Debug("autoTriggerTimeout = "..autoTriggerTimeout)
     callback( 
       { 
         interceptor = unit:GetName(), 
-        follower = escortedGroupName 
+        intruder = escortedGroupName 
       })
     Debug("OnFollowMe :: '"..unitName.." :: Follow-me signal detected! :: Timer stops!")
     timer:Stop()
@@ -682,21 +737,11 @@ Debug("autoTriggerTimeout = "..autoTriggerTimeout)
 
 end
 
-local function IndexOfNamedWaypoint( route, name )
-  if (not isTable(route)) then return -1 end
-  if (not isString(name)) then return -1 end
-  local i = 1
-  for v,wp in pairs(route) do
-    if (wp["name"] == name) then
-      return 1
-    end
-    i = i+1
-  end
-  return -1
-end
 
 local ignoreMessagingGroups = {}
--- this is a convenient method to send a simple message to groups, clients or lists of groups or clients
+--[[ 
+Sends a simple message to groups, clients or lists of groups or clients
+]]--
 function MessageTo( recipient, message, duration )
 
   if (recipient == nil) then
@@ -709,6 +754,7 @@ function MessageTo( recipient, message, duration )
   end
   duration = duration or 5
 
+  -- TODO consider getGroup() method here instead:
   if (type(recipient) == "table") then
     if (recipient.ClassName == "UNIT") then
       -- MOOSE doesn't support sending messages to units; send to group and ignore other units from same group ...
@@ -781,56 +827,6 @@ local function CalcGroupOffset( group1, group2 )
 
 end
 
-function Follow( followerName, leaderName, offset, lastWaypoint )
-
-  if (not isString(followerName)) then
-    Debug("FollowGroup-? :: Missing followerName :: EXITS")
-    return
-  end
-  local follower = GROUP:FindByName( followerName )
-  if (followerName == nil) then
-    follower = UNIT:FindByName( followerName )
-    if (follower == nil) then
-      Debug("FollowGroup-"..followerName.." :: Group not found="..followerName.." :: EXITS")
-      return
-    else
-      follower = follower:GetGroup()
-    end
-  end
-
-  if (not isString(leaderName)) then
-    Debug("FollowGroup-? :: Missing leaderName :: EXITS")
-    return
-  end
-  local escort = GROUP:FindByName( leaderName )
-  if (escort == nil) then
-    escort = UNIT:FindByName( leaderName )
-    if (escort == nil) then
-      Debug("FollowGroup-"..followerName.." :: Escort not found="..leaderName.." :: EXITS")
-      return
-    else
-      escort = escort:GetGroup()
-    end  
-  end
-
-  if (lastWaypoint == nil) then
-    local escortRoute = escort:CopyRoute()
-Debug("--->\n"..dumpPretty(escortRoute))
-    lastWaypoint = #escortRoute
-  end
-
-  local off = CalcGroupOffset(follower, escort)
-  if (offset ~= nil) then
-    off.x = offset.x or off.x
-    off.y = offset.y or off.y
-    off.z = offset.z or off.z
-  end
-  local task = follower:TaskFollow( escort, off, lastWaypoint)
-  follower:SetTask( task )
-  Debug("FollowGroup-"..followerName.." ::  Group is now following "..leaderName.." to WP #"..tostring(lastWaypoint))
-
-end
-
 local OnInterceptionDefaults = {
   OnInsideZone = OnInsideGroupZoneDefaults,
   OnIntercepted = OnInterceptedDefaults,
@@ -838,10 +834,23 @@ local OnInterceptionDefaults = {
 }
 
 --[[
-Sets the behavior for how the unit needs to rock its wings to signal 'follow me'
+Sets the textual message to be sent to units entering the monitored zone around a group
 
 Parameters
-  (object):
+  message :: The message to be sent
+]]--
+function OnInterceptionDefaults:MessageOnApproaching( message )
+  if (not isString(message)) then return self end
+  self.OnInsideZone.messageToDetected = message
+  return self
+end
+
+--[[
+OnInterceptionDefaults:RockWingsBehavior
+  Sets the behavior for how the unit needs to rock its wings to signal 'follow me'
+
+Parameters
+  optiona :: (object) :
   {
     minBankAngle :: (integer; default = 20) The minimum bank angle needed to detect unit is rocking its wings
     count :: (integer; default = 2) Number of times unit needs to bank to either side
@@ -849,13 +858,6 @@ Parameters
     
   }
 ]]--
-
-function OnInterceptionDefaults:MessageOnApproaching( message )
-  if (not isString(message)) then return self end
-  self.OnInsideZone.messageToDetected = message
-  return self
-end
-
 function OnInterceptionDefaults:RockWingsBehavior( options )
   if (options == nil) then return self end
   self.OnFollowMe.rockWings.count = options.count or self.OnFollowMe.rockWings.count
@@ -864,12 +866,34 @@ function OnInterceptionDefaults:RockWingsBehavior( options )
   return self
 end
 
+--[[
+OnInterceptionDefaults:FollowMeDebugTimeoutTrigger
+  Sets a timeout value to be tracked after a unit was established in the intercept zone. 
+  When the timer triggers the 'follow me' event will automatically be triggered.
+  This is mainly useful for debugging using AI interceptors that can't be made to rock their wings.
+
+Parameters
+  optiona :: (object) :
+  {
+    minBankAngle :: (integer; default = 20) The minimum bank angle needed to detect unit is rocking its wings
+    count :: (integer; default = 2) Number of times unit needs to bank to either side
+    duration :: (integer; default = 7) The maximum time (seconds) allowed to perform the whole wing rocking maneuvre
+    
+  }
+]]--
 function OnInterceptionDefaults:FollowMeDebugTimeoutTrigger( timeout )
   if (not isNumber(timeout)) then return self end
   self.OnFollowMe.debugTimeoutTrigger = timeout
   return self
 end
 
+--[[
+InterceptionOptions
+  Copies and returns default options for use with the OnGroupIntercepted function
+
+Parameters
+  (none)
+]]--
 function InterceptionOptions()
   local options = routines.utils.deepCopy( OnInterceptionDefaults )
   if (messageToApproachingInterceptors and messageToApproachingInterceptors ~= NoMessage) then
@@ -878,6 +902,38 @@ function InterceptionOptions()
   return options
 end
 
+--[[
+InterceptionOptions
+  Performs monitoring of a group intercepting another group. 
+
+Parameters
+  (none)
+
+Remarks
+  This is a fairly complex function that breaks down an intercept into three phases:
+    1. Approach
+       Monitors a large moving zone around the affected (to-be intercepted) group.
+       As one or more units enter the moving zone a message can be sent to the intercepting group.
+       This can be useful to describe the intercepted group (if their skins aren't sufficient).
+       This phase uses an internal timer that fires every 5 seconds, so avoid taxing the sim engine.
+       The timer stops before moving on to the next phase:
+
+    2. Establish
+       Monitors a space in front of the intercepted group's lead aircraft.
+       When one or more units enter this zone and remains there for 6 seconds (configurable)
+       the 'established' event triggers. A new message can automatically be sent to the established
+       units at this point (useful for clarity). The phase also uses an internal timer with shorter 
+       intervals, which is stopped before moving to the final phase:
+
+    3. Signal
+       The function now monitors the interceptors' behavior to see if they signal 'follow me'
+       (rocking wings or flashing nav lights). When this happens the 'signal' event fires and
+       a callback function is invoked to indicate the fact. This can be used to affect intercepted
+       group's behavior (make it follow the interceptor, divert, reroute, RTB, etc.).
+
+See also
+  `Follow` (function)
+]]--
 function OnGroupIntercepted( groupName, callback, options )
 
   if (groupName == nil) then
@@ -903,4 +959,232 @@ function OnGroupIntercepted( groupName, callback, options )
 
       end, options.OnIntercepted)
     end, options.OnInsideZone)
+end
+
+--[[
+Gets the index of a named waypoint and returns a table containing it and its internal route index
+
+Parameters
+  source :: An arbitrary source. This can be a route, group, unit, or the name of group/unit
+  name :: The name of the waypoint to look for
+
+Returns
+  On success, an object; otherwise nil
+  (object)
+  {
+    waypoint :: The requested waypoint object
+    index :: The waypoints internal route index0
+  }
+]]--
+function FindWaypointByName( source, name )
+
+  local route = nil
+  if (isTable(source) and source.ClassName == nil) then
+    -- assume route ...
+    route = source
+  end
+
+  if (route == nil and isString(source)) then
+    -- get route from group ...
+    local group = getGroup( source )
+    if ( group ~= nil ) then 
+      route = group:CopyRoute()
+    elseif (isTable(source)) then
+      route = source
+    else
+      return nil
+    end
+  end
+  
+  for k,v in pairs(route) do
+    if (v["name"] == name) then
+      return { data = v, index = k }
+    end
+  end
+  return nil
+end
+
+--[[
+Follow
+  Simplifies forcing a group to follow another group to a specified waypoint
+
+Parameters
+  follower :: (arbitrary) Specifies the group to be tasked with following the leader group
+  leader :: (arbitrary) Specifies the group to be followed
+  offset :: (Vec3) When set (individual elements can be set to force separation in that dimension) the follower will take a position, relative to the leader, offset by this value
+  lastWaypoint :: (integer; default=last waypoint) When specifed the follower will stop following the leader when this waypont is reached
+]]--
+function Follow( follower, leader, offset, lastWaypoint )
+
+  if (follower == nil) then
+    Debug("Follow-? :: Follower was not specified :: EXITS")
+    return
+  end
+  local followerGrp = getGroup(follower)
+  if (followerGrp == nil) then
+    Debug("Follow-? :: Cannot find follower: "..Dump(follower).." :: EXITS")
+    return
+  end
+
+  if (leader == nil) then
+    Debug("Follow-? :: Leader was not specified :: EXITS")
+    return
+  end
+  local leaderGrp = getGroup(leader)
+  if (leaderGrp == nil) then
+    Debug("Follow-? :: Cannot find leader: "..Dump(leader).." :: EXITS")
+    return
+  end
+
+  if (lastWaypoint == nil) then
+    local route = leaderGrp:CopyRoute()
+    lastWaypoint = #route
+  end
+
+  local off = CalcGroupOffset(followerGrp, leaderGrp)
+  if (offset ~= nil) then
+    off.x = offset.x or off.x
+    off.y = offset.y or off.y
+    off.z = offset.z or off.z
+  end
+  local task = followerGrp:TaskFollow( leaderGrp, off, lastWaypoint)
+  followerGrp:SetTask( task )
+  Debug("FollowGroup-"..follower.." ::  Group is now following "..leader.." to WP #"..tostring(lastWaypoint))
+
+end
+
+DivertDefaults = {
+  divertToWaypointName = '_divert_to_'
+}
+
+function RouteDirectTo( controllable, steerpoint )
+
+  if (controllable == nil) then
+    Debug("DirectTo-? :: controllable not specified :: EXITS")
+    return
+  end
+  if (steerpoint == nil) then
+    Debug("DirectTo :: steerpoint not specified :: EXITS")
+    return
+  end
+
+  local route = nil
+  local group = getGroup( controllable )
+  if ( group == nil ) then
+    if (isTable(controllable)) then
+      route = controllable
+    else
+      Debug("DirectTo :: cannot resolve group: "..Dump(controllable).." :: EXITS")
+      return
+    end
+  else
+    route = group:CopyRoute()
+  end
+
+  if (route == nil) then
+    Debug("DirectTo :: cannot resolve route from controllable: "..Dump(controllable).." :: EXITS")
+    return
+  end
+
+  local wpIndex = nil
+  if (isString(steerpoint)) then
+    local wp = FindWaypointByName( route, steerpoint )
+    if (wp == nil) then
+      Debug("DirectTo :: no waypoint found with name '"..steerpoint.."' :: EXITS")
+      return
+    end
+    wpIndex = wp.index
+  elseif (isNumber(steerpoint)) then
+    wpIndex = steerpoint
+  else
+    Debug("DirectTo :: cannot resolved steerpoint: "..Dump(steerpoint).." :: EXITS")
+    return
+  end
+
+  local directToRoute = {}
+  for i=wpIndex,#route,1 do
+    table.insert(directToRoute, route[i])
+  end
+
+  return directToRoute
+
+end
+
+function RouteDivert( controllable )
+  return RouteDirectTo( controllable, DivertDefaults.divertToWaypointName )
+end
+
+function SetRoute( controllable, route )
+
+  if (controllable == nil) then
+    Debug("SetRoute-? :: controllable not specified :: EXITS")
+    return
+  end
+  if (not isTable(route)) then
+    Debug("SetRoute-? :: invalid route (not a table) :: EXITS")
+    return
+  end
+  local group = getGroup(controllable)
+  if (group == nil) then
+    Debug("SetRoute-? :: group not found: "..Dump(controllable).." :: EXITS")
+    return
+  end
+
+  group:SetTask( group:TaskRoute( route ) )
+  Debug("SetRoute-"..group.GroupName.." :: group route was set :: DONE")
+
+end
+
+function LandHere( controllable )
+
+  -- TODO
+
+end
+
+function AddReleaseInterceptedCommand( interceptor, follower, options)
+
+  if (interceptor == nil) then
+    Debug("AddInterceptorRadioCommands-? :: interceptor not specified :: EXITS")
+    return
+  end
+  local interceptorGrp = getGroup( interceptor )
+  if (interceptorGrp == nil) then
+    Debug("AddInterceptorRadioCommands-? :: interceptor group not found: "..Dump(interceptor).." :: EXITS")
+    return
+  end
+
+  if (follower == nil) then
+    Debug("AddInterceptorRadioCommands-? :: follower not specified :: EXITS")
+    return
+  end
+  local followerGrp = getGroup( follower )
+  if (followerGrp == nil) then
+    Debug("AddInterceptorRadioCommands-? :: follower group not found: "..Dump(follower).." :: EXITS")
+    return
+  end
+
+  local followerRoute = follower.CopyRoute()
+  local enrouteWp = FindWaypointByName( followerGrp, DivertDefaults.divertToWaypointName )
+  if (enrouteWp == nil) then 
+    Debug("AddInterceptorRadioCommands-? :: follower does not have a named '"..DivertDefaults.divertToWaypointName.."' waypoint :: EXITS")
+    return
+  end
+
+
+end
+
+function AddInterceptorRadioCommands( interceptor, options )
+
+  if (interceptor == nil) then
+    Debug("AddInterceptorRadioCommands-? :: interceptor not specified :: EXITS")
+    return
+  end
+  local interceptorGrp = getGroup( interceptor )
+  if (interceptorGrp == nil) then
+    Debug("AddInterceptorRadioCommands-? :: interceptor group not found: "..Dump(interceptor).." :: EXITS")
+    return
+  end
+
+
+
 end
