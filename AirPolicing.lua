@@ -225,7 +225,10 @@ local NoMessage = "_none_"
 
 function CanBeIntercepted( controllable )
   local group = getGroup(controllable)
-  return not AirPolicing:IsLanding(group)
+  if (group == nil) then return false end
+  local leadUnit = group:GetUnit(1)
+  if (leadUnit:IsCLient()) then return false end -- TOTEST -- this needs tp be testen on MP server
+  if AirPolicing:IsLanding(group) then return false end
 end
 
 
@@ -1249,25 +1252,20 @@ function RouteDirectTo( controllable, steerpoint )
     return
   end
   if (steerpoint == nil) then
-    Debug("DirectTo :: steerpoint not specified :: EXITS")
+    Debug("DirectTo-? :: steerpoint not specified :: EXITS")
     return
   end
 
   local route = nil
   local group = getGroup( controllable )
   if ( group == nil ) then
-    if (isTable(controllable)) then
-      route = controllable
-    else
-      Debug("DirectTo :: cannot resolve group: "..Dump(controllable).." :: EXITS")
-      return
-    end
-  else
-    route = group:CopyRoute()
+    Debug("DirectTo-? :: cannot resolve group: "..Dump(controllable).." :: EXITS")
+    return
   end
-
+  
+  route = group:CopyRoute()
   if (route == nil) then
-    Debug("DirectTo :: cannot resolve route from controllable: "..Dump(controllable).." :: EXITS")
+    Debug("DirectTo-" .. group.GroupName .." :: cannot resolve route from controllable: "..Dump(controllable).." :: EXITS")
     return
   end
 
@@ -1275,14 +1273,14 @@ function RouteDirectTo( controllable, steerpoint )
   if (isString(steerpoint)) then
     local wp = FindWaypointByName( route, steerpoint )
     if (wp == nil) then
-      Debug("DirectTo :: no waypoint found with name '"..steerpoint.."' :: EXITS")
+      Debug("DirectTo-" .. group.GroupName .." :: no waypoint found with name '"..steerpoint.."' :: EXITS")
       return
     end
     wpIndex = wp.index
   elseif (isNumber(steerpoint)) then
     wpIndex = steerpoint
   else
-    Debug("DirectTo :: cannot resolved steerpoint: "..Dump(steerpoint).." :: EXITS")
+    Debug("DirectTo-" .. group.GroupName .." :: cannot resolved steerpoint: "..Dump(steerpoint).." :: EXITS")
     return
   end
 
@@ -1295,8 +1293,9 @@ function RouteDirectTo( controllable, steerpoint )
 
 end
 
-function RouteDivert( controllable )
-  return RouteDirectTo( controllable, DivertDefaults.divertToWaypointName )
+function Divert( controllable )
+  local divertRoute = RouteDirectTo(controllable, DivertDefaults.divertToWaypointName)
+  return SetRoute( controllable, divertRoute )
 end
 
 function SetRoute( controllable, route )
@@ -1352,36 +1351,3 @@ function LandHere( controllable, category, coalition )
   return ab
 
 end
-
---[[
-function AddReleaseInterceptedCommand( interceptor, follower, options)
-
-  if (interceptor == nil) then
-    Debug("AddInterceptorRadioCommands-? :: interceptor not specified :: EXITS")
-    return
-  end
-  local interceptorGrp = getGroup( interceptor )
-  if (interceptorGrp == nil) then
-    Debug("AddInterceptorRadioCommands-? :: interceptor group not found: "..Dump(interceptor).." :: EXITS")
-    return
-  end
-
-  if (follower == nil) then
-    Debug("AddInterceptorRadioCommands-? :: follower not specified :: EXITS")
-    return
-  end
-  local followerGrp = getGroup( follower )
-  if (followerGrp == nil) then
-    Debug("AddInterceptorRadioCommands-? :: follower group not found: "..Dump(follower).." :: EXITS")
-    return
-  end
-
-  local followerRoute = follower.CopyRoute()
-  local enrouteWp = FindWaypointByName( followerGrp, DivertDefaults.divertToWaypointName )
-  if (enrouteWp == nil) then 
-    Debug("AddInterceptorRadioCommands-? :: follower does not have a named '"..DivertDefaults.divertToWaypointName.."' waypoint :: EXITS")
-    return
-  end
-
-end
-]]--

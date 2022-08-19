@@ -1,4 +1,4 @@
-_policingGroups = {}
+local _policingGroups = {} -- contains one table of PolicingGroup items per coalition. Each table is indexed with policing group names
 
 local INTERCEPT_STATE = {
     Inactive = 1,      -- group have no available intruders
@@ -34,11 +34,20 @@ local PolicingGroup = {
 makeInactiveMenus = nil
 
 function PolicingGroup:isPolicing(group)
-    return _policingGroups[group.GroupName] ~= nil
+    local coalition = group:GetCoalition()
+    local coalitionPolicing = _policingGroups[coalition]
+    return coalitionPolicing ~= nil and coalitionPolicing[group.GroupName] ~= nil
+    --return _policingGroups[group.GroupName] ~= nil
 end
 
 function PolicingGroup:register(pg)
-    table.insert( _policingGroups, pg )
+    local coaliton = pg.group:GetCoalition()
+    local coalitionPolicing = _policingGroups[coalition]
+    if (coalitionPolicing == nil) then
+        coalitionPolicing = {}
+        _policingGroups[coalition] = coalitionPolicing
+    end
+    coalitionPolicing[pg.group.GroupName] = pg
     return pg
 end
 
@@ -117,7 +126,7 @@ local function controllingInterceptMenus( pg, ig, ai ) -- ig = intruder group; a
     end
 
     function divertCommand()
-        RouteDivert( ig )
+        Divert( ig )
         if (pg.interceptAssist) then
             MessageTo( pg.group, AirPolicing.Assistance.DivertNowOrderedInstruction, AirPolicing.Assistance.Duration )
         end
@@ -189,6 +198,16 @@ local function intrudersMenus( pg )
             
             local ownCoordinate =  pg.group:GetCoordinate()
             local intruderCoordinate = g:GetCoordinate()
+            
+            local verticalDistance = ownCoordinate.y - intruderCoordinate.y
+
+            -- consider looking at MOOSE's 'detection' apis for a better/more realistic mechanic here
+            if (verticalDistance >= 0) then
+                -- intruder is above interceptor (easier to detect - unfortunately we can't account for clouds) ...
+                if (verticalDistance > radius) then return end
+            else if (math.abs(verticalDistance) > radius * 0.65 ) then
+                return end
+            end
 
             -- bearing
             local dirVec3 = ownCoordinate:GetDirectionVec3( intruderCoordinate )
@@ -198,7 +217,6 @@ local function intrudersMenus( pg )
 
             -- distance
             local distance = ownCoordinate:Get2DDistance(intruderCoordinate)
-            Debug("---> intrudersMenus :: distance = "..tostring(distance))
             local sDistance = DistanceToStringA2A( distance, true )
             
             -- angels
@@ -293,11 +311,12 @@ makeInactiveMenus = inactiveMenus
 
 function PolicingGroup:New( group, options )
     if (PolicingGroup:isPolicing(group)) then error("Cannot register same policing group twice: '"..group.GroupName.."'") end
-    local pg = PolicingGroup:register(routines.utils.deepCopy(PolicingGroup))
+    local pg = routines.utils.deepCopy(PolicingGroup)
     pg.group = group
     pg.mainMenu = MENU_GROUP:New(group, "Policing")
     pg.interceptAssist = options.interceptAssist
     pg.sofAssist = options.showOfForceAssist
+    PolicingGroup:register(pg)
     inactiveMenus( pg )
     return pg
 end
