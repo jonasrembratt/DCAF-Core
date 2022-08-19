@@ -1,6 +1,13 @@
 AirPolicing = {
   Debug = false,
   DebugToUI = false,
+
+  -- Obey/disobey patterns are mutually exclusive; if one is set the other should be set to nil
+  -- (using the AirPolicing:WithObeyPattern and AirPolicing:WithDisobeyPattern functions will ensure this behavior)
+  -- If both obey and disobey patterns are set, only the ObeyPattern is honored (meaning all groups not matching the ObeyPattern) will
+  -- disobey the interceptor
+  ObeyPattern = nil,    -- when set, if the intercepted group's name matches this pattern the flight will obey the 'follow me' signal, otherwise not
+  DisobeyPattern = nil, -- when set, if the intercepted group's name matches this pattern the flight will not obey the 'follow me' signal
   Assistance = {
     IsAllowed = false,
     Duration = 12, -- the duration (seconds) for all assistance messages
@@ -12,18 +19,22 @@ AirPolicing = {
     SignalInstruction = 
       "Lead rocks wings (daytime) or flashes nav lights in irregular pattern to signal "..
       "'follow me' or 'deviate now!'",
-    LeadInstruction = 
-      "You now have the lead! Please divert the intruder to a location or airport "..
-      "and order it to land or continue flying from that location (see menus)",
+    ObeyingInstruction = 
+      "You now lead the flight! Please divert it to a location or airport "..
+      "and order it to land, or continue its route from that location (see menus)",
+    DisobeyingInstruction = 
+      "The flight doesn't seem to obey your orders!",
     CancelledInstruction = 
       "Interceopt was cancelled. Please use menu for further airspace policing",
     LandHereOrderedInstruction =
-      "Flight leaves your formation to land at %s. Good job!",
+      "The flight leaves your formation to land at %s. Good job!",
     DivertNowOrderedInstruction =
-      "Flight now resumes its route. Good job!"
+      "The flight now resumes its route from this location. Good job!"
   },
   LandingIntruders = {}
 }
+
+local NoMessage = "_none_"
 
 function AirPolicing:RegisterLanding( group )
     self.LandingIntruders[group.GroupName] = group
@@ -221,14 +232,62 @@ function GetAltitudeAsAngelsOrCherubs( controllable )
   return "cherubs " .. tostring(UTILS.Round( cherubs, 0 ))
 end
 
-local NoMessage = "_none_"
+function AirPolicing:WithObeyPattern( pattern )
+  if (not isString(pattern)) then
+    Debug("AirPolicing:WithObeyPattern :: pattern is not a string :: IGNORES")
+    return
+  end
+  AirPolicing.ObeyPattern = pattern
+  AirPolicing.DisobeyPattern = nil
+end
+
+function AirPolicing:WithDisobeyPattern( pattern )
+  if (not isString(pattern)) then
+    Debug("AirPolicing:WithDisobeyPattern :: pattern is not a string :: IGNORES")
+    return
+  end
+  AirPolicing.ObeyPattern = nil
+  AirPolicing.DisobeyPattern = pattern
+end
 
 function CanBeIntercepted( controllable )
   local group = getGroup(controllable)
-  if (group == nil) then return false end
+  if (group == nil) then
+      Debug("===> CanBeIntercepted-?  :: group cannot be resolve :: EXITS")
+     return false
+  end
   local leadUnit = group:GetUnit(1)
-  if (leadUnit:IsCLient()) then return false end -- TOTEST -- this needs tp be testen on MP server
+  if (leadUnit:IsPlayer()) then  -- TOTEST -- this needs tp be testen on MP server
+    Debug("===> CanBeIntercepted  :: Lead unit " .. leadUnit:GetName() .. " is player (cannot be intercepted)")
+    return false 
+  end 
   if AirPolicing:IsLanding(group) then return false end
+  return true
+end
+
+function IsObeyingInterceptor( controllable )
+  local unit = getUnit(controllable)
+  local group = nil
+  if (unit ~= nil) then
+    group = unit:GetGroup()
+  end
+  group = group or getGroup( controllable )
+  if (group == nil) then
+    Debug("IsObeyingInterceptor  :: cannot resolve group :: EXITS")
+    return false
+  end
+
+  Debug("==> IsObeyingInterceptor  :: AirPolicing.ObeyPattern="..tostring(AirPolicing.ObeyPattern).."; AirPolicing.DisobeyPattern="..tostring(AirPolicing.DisobeyPattern))
+
+  if (AirPolicing.ObeyPattern ~= nil) then
+    return string.match( group.GroupName, AirPolicing.ObeyPattern )
+  end
+
+  if (AirPolicing.DisobeyPattern ~= nil) then
+    return not string.match( group.GroupName, AirPolicing.DisobeyPattern )
+  end
+
+  return true
 end
 
 
@@ -483,11 +542,11 @@ end
 
 OnInterceptedDefaults = {
   interceptedUnitNo = 1,
-  zoneRadius = 100,
+  zoneRadius = 120,
   zoneOffset = {
     -- default intercept zone is 50 m radius, 55 meters in front of intruder aircraft
     relative_to_unit = true,
-    dx = 80,   -- longitudinal offset (positive = in front; negative = to the back)
+    dx = 75,   -- longitudinal offset (positive = in front; negative = to the back)
     dy = 0,    -- latitudinal offset (positive = right; negative = left)
     dz = 5     -- vertical offset (positive = up; negative = down)
   },
@@ -799,7 +858,7 @@ Parameters
 OnFollowMeDefaults = {
   timeout = 120,        -- interceptor have 2 minutes to signal 'follow me' / 'deviate now'
   rockWings = {         -- when set, script looks for interceptor rocking wings to signal 'follow me' (daytime procedure)
-    minBankAngle = 15,  -- minimum bank angle to register a "wing rock"
+    minBankAngle = 12,  -- minimum bank angle to register a "wing rock"
     minCount = 2,       -- no. of times wings must be rocked to trigger callback
     maxTime = 7         -- max time (seconds) to perform wing rock maneuvre
   },
@@ -922,7 +981,6 @@ function OnFollowMe( unitName, escortedGroupName, callback, options )
       return
     end
 
-    -- follow me signal detected ...
     callback( 
       { 
         interceptor = unit:GetName(), 

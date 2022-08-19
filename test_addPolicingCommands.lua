@@ -161,11 +161,20 @@ local function beginIntercept( pg, ig ) -- ig = intruder group
         ig,
         function( intercept ) 
 
+            if (not IsObeyingInterceptor( intercept.intruder )) then
+                pg:interceptInactive()
+                inactiveMenus( pg )
+                if (pg.interceptAssist) then
+                    MessageTo( intercept.interceptor, AirPolicing.Assistance.DisobeyingInstruction, AirPolicing.Assistance.Duration )
+                end
+                return
+            end
+
             pg:interceptControlling()
             controllingInterceptMenus( pg, ig, ai )
             Follow( intercept.intruder, intercept.interceptor )
             if (pg.interceptAssist) then
-                MessageTo( intercept.interceptor, AirPolicing.Assistance.LeadInstruction, AirPolicing.Assistance.Duration )
+                MessageTo( intercept.interceptor, AirPolicing.Assistance.ObeyingInstruction, AirPolicing.Assistance.Duration )
             end
 
         end, 
@@ -181,12 +190,12 @@ local function menuSeparator( pg, parentMenu )
 end
 
 local function intrudersMenus( pg )
-    local radius = UTILS.NMToMeters(4)
+    local radius = UTILS.NMToMeters(4) -- TODO make "look for intruders" radius configurable
     local zone = ZONE_UNIT:New(pg.group.GroupName.."-scan", pg.group, radius)
     
     local groups = SET_GROUP:New()
         :FilterCategories( { "plane" } )
-        --:FilterCoalitions( coalitions )
+        --:FilterCoalitions( coalitions ) -- TODO consider whether it would make sense to filter "interceptable" A/C on coalition
         :FilterZones( { zone } )
         :FilterActive()
         :FilterOnce()
@@ -223,8 +232,14 @@ local function intrudersMenus( pg )
             local sAngels = GetAltitudeAsAngelsOrCherubs(g) -- ToStringAngelsOrCherubs( feet )
 
             --local lead = g:GetUnit(1)
-            table.insert(intruders, { text = "Intercept flight at "..string.format( "%s for %s, %s", sBearing, sDistance, sAngels ), intruder = g })
+            table.insert(intruders, { 
+                text = "Intercept flight at "..string.format( "%s for %s, %s", sBearing, sDistance, sAngels ), 
+                intruder = g,
+                distance = distance})
         end)
+    
+    -- sort intruder menu with closest ones at the bottom
+    table.sort(intruders, function(a, b) return a.distance > b.distance end)
 
     -- remove existing intruder menus and build new ones ...
     if (#pg.intruderMenus > 0) then
@@ -269,8 +284,8 @@ function inactiveMenus( pg )
     local updateOptionsMenuFunction = nil
 
     -- policing actions
+    --pg.showOfForceMenu = MENU_GROUP_COMMAND:New(pg.group, "Begin show-of-force", pg.mainMenu, buildSOFMenus, pg) -- TODO
     pg.interceptMenu = MENU_GROUP_COMMAND:New(pg.group, "Look for airspace intruders", pg.mainMenu, intrudersMenus, pg)
-    pg.showOfForceMenu = MENU_GROUP_COMMAND:New(pg.group, "Begin show-of-force", pg.mainMenu, buildSOFMenus, pg)
 
     local function toggleInterceptAssist()
         pg.interceptAssist = not pg.interceptAssist
