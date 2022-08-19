@@ -113,6 +113,8 @@ end
 
 local function controllingInterceptMenus( pg, ig, ai ) -- ig = intruder group; ai = _ActiveIntercept
 
+Debug("---> controllingInterceptMenus :: "..Dump(ig))
+
     pg.mainMenu:RemoveSubMenus()
 
     function landHereCommand()
@@ -126,6 +128,7 @@ local function controllingInterceptMenus( pg, ig, ai ) -- ig = intruder group; a
     end
 
     function divertCommand()
+Debug("---> controllingInterceptMenus.divertCommand :: "..Dump(ig))
         Divert( ig )
         if (pg.interceptAssist) then
             MessageTo( pg.group, AirPolicing.Assistance.DivertNowOrderedInstruction, AirPolicing.Assistance.Duration )
@@ -135,7 +138,7 @@ local function controllingInterceptMenus( pg, ig, ai ) -- ig = intruder group; a
     end
 
     MENU_GROUP_COMMAND:New(pg.group, "Order: Land here!", pg.mainMenu, landHereCommand)
-    if (CanDivert(ig)) then 
+    if (CanDivert( ig )) then 
         MENU_GROUP_COMMAND:New(pg.group, "Order: Divert from here", pg.mainMenu, divertCommand)
     end
 
@@ -161,21 +164,71 @@ local function beginIntercept( pg, ig ) -- ig = intruder group
         ig,
         function( intercept ) 
 
-            if (not IsObeyingInterceptor( intercept.intruder )) then
-                pg:interceptInactive()
-                inactiveMenus( pg )
-                if (pg.interceptAssist) then
-                    MessageTo( intercept.interceptor, AirPolicing.Assistance.DisobeyingInstruction, AirPolicing.Assistance.Duration )
-                end
-                return
-            end
+            -- 'follow me' was ordered; wait 3 seconds for reaction ...
+            local reactDelay = UTILS.SecondsOfToday() + 3
+            delayTimer = TIMER:New(
+                function()
 
-            pg:interceptControlling()
-            controllingInterceptMenus( pg, ig, ai )
-            Follow( intercept.intruder, intercept.interceptor )
-            if (pg.interceptAssist) then
-                MessageTo( intercept.interceptor, AirPolicing.Assistance.ObeyingInstruction, AirPolicing.Assistance.Duration )
-            end
+                    if (UTILS.SecondsOfToday() < reactDelay) then return end
+                    delayTimer:Stop()
+
+                    local reaction = GetInterceptedReaction( intercept.intruder )
+                    local icptorName = pg.group.GroupName
+
+                    Debug("---> Interception-"..icptorName.." :: reaction="..tostring(reaction))
+
+                    if (reaction == INTERCEPT_REACTION.None) then
+                        -- intruder disobeys order ...
+                        Debug("Interception-"..icptorName.." :: "..ig.GroupName.." ignores interceptor")
+                        pg:interceptInactive()
+                        inactiveMenus( pg )
+                        if (pg.interceptAssist) then
+                            MessageTo( intercept.interceptor, AirPolicing.Assistance.DisobeyingInstruction, AirPolicing.Assistance.Duration )
+                        end
+                        return
+                    end
+
+                    if (reaction == INTERCEPT_REACTION.Divert) then
+                        -- intruder diverts ...
+                        Debug("Interception-"..icptorName.." :: "..ig.GroupName.." diverts")
+                        pg:interceptInactive()
+                        inactiveMenus( pg )
+                        Divert( intercept.intruder )
+                        if (pg.interceptAssist) then
+                            MessageTo( intercept.interceptor, AirPolicing.Assistance.DisobeyingInstruction, AirPolicing.Assistance.Duration )
+                        end
+                        return
+                    end
+
+                    if (reaction == INTERCEPT_REACTION.Land) then
+                        -- intruder lands ...
+                        Debug("Interception-"..icptorName.." :: "..ig.GroupName.." lands")
+                        pg:interceptInactive()
+                        inactiveMenus( pg )
+                        LandHere( intercept.intruder )
+                        if (pg.interceptAssist) then
+                            MessageTo( intercept.interceptor, AirPolicing.Assistance.DisobeyingInstruction, AirPolicing.Assistance.Duration )
+                        end
+                        return
+                    end
+
+                    if (reaction == INTERCEPT_REACTION.Follow) then
+                        -- intruder obeys order and follows interceptor ...
+                        Debug("Interception-"..icptorName.." :: "..ig.GroupName.." follows interceptor")
+                        Follow( intercept.intruder, intercept.interceptor )
+                        pg:interceptControlling()
+                        controllingInterceptMenus( pg, ig, ai )
+                        if (pg.interceptAssist) then
+                            MessageTo( intercept.interceptor, AirPolicing.Assistance.ObeyingInstruction, AirPolicing.Assistance.Duration )
+                        end
+                        return
+                    end
+
+                    -- NOTE we should not reach this line!
+                    Debug("Interception-"..icptorName.." :: HUH?!")
+
+                end)
+            delayTimer:Start(1, 1)
 
         end, 
         options:WithActiveIntercept( ai ))

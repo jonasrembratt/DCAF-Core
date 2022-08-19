@@ -1,3 +1,9 @@
+local function isString( value ) return type(value) == "string" end
+local function isNumber( value ) return type(value) == "number" end
+local function isTable( value ) return type(value) == "table" end
+local function isUnit( value ) return isTable(value) and value.ClassName == "UNIT" end
+local function isGroup( value ) return  isTable(value) and value.ClassName == "GROUP" end
+
 AirPolicing = {
   Debug = false,
   DebugToUI = false,
@@ -8,6 +14,7 @@ AirPolicing = {
   -- disobey the interceptor
   ObeyPattern = nil,    -- when set, if the intercepted group's name matches this pattern the flight will obey the 'follow me' signal, otherwise not
   DisobeyPattern = nil, -- when set, if the intercepted group's name matches this pattern the flight will not obey the 'follow me' signal
+  DefaultInterceptedReaction = nil,
   Assistance = {
     IsAllowed = false,
     Duration = 12, -- the duration (seconds) for all assistance messages
@@ -34,7 +41,41 @@ AirPolicing = {
   LandingIntruders = {}
 }
 
+function Debug( message )
+  BASE:E(message)
+  if (AirPolicing.DebugToUI) then
+    MESSAGE:New("DBG: "..message):ToAll()
+  end
+end
+
+
 local NoMessage = "_none_"
+
+local InterceptionDefault = {
+  divertToWaypointName = '_divert_',
+  interceptReactionQualifier = "icpt"
+}
+
+INTERCEPT_REACTION = {
+  None =   "none", -- icpt=none (disobeys orders and just continues)
+  Divert = "divt", -- icpt=divt (if flight has InterceptionDefault.divertToWaypointName) in route it goes DIRECT; otherwise RTB (back to 1st wp)
+  Land =   "land", -- icpt=land (lands at nearest friendly airbase)
+  Follow = "folw"  -- icpt=folw (follows interceptor)
+}
+
+function INTERCEPT_REACTION:IsValid( reaction )
+  if (not isString(reaction)) then 
+    return false
+  end
+
+  reaction = string.lower(reaction)
+  for k, v in pairs(INTERCEPT_REACTION) do
+    if (reaction == v) then 
+      return true 
+    end
+  end
+  return false
+end
 
 function AirPolicing:RegisterLanding( group )
     self.LandingIntruders[group.GroupName] = group
@@ -64,13 +105,6 @@ function _ActiveIntercept:Cancel()
   end
 end
 
-function Debug( message )
-  BASE:E(message)
-  if (AirPolicing.DebugToUI) then
-    MESSAGE:New("DBG: "..message):ToAll()
-  end
-end
-
 function GetUnitFromGroupName( groupName, unitNumber )
 
   unitNumber = unitNumber or 1
@@ -79,12 +113,6 @@ function GetUnitFromGroupName( groupName, unitNumber )
   return group.GetUnit( unitNumber )
 
 end
-
-local function isString( value ) return type(value) == "string" end
-local function isNumber( value ) return type(value) == "number" end
-local function isTable( value ) return type(value) == "table" end
-local function isUnit( value ) return isTable(value) and value.ClassName == "UNIT" end
-local function isGroup( value ) return  isTable(value) and value.ClassName == "GROUP" end
 
 function Nearest100( number )
   if (not isNumber(number)) then error( "<meters> must be a number" ) end
@@ -232,39 +260,68 @@ function GetAltitudeAsAngelsOrCherubs( controllable )
   return "cherubs " .. tostring(UTILS.Round( cherubs, 0 ))
 end
 
-function AirPolicing:WithObeyPattern( pattern )
-  if (not isString(pattern)) then
-    Debug("AirPolicing:WithObeyPattern :: pattern is not a string :: IGNORES")
+function AirPolicing:SetDefaultInterceptedReaction( reaction )
+Debug("===> AirPolicing:SetDefaultInterceptedReaction ::" .. Dump(reaction))
+  if (not INTERCEPT_REACTION:IsValid( reaction )) then
+    Debug("AirPolicing:WithDefaultInterceptReaction :: not a valid raction: "..Dump(reaction).." :: EXITS")
     return
   end
-  AirPolicing.ObeyPattern = pattern
-  AirPolicing.DisobeyPattern = nil
-end
-
-function AirPolicing:WithDisobeyPattern( pattern )
-  if (not isString(pattern)) then
-    Debug("AirPolicing:WithDisobeyPattern :: pattern is not a string :: IGNORES")
-    return
-  end
-  AirPolicing.ObeyPattern = nil
-  AirPolicing.DisobeyPattern = pattern
+  AirPolicing.DefaultInterceptedReaction = reaction
+  Debug("AirPolicing:WithDefaultInterceptReaction :: set to " .. reaction) 
 end
 
 function CanBeIntercepted( controllable )
   local group = getGroup(controllable)
   if (group == nil) then
-      Debug("===> CanBeIntercepted-?  :: group cannot be resolve :: EXITS")
+      Debug("CanBeIntercepted-?  :: group cannot be resolve :: EXITS")
      return false
   end
   local leadUnit = group:GetUnit(1)
   if (leadUnit:IsPlayer()) then  -- TOTEST -- this needs tp be testen on MP server
-    Debug("===> CanBeIntercepted  :: Lead unit " .. leadUnit:GetName() .. " is player (cannot be intercepted)")
+    Debug("CanBeIntercepted  :: Lead unit " .. leadUnit:GetName() .. " is player (cannot be intercepted)")
     return false 
   end 
   if AirPolicing:IsLanding(group) then return false end
   return true
 end
 
+function GetInterceptedReaction( controllable )
+  local unit = getUnit(controllable)
+  local group = nil
+  if (unit ~= nil) then
+    group = unit:GetGroup()
+  end
+  group = group or getGroup( controllable )
+  if (group == nil) then
+    Debug("GetInterceptedReaction  :: cannot resolve group :: EXITS")
+    return false
+  end
+
+  local default = AirPolicing.DefaultInterceptedReaction or INTERCEPT_REACTION.None
+  local s = group.GroupName
+
+Debug("===> GetInterceptedReaction-".. s .." :: AirPolicing.DefaultInterceptedReaction=" .. AirPolicing.DefaultInterceptedReaction)
+
+  local at = string.find(s, InterceptionDefault.interceptReactionQualifier)
+  if (at == nil) then
+    Debug("GetInterceptedReaction-".. s .." :: reaction not set; resolves default: ".. default)
+    return default
+  end
+  local len = string.len(InterceptionDefault.interceptReactionQualifier)
+  local reaction = string.sub(s, at+len+1, at+len+4)
+
+  reaction = string.lower(reaction)
+  for k,v in pairs(INTERCEPT_REACTION) do
+    if (v == reaction) then
+      return v
+    end
+  end
+
+  Debug("GetInterceptedReaction-".. s .." :: unknown reaction: ".. reaction or "nil" .." :: default reaction used: " .. default)
+  return default
+end
+
+--[[
 function IsObeyingInterceptor( controllable )
   local unit = getUnit(controllable)
   local group = nil
@@ -277,8 +334,6 @@ function IsObeyingInterceptor( controllable )
     return false
   end
 
-  Debug("==> IsObeyingInterceptor  :: AirPolicing.ObeyPattern="..tostring(AirPolicing.ObeyPattern).."; AirPolicing.DisobeyPattern="..tostring(AirPolicing.DisobeyPattern))
-
   if (AirPolicing.ObeyPattern ~= nil) then
     return string.match( group.GroupName, AirPolicing.ObeyPattern )
   end
@@ -289,7 +344,7 @@ function IsObeyingInterceptor( controllable )
 
   return true
 end
-
+]]--
 
 --[[
 OnInsideGroupZone
@@ -1197,10 +1252,11 @@ Returns
   }
 ]]--
 function FindWaypointByName( source, name )
-
+Debug("===> FindWaypointByName :: name="..name.."; source: "..Dump(source))
   local route = nil
   if (isTable(source) and source.ClassName == nil) then
     -- assume route ...
+Debug("===> FindWaypointByName :: assumes source=route")
     route = source
   end
 
@@ -1210,6 +1266,7 @@ function FindWaypointByName( source, name )
     if ( group ~= nil ) then 
       route = group:CopyRoute()
     else
+Debug("===> FindWaypointByName :: cannot resolve group from source")
       return nil
     end
   end
@@ -1223,7 +1280,11 @@ function FindWaypointByName( source, name )
 end
 
 function GetDivertWaypoint( group ) 
-  return FindWaypointByName( group, DivertDefaults.divertToWaypointName ) 
+
+  Debug("===> GetDivertWaypoint :: " .. Dump(group))
+  local nisse = FindWaypointByName( group, InterceptionDefault.divertToWaypointName ) 
+  Debug("===> GetDivertWaypoint :: wp=" .. Dump(nisse))
+  return nisse ~= nil
 end
 
 function CanDivert( group ) 
@@ -1299,11 +1360,10 @@ function Follow( follower, leader, offsetLimits, lastWaypoint )
 
 end
 
-DivertDefaults = {
-  divertToWaypointName = '_divert_'
-}
-
 function RouteDirectTo( controllable, steerpoint )
+
+Debug("===> RouteDirectTo :: "..Dump(controllable))
+
 
   if (controllable == nil) then
     Debug("DirectTo-? :: controllable not specified :: EXITS")
@@ -1322,6 +1382,7 @@ function RouteDirectTo( controllable, steerpoint )
   end
   
   route = group:CopyRoute()
+Debug("===> RouteDirectTo-"..group.GroupName.." :: "..Dump(route))
   if (route == nil) then
     Debug("DirectTo-" .. group.GroupName .." :: cannot resolve route from controllable: "..Dump(controllable).." :: EXITS")
     return
@@ -1352,7 +1413,13 @@ function RouteDirectTo( controllable, steerpoint )
 end
 
 function Divert( controllable )
-  local divertRoute = RouteDirectTo(controllable, DivertDefaults.divertToWaypointName)
+
+Debug("===> Divert-? :: "..Dump(controllable))
+
+  local divertRoute = RouteDirectTo(controllable, InterceptionDefault.divertToWaypointName)
+
+Debug("===> Divert-? :: "..Dump(divertRoute))
+
   return SetRoute( controllable, divertRoute )
 end
 
