@@ -1,11 +1,61 @@
 AirPolicing = {
   Debug = false,
-  DebugToUI = false
+  DebugToUI = false,
+  Assistance = {
+    IsAllowed = false,
+    Duration = 12, -- the duration (seconds) for all assistance messages
+    ApproachInstruction = 
+      "Approach slowly and non-aggressively, especially with civilian aircraft",
+    EstablishInstruction = 
+      "Lead continues to a position to the side and slightly above the lead A/C\n"..
+      "Wing takes up a watch position behind, keeping watch and ready to engage if needed",
+    SignalInstruction = 
+      "Lead rocks wings (daytime) or flashes nav lights in irregular pattern to signal "..
+      "'follow me' or 'deviate now!'",
+    LeadInstruction = 
+      "You now have the lead! Please divert the intruder to a location or airport "..
+      "and order it to land or continue flying from that location (see menus)",
+    CancelledInstruction = 
+      "Interceopt was cancelled. Please use menu for further airspace policing",
+    LandHereOrderedInstruction =
+      "Flight leaves your formation to land at %s. Good job!",
+    DivertNowOrderedInstruction =
+      "Flight now resumes its route. Good job!"
+  },
+  LandingIntruders = {}
 }
+
+function AirPolicing:RegisterLanding( group )
+    self.LandingIntruders[group.GroupName] = group
+end
+
+function AirPolicing:IsLanding( group )
+  return self.LandingIntruders[group.GroupName] ~= nil
+end
+
+_ActiveIntercept = {
+  intruder = nil,
+  interceptor = nil,
+  cancelFunction = nil
+}
+
+function _ActiveIntercept:New( intruder, interceptor )
+  local ai = routines.utils.deepCopy(_ActiveIntercept)
+  ai.intruder = intruder
+  ai.interceptor = interceptor
+  return ai
+end
+
+function _ActiveIntercept:Cancel()
+  local ai = self
+  if (ai.cancelFunction ~= nil) then
+    ai.cancelFunction()
+  end
+end
 
 function Debug( message )
   BASE:E(message)
-  if (AirPolicing.Debug) then
+  if (AirPolicing.DebugToUI) then
     MESSAGE:New("DBG: "..message):ToAll()
   end
 end
@@ -22,6 +72,13 @@ end
 local function isString( value ) return type(value) == "string" end
 local function isNumber( value ) return type(value) == "number" end
 local function isTable( value ) return type(value) == "table" end
+local function isUnit( value ) return isTable(value) and value.ClassName == "UNIT" end
+local function isGroup( value ) return  isTable(value) and value.ClassName == "GROUP" end
+
+function Nearest100( number )
+  if (not isNumber(number)) then error( "<meters> must be a number" ) end
+  return UTILS.Round( number / 100 ) * 100
+end
 
 local function mkIndent( count )
   local s = ""
@@ -39,7 +96,7 @@ function Dump(value)
   local s = "{ "
   for k,v in pairs(value) do
      if type(k) ~= 'number' then k = '"'..k..'"' end
-     s = s .. '['..k..'] = ' .. dump(v) .. ','
+     s = s .. '['..k..'] = ' .. Dump(v) .. ','
   end
   return s .. '} '
 end
@@ -97,30 +154,80 @@ function DumpPrettyJson(value, options)
 end
 
 --[[
+Resolves a UNIT from an arbitrary source
+]]--
+function getUnit( source )
+  if (isUnit(source)) then return source end
+  if (isString(source)) then
+    return UNIT:FindByName( source )
+  end
+  return nil
+end
+
+--[[
 Resolves a GROUP from an arbitrary source
 ]]--
-local function getGroup( source )
+function getGroup( source )
+  if (isGroup(source)) then return source end
+  if (isUnit(source)) then return source:GetGroup() end
+  if (not isString(source)) then return nil end
 
-  if (isString(source)) then
-    local group = GROUP:FindByName( source )
-    if (group ~= nil) then 
-      return group 
+  local group = GROUP:FindByName( source )
+  if (group ~= nil) then 
+    return group end
+
+  local unit = UNIT:FindByName( source )
+  if (unit ~= nil) then 
+     return unit:GetGroup() end
+  return nil
+end
+
+function getControllable( source )
+  local unit = getUnit(source)
+  if (unit ~= nil) then return unit end
+  
+  local group = getGroup(source)
+  if (group ~= nil) then return group end
+
+  return nil
+end
+
+function DistanceToStringA2A( meters, nearest100 )
+  local feetPerNauticalMile = 6076.1155
+  if (not isNumber(meters)) then error( "<meters> must be a number" ) end
+
+  local feet = UTILS.MetersToFeet( meters )
+  if (feet < feetPerNauticalMile) then
+    if (nearest100 or false) then
+      feet = Nearest100( feet )
     end
-    local unit = UNIT:FindByName( source )
-    if (unit == nil) then 
-      return nil 
-    end
-    return unit:GetGroup()
+    return tostring( math.modf(feet) ) .. " feet"
+  end
+  local nm = UTILS.Round( feet / feetPerNauticalMile, 1)
+  return tostring(nm) .. " miles"
+  
+end
+
+function GetAltitudeAsAngelsOrCherubs( controllable ) 
+  controllable = getControllable( controllable )
+  if (controllable == nil) then error( "Could not resolve controllable" ) end
+  local feet = UTILS.MetersToFeet( controllable:GetCoordinate().y )
+  if (feet >= 1000) then
+    local angels = feet / 1000
+    return "angels " .. tostring(UTILS.Round( angels, 0 ))
   end
 
-  if (not isTable(source)) then return nil end
-
-  if (source.ClassName == "GROUP") then return source end
-  if (source.ClassName == "UNIT") then return source:GetGroup() end
-
+  local cherubs = feet / 100
+  return "cherubs " .. tostring(UTILS.Round( cherubs, 0 ))
 end
 
 local NoMessage = "_none_"
+
+function CanBeIntercepted( controllable )
+  local group = getGroup(controllable)
+  return not AirPolicing:IsLanding(group)
+end
+
 
 --[[
 OnInsideGroupZone
@@ -153,6 +260,91 @@ OnInsideGroupZoneDefaults =
   messageToDetectedDuration = 30,
   interval = 5
 }
+
+--local ignoreMessagingGroups = {}
+--[[ 
+Sends a simple message to groups, clients or lists of groups or clients
+]]--
+function MessageTo( recipient, message, duration )
+
+  if (recipient == nil) then
+    Debug("MessageTo :: Recipient name not specified :: EXITS")
+    return
+  end
+  if (message == nil) then
+    Debug("MessageTo :: Message was not specified :: EXITS")
+    return
+  end
+  duration = duration or 5
+
+  if (isString(recipient)) then
+    local group = getGroup(recipient)
+    if (group == nil) then
+      Debug("MessageTo-?"..recipient.." :: Group could not be resolved :: EXITS")
+      return
+    end
+    local group = GROUP:FindByName( recipient )
+    if (group ~= nil) then
+      MessageTo( group, message, duration )
+      return
+    end
+  
+    local unit = UNIT:FindByName( recipient )
+    if (unit ~= nil) then
+      MessageTo( unit, message, duration )
+      return
+    end
+  end
+
+  if (type(recipient) == "table") then
+    if (recipient.ClassName == "UNIT") then
+      -- MOOSE doesn't support sending messages to units; send to group and ignore other units from same group ...
+      recipient = recipient:GetGroup()
+      --local isIgnored = ignoreMessagingGroups[group.GroupName] ~= nil
+      --if (not isIgnored) then
+        MessageTo( group, message, duration )
+        --ignoreMessagingGroups[group.GroupName] = group.GroupName
+      --end
+      --return
+    end
+    if (recipient.ClassName == "GROUP") then
+      --local isIgnored = ignoreMessagingGroups[recipient.GroupName] ~= nil
+      --if (isIgnored) then
+        --Debug("MessageTo :: Group "..recipient.GroupName.." is ignored")
+        --return
+      --end
+      MESSAGE:New(message, duration):ToGroup(recipient)
+      Debug("MessageTo :: Group "..recipient.GroupName.." :: '"..message.."'")
+      return
+    end
+    if (recipient.ClassName == "CLIENT") then
+      MESSAGE:New(message, duration):ToClient(recipient)
+      Debug("MessageTo :: Client "..recipient:GetName().." :: "..message.."'")
+      return
+    end
+
+    for k, v in pairs(recipient) do
+      MessageTo( v, message, duration )
+    end
+    --ignoreMessagingGroups = {}
+    return
+  end
+
+  local function SendMessageToClient( recipient )
+    local unit = CLIENT:FindByName( recipient )
+    if (unit ~= nil) then
+      Debug("MessageTo-"..recipient.." :: "..message)
+      MESSAGE:New(message, duration):ToClient(unit)
+      return
+    end
+  end
+
+  if (pcall(SendMessageToClient(recipient))) then return end
+  Debug("MessageTo-"..recipient.." :: Recipient not found")
+
+end
+
+
 function OnInsideGroupZone( groupName, callback, options )
   
   if ( groupName == nil) then
@@ -187,6 +379,7 @@ function OnInsideGroupZone( groupName, callback, options )
   local interceptingUnit = nil
   local monitoredUnitName = monitoredUnit:GetName()
   local interceptZone = ZONE_UNIT:New(monitoredUnitName.."-closing", monitoredUnit, zoneRadius, zoneOffset)
+  local ar = options._activeIntercept
   --[[ todo Deal with unit getting killed (end monitoring)
   local groupDeadEvent = EVENT:OnEventForUnit( 
     monitoredUnitName,
@@ -279,6 +472,10 @@ function OnInsideGroupZone( groupName, callback, options )
 
   timer = TIMER:New(DetectUnits, interceptZone)
   timer:Start(interval, interval)
+  if (ar ~= nil) then
+    ar.cancelFunction = function() timer:Stop() end
+  end
+
 end
 
 OnInterceptedDefaults = {
@@ -287,7 +484,7 @@ OnInterceptedDefaults = {
   zoneOffset = {
     -- default intercept zone is 50 m radius, 55 meters in front of intruder aircraft
     relative_to_unit = true,
-    dx = 30,   -- longitudinal offset (positive = in front; negative = to the back)
+    dx = 80,   -- longitudinal offset (positive = in front; negative = to the back)
     dy = 0,    -- latitudinal offset (positive = right; negative = left)
     dz = 5     -- vertical offset (positive = up; negative = down)
   },
@@ -599,7 +796,7 @@ Parameters
 OnFollowMeDefaults = {
   timeout = 120,        -- interceptor have 2 minutes to signal 'follow me' / 'deviate now'
   rockWings = {         -- when set, script looks for interceptor rocking wings to signal 'follow me' (daytime procedure)
-    minBankAngle = 20,  -- minimum bank angle to register a "wing rock"
+    minBankAngle = 15,  -- minimum bank angle to register a "wing rock"
     minCount = 2,       -- no. of times wings must be rocked to trigger callback
     maxTime = 7         -- max time (seconds) to perform wing rock maneuvre
   },
@@ -607,7 +804,7 @@ OnFollowMeDefaults = {
   interval = 0.5,       -- how often (seconds) the timer polls for interceptors,
   -- when set to positive number (of seconds) the 'follow me' signal will be triggered automatiucally after this time. 
   -- Useful for testing wityh AI as interceptors
-  debugTimeoutTrigger = 0 
+  debugTimeoutTrigger = 0
 }
 --[[
   returns object:
@@ -667,18 +864,18 @@ function OnFollowMe( unitName, escortedGroupName, callback, options )
     local timestamp = UTILS.SecondsOfToday()
     totalTime = timestamp - startTime
     local bankAngle = unit:GetRoll()
-    Debug("OnFollowMe :: '"..unitName.." :: "..string.format("bankAngle=%d; lastMaxBankAngle=%d", bankAngle, lastMaxBankAngle or 0))
+--    Debug("OnFollowMe :: '"..unitName.." :: "..string.format("bankAngle=%d; lastMaxBankAngle=%d", bankAngle, lastMaxBankAngle or 0))
     local absBankAngle = math.abs(bankAngle)
 
-    function IsWingRockComplete() 
+    function getIsWingRockComplete() 
       table.insert(bankEvents, 1, timestamp)
       countEvents = countEvents+1
-      --  Debug("OnFollowMe :: '"..unitName.." :: events="..tostring(countEvents))
+      --Debug("OnFollowMe :: '"..unitName.." :: count="..tostring(countEvents).."/"..tostring(minCount))
       if (countEvents < minCount) then return false end
       local prevTimestamp = bankEvents[minCount]
       local timeSpent = timestamp - prevTimestamp
       if (timeSpent > maxTime) then
-      --  Debug("OnFollowMe :: '"..unitName.." :: TOO SLOW")
+        Debug("OnFollowMe :: '"..unitName.." :: TOO SLOW")
         return false
       end
       return true
@@ -689,13 +886,13 @@ function OnFollowMe( unitName, escortedGroupName, callback, options )
         -- positive bank angle ...
         if (bankAngle >= minBankAngle and (lastMaxBankAngle == nil or lastMaxBankAngle < 0)) then
           lastMaxBankAngle = bankAngle
-          isWingRockComplete = IsWingRockComplete(timestamp)
+          isWingRockComplete = getIsWingRockComplete(timestamp)
         end
       else
         -- negative bank angle ...
         if (absBankAngle >= minBankAngle and (lastMaxBankAngle == nil or lastMaxBankAngle > 0)) then
           lastMaxBankAngle = bankAngle
-          isWingRockComplete = IsWingRockComplete(timestamp)
+          isWingRockComplete = getIsWingRockComplete(timestamp)
         end
       end
     end
@@ -707,17 +904,19 @@ function OnFollowMe( unitName, escortedGroupName, callback, options )
     end
     ]]--
 
-    if (not isWingRockComplete and not isLightsFlashedComplete) then
+    local isComplete = isWingRockComplete or isLightsFlashedComplete
+    if (not isComplete and autoTriggerTimeout > 0 and totalTime >= autoTriggerTimeout) then
+      isComplete = true
+      Debug("OnFollowMe :: '"..unitName.." :: Triggers automatically (debug)")
+    end
+
+    if (not isComplete) then
       if (totalTime >= timeout) then
         Debug("OnFollowMe :: '"..unitName.." :: Times out :: Timer stops!")
         timer:Stop()
         bankEvents = nil
       end
-    end
-    if (autoTriggerTimeout <= 0 or totalTime < autoTriggerTimeout) then
       return
-    else
-      Debug("OnFollowMe :: '"..unitName.." :: Triggers automatically (debug)")
     end
 
     -- follow me signal detected ...
@@ -738,83 +937,6 @@ function OnFollowMe( unitName, escortedGroupName, callback, options )
 end
 
 
-local ignoreMessagingGroups = {}
---[[ 
-Sends a simple message to groups, clients or lists of groups or clients
-]]--
-function MessageTo( recipient, message, duration )
-
-  if (recipient == nil) then
-    Debug("MessageTo :: Recipient name not specified :: EXITS")
-    return
-  end
-  if (message == nil) then
-    Debug("MessageTo :: Message was not specified :: EXITS")
-    return
-  end
-  duration = duration or 5
-
-  -- TODO consider getGroup() method here instead:
-  if (type(recipient) == "table") then
-    if (recipient.ClassName == "UNIT") then
-      -- MOOSE doesn't support sending messages to units; send to group and ignore other units from same group ...
-      local group = recipient:GetGroup()
-      local isIgnored = ignoreMessagingGroups[group.GroupName] ~= nil
-      if (not isIgnored) then
-        MessageTo( group, message, duration )
-        ignoreMessagingGroups[group.GroupName] = group.GroupName
-      end
-      return
-    end
-    if (recipient.ClassName == "GROUP") then
-      local isIgnored = ignoreMessagingGroups[recipient.GroupName] ~= nil
-      if (isIgnored) then
-        Debug("MessageTo :: Group "..recipient.GroupName.." is ignored")
-        return
-      end
-      MESSAGE:New(message, duration):ToGroup(recipient)
-      Debug("MessageTo :: Group "..recipient.GroupName.." :: '"..message.."'")
-      return
-    end
-    if (recipient.ClassName == "CLIENT") then
-      MESSAGE:New(message, duration):ToClient(recipient)
-      Debug("MessageTo :: Client "..recipient:GetName().." :: "..message.."'")
-      return
-    end
-
-    for key, value in pairs(recipient) do
-      MessageTo( value, message, duration )
-    end
-    ignoreMessagingGroups = {}
-    return
-  end
-
-  local group = GROUP:FindByName( recipient )
-  if (group ~= nil) then
-    MessageTo( group, message, duration )
-    return
-  end
-
-  local unit = UNIT:FindByName( recipient )
-  if (unit ~= nil) then
-    MessageTo( unit, message, duration )
-    return
-  end
-
-  local function SendMessageToClient( recipient )
-    local unit = CLIENT:FindByName( recipient )
-    if (unit ~= nil) then
-      Debug("MessageTo-"..recipient.." :: "..message)
-      MESSAGE:New(message, duration):ToClient(unit)
-      return
-    end
-  end
-
-  if (pcall(SendMessageToClient(recipient))) then return end
-  Debug("MessageTo-"..recipient.." :: Recipient not found")
-
-end
-
 local function CalcGroupOffset( group1, group2 )
 
   local coord1 = group1:GetCoordinate()
@@ -827,11 +949,20 @@ local function CalcGroupOffset( group1, group2 )
 
 end
 
-local OnInterceptionDefaults = {
+InterceptionOptions = {
   OnInsideZone = OnInsideGroupZoneDefaults,
   OnIntercepted = OnInterceptedDefaults,
   OnFollowMe = OnFollowMeDefaults,
+  showAssistance = false
 }
+
+function InterceptionOptions:New()
+  local options = routines.utils.deepCopy( InterceptionOptions )
+  if (messageToApproachingInterceptors and messageToApproachingInterceptors ~= NoMessage) then
+    options.OnInsideZone.messageToDetected = messageToApproachingInterceptors
+  end
+  return options
+end
 
 --[[
 Sets the textual message to be sent to units entering the monitored zone around a group
@@ -839,14 +970,14 @@ Sets the textual message to be sent to units entering the monitored zone around 
 Parameters
   message :: The message to be sent
 ]]--
-function OnInterceptionDefaults:MessageOnApproaching( message )
+function InterceptionOptions:MessageOnApproaching( message )
   if (not isString(message)) then return self end
   self.OnInsideZone.messageToDetected = message
   return self
 end
 
 --[[
-OnInterceptionDefaults:RockWingsBehavior
+InterceptionOptions:RockWingsBehavior
   Sets the behavior for how the unit needs to rock its wings to signal 'follow me'
 
 Parameters
@@ -858,7 +989,7 @@ Parameters
     
   }
 ]]--
-function OnInterceptionDefaults:RockWingsBehavior( options )
+function InterceptionOptions:RockWingsBehavior( options )
   if (options == nil) then return self end
   self.OnFollowMe.rockWings.count = options.count or self.OnFollowMe.rockWings.count
   self.OnFollowMe.rockWings.minBankAngle = options.minBankAngle or self.OnFollowMe.rockWings.minBankAngle
@@ -867,7 +998,7 @@ function OnInterceptionDefaults:RockWingsBehavior( options )
 end
 
 --[[
-OnInterceptionDefaults:FollowMeDebugTimeoutTrigger
+InterceptionOptions:FollowMeDebugTimeoutTrigger
   Sets a timeout value to be tracked after a unit was established in the intercept zone. 
   When the timer triggers the 'follow me' event will automatically be triggered.
   This is mainly useful for debugging using AI interceptors that can't be made to rock their wings.
@@ -881,26 +1012,44 @@ Parameters
     
   }
 ]]--
-function OnInterceptionDefaults:FollowMeDebugTimeoutTrigger( timeout )
+function InterceptionOptions:FollowMeDebugTimeoutTrigger( timeout )
   if (not isNumber(timeout)) then return self end
   self.OnFollowMe.debugTimeoutTrigger = timeout
   return self
 end
 
+function InterceptionOptions:PolicingAssistanceAllowed( value )
+  AirPolicing.IsAssistanceAllowed = value or true
+  return self
+end
+
+function InterceptionOptions:WithAssistance( value, duration )
+  self.showAssistance = value or true
+  self.assistanceDuration = value or AirPolicing.Assistance.Duration
+  return self
+end
+
+function InterceptionOptions:WithActiveIntercept( ai )
+  if (not isTable(self)) then error("Cannot set active intercept for a non-table value") end
+  self._activeIntercept = ai
+  return self
+end
+
+
 --[[
 InterceptionOptions
-  Copies and returns default options for use with the OnGroupIntercepted function
+  Copies and returns default options for use with the OnInterception function
 
 Parameters
   (none)
-]]--
 function InterceptionOptions()
-  local options = routines.utils.deepCopy( OnInterceptionDefaults )
+  local options = routines.utils.deepCopy( InterceptionOptions )
   if (messageToApproachingInterceptors and messageToApproachingInterceptors ~= NoMessage) then
     options.OnInsideZone.messageToDetected = messageToApproachingInterceptors
   end
   return options
 end
+]]--
 
 --[[
 InterceptionOptions
@@ -934,23 +1083,33 @@ Remarks
 See also
   `Follow` (function)
 ]]--
-function OnGroupIntercepted( groupName, callback, options )
-
-  if (groupName == nil) then
-    Debug("OnInterception-? :: Group name missing :: EXITS")
+function OnInterception( group, callback, options )
+  group = getGroup( group )
+  if (group == nil) then
+    Debug("OnInterception-? :: Group could not be resolved :: EXITS")
     return 
   end
   if (callback == nil) then
-    Debug("OnInterception-"..groupName.." :: Callback function missing :: EXITS")
+    Debug("OnInterception-"..group.GroupName.." :: Callback function missing :: EXITS")
     return 
   end
-  options = options or OnInterceptionDefaults
-  OnInsideGroupZone( groupName,
+  options = options or InterceptionOptions
+  local ai = options._activeIntercept
+  if (ai and options.showAssistance) then
+    MessageTo( ai.interceptor, AirPolicing.Assistance.ApproachInstruction, options.assistanceDuration )
+  end
+  OnInsideGroupZone( group.GroupName,
   function( closing )
 
+    if (ai and options.showAssistance) then
+      MessageTo( ai.interceptor, AirPolicing.Assistance.EstablishInstruction, options.assistanceDuration )
+    end
     OnIntercepted( closing.monitoredGroup, 
       function( intercepted )
 
+        if (ai and options.showAssistance) then
+          MessageTo( ai.interceptor, AirPolicing.Assistance.SignalInstruction, options.assistanceDuration )
+        end
         OnFollowMe(
           intercepted.interceptingUnit, 
           intercepted.interceptedGroup,
@@ -984,24 +1143,50 @@ function FindWaypointByName( source, name )
     route = source
   end
 
-  if (route == nil and isString(source)) then
-    -- get route from group ...
+  if (route == nil) then
+    -- try get route from group ...
     local group = getGroup( source )
     if ( group ~= nil ) then 
       route = group:CopyRoute()
-    elseif (isTable(source)) then
-      route = source
     else
       return nil
     end
   end
-  
+
   for k,v in pairs(route) do
     if (v["name"] == name) then
       return { data = v, index = k }
     end
   end
   return nil
+end
+
+function GetDivertWaypoint( group ) 
+  return FindWaypointByName( group, DivertDefaults.divertToWaypointName ) 
+end
+
+function CanDivert( group ) 
+  return GetDivertWaypoint( group ) ~= nil
+end
+
+FollowOffsetLimits = {
+  -- longitudinal offset limits
+  xMin = nil,
+  xMax = nil,
+
+  -- vertical offset limits
+  yMin = nil,
+  yMax = nil,
+
+  -- latitudinal offset limits
+  zMin = nil,
+  zMax = nil 
+}
+
+function FollowOffsetLimits:GetFor( follower )
+
+
+
 end
 
 --[[
@@ -1014,7 +1199,7 @@ Parameters
   offset :: (Vec3) When set (individual elements can be set to force separation in that dimension) the follower will take a position, relative to the leader, offset by this value
   lastWaypoint :: (integer; default=last waypoint) When specifed the follower will stop following the leader when this waypont is reached
 ]]--
-function Follow( follower, leader, offset, lastWaypoint )
+function Follow( follower, leader, offsetLimits, lastWaypoint )
 
   if (follower == nil) then
     Debug("Follow-? :: Follower was not specified :: EXITS")
@@ -1054,7 +1239,7 @@ function Follow( follower, leader, offset, lastWaypoint )
 end
 
 DivertDefaults = {
-  divertToWaypointName = '_divert_to_'
+  divertToWaypointName = '_divert_'
 }
 
 function RouteDirectTo( controllable, steerpoint )
@@ -1162,10 +1347,13 @@ function LandHere( controllable, category, coalition )
     ["type"] = "Land",
    }
   group:Route( { landHere } )
+  AirPolicing:RegisterLanding( group )
   Debug("LandHere-"..group.GroupName.." :: is tasked with landing at airbase ("..ab.AirbaseName..") :: DONE")
+  return ab
 
 end
 
+--[[
 function AddReleaseInterceptedCommand( interceptor, follower, options)
 
   if (interceptor == nil) then
@@ -1195,21 +1383,5 @@ function AddReleaseInterceptedCommand( interceptor, follower, options)
     return
   end
 
-
 end
-
-function AddInterceptorRadioCommands( interceptor, options )
-
-  if (interceptor == nil) then
-    Debug("AddInterceptorRadioCommands-? :: interceptor not specified :: EXITS")
-    return
-  end
-  local interceptorGrp = getGroup( interceptor )
-  if (interceptorGrp == nil) then
-    Debug("AddInterceptorRadioCommands-? :: interceptor group not found: "..Dump(interceptor).." :: EXITS")
-    return
-  end
-
-
-
-end
+]]--
