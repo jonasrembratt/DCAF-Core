@@ -255,6 +255,10 @@ local function intrudersMenus( pg )
             
             local ownCoordinate =  pg.group:GetCoordinate()
             local intruderCoordinate = g:GetCoordinate()
+            if (not ownCoordinate:IsLOS(intruderCoordinate)) then 
+                Debug("intrudersMenus-"..pg.group.GroupName.." :: group "..g.GroupName.." is obscured (no line of sight)")
+                return 
+            end
             
             local verticalDistance = ownCoordinate.y - intruderCoordinate.y
 
