@@ -260,8 +260,27 @@ function GetAltitudeAsAngelsOrCherubs( controllable )
   return "cherubs " .. tostring(UTILS.Round( cherubs, 0 ))
 end
 
+function GetClockPosition( heading, bearing )
+  return tostring(UTILS.Round(((-heading + bearing) % 360) / 30, 0)) .. " o'clock"
+end
+
+function GetLevelPosition( coord1, coord2 )
+  local vDiff = coord1.y - coord2.y -- vertical difference
+  local lDiff = math.max(math.abs(coord1.x - coord2.x), math.abs(coord1.z - coord2.z)) -- lateral distance
+  local angle = math.deg(math.atan(vDiff / lDiff))
+
+  if (math.abs(angle) <= 15) then
+    return "level"
+  end
+
+  if (angle < 0) then
+    return "high"
+  end
+
+  return "low"
+end
+
 function AirPolicing:SetDefaultInterceptedReaction( reaction )
-Debug("===> AirPolicing:SetDefaultInterceptedReaction ::" .. Dump(reaction))
   if (not INTERCEPT_REACTION:IsValid( reaction )) then
     Debug("AirPolicing:WithDefaultInterceptReaction :: not a valid raction: "..Dump(reaction).." :: EXITS")
     return
@@ -299,9 +318,6 @@ function GetInterceptedReaction( controllable )
 
   local default = AirPolicing.DefaultInterceptedReaction or INTERCEPT_REACTION.None
   local s = group.GroupName
-
-Debug("===> GetInterceptedReaction-".. s .." :: AirPolicing.DefaultInterceptedReaction=" .. AirPolicing.DefaultInterceptedReaction)
-
   local at = string.find(s, InterceptionDefault.interceptReactionQualifier)
   if (at == nil) then
     Debug("GetInterceptedReaction-".. s .." :: reaction not set; resolves default: ".. default)
@@ -1252,11 +1268,9 @@ Returns
   }
 ]]--
 function FindWaypointByName( source, name )
-Debug("===> FindWaypointByName :: name="..name.."; source: "..Dump(source))
   local route = nil
   if (isTable(source) and source.ClassName == nil) then
     -- assume route ...
-Debug("===> FindWaypointByName :: assumes source=route")
     route = source
   end
 
@@ -1266,9 +1280,7 @@ Debug("===> FindWaypointByName :: assumes source=route")
     if ( group ~= nil ) then 
       route = group:CopyRoute()
     else
-Debug("===> FindWaypointByName :: cannot resolve group from source")
-      return nil
-    end
+      return nil end
   end
 
   for k,v in pairs(route) do
@@ -1280,10 +1292,7 @@ Debug("===> FindWaypointByName :: cannot resolve group from source")
 end
 
 function GetDivertWaypoint( group ) 
-
-  Debug("===> GetDivertWaypoint :: " .. Dump(group))
   local nisse = FindWaypointByName( group, InterceptionDefault.divertToWaypointName ) 
-  Debug("===> GetDivertWaypoint :: wp=" .. Dump(nisse))
   return nisse ~= nil
 end
 
@@ -1361,10 +1370,6 @@ function Follow( follower, leader, offsetLimits, lastWaypoint )
 end
 
 function RouteDirectTo( controllable, steerpoint )
-
-Debug("===> RouteDirectTo :: "..Dump(controllable))
-
-
   if (controllable == nil) then
     Debug("DirectTo-? :: controllable not specified :: EXITS")
     return
@@ -1382,7 +1387,6 @@ Debug("===> RouteDirectTo :: "..Dump(controllable))
   end
   
   route = group:CopyRoute()
-Debug("===> RouteDirectTo-"..group.GroupName.." :: "..Dump(route))
   if (route == nil) then
     Debug("DirectTo-" .. group.GroupName .." :: cannot resolve route from controllable: "..Dump(controllable).." :: EXITS")
     return
@@ -1413,13 +1417,7 @@ Debug("===> RouteDirectTo-"..group.GroupName.." :: "..Dump(route))
 end
 
 function Divert( controllable )
-
-Debug("===> Divert-? :: "..Dump(controllable))
-
   local divertRoute = RouteDirectTo(controllable, InterceptionDefault.divertToWaypointName)
-
-Debug("===> Divert-? :: "..Dump(divertRoute))
-
   return SetRoute( controllable, divertRoute )
 end
 

@@ -113,8 +113,6 @@ end
 
 local function controllingInterceptMenus( pg, ig, ai ) -- ig = intruder group; ai = _ActiveIntercept
 
-Debug("---> controllingInterceptMenus :: "..Dump(ig))
-
     pg.mainMenu:RemoveSubMenus()
 
     function landHereCommand()
@@ -128,7 +126,6 @@ Debug("---> controllingInterceptMenus :: "..Dump(ig))
     end
 
     function divertCommand()
-Debug("---> controllingInterceptMenus.divertCommand :: "..Dump(ig))
         Divert( ig )
         if (pg.interceptAssist) then
             MessageTo( pg.group, AirPolicing.Assistance.DivertNowOrderedInstruction, AirPolicing.Assistance.Duration )
@@ -174,8 +171,6 @@ local function beginIntercept( pg, ig ) -- ig = intruder group
 
                     local reaction = GetInterceptedReaction( intercept.intruder )
                     local icptorName = pg.group.GroupName
-
-                    Debug("---> Interception-"..icptorName.." :: reaction="..tostring(reaction))
 
                     if (reaction == INTERCEPT_REACTION.None) then
                         -- intruder disobeys order ...
@@ -274,19 +269,26 @@ local function intrudersMenus( pg )
             -- bearing
             local dirVec3 = ownCoordinate:GetDirectionVec3( intruderCoordinate )
             local angleRadians = ownCoordinate:GetAngleRadians( dirVec3 )
-            local angleDegrees = UTILS.Round( UTILS.ToDegree( angleRadians ), 0 )
-            local sBearing = string.format( '%03d°', angleDegrees )
+            local bearing = UTILS.Round( UTILS.ToDegree( angleRadians ), 0 )
+            -- local sBearing = string.format( '%03d°', angleDegrees )
+
+            --  o'clock position
+            local heading = pg.group:GetUnit(1):GetHeading()
+            local sPosition = GetClockPosition( heading, bearing )
 
             -- distance
             local distance = ownCoordinate:Get2DDistance(intruderCoordinate)
             local sDistance = DistanceToStringA2A( distance, true )
+
+            -- level position
+            local sLevelPos = GetLevelPosition( ownCoordinate, intruderCoordinate )
             
             -- angels
             local sAngels = GetAltitudeAsAngelsOrCherubs(g) -- ToStringAngelsOrCherubs( feet )
 
             --local lead = g:GetUnit(1)
             table.insert(intruders, { 
-                text = "Intercept flight at "..string.format( "%s for %s, %s", sBearing, sDistance, sAngels ), 
+                text = string.format( "%s %s for %s, %s", sPosition, sLevelPos, sDistance, sAngels ), 
                 intruder = g,
                 distance = distance})
         end)
@@ -304,7 +306,7 @@ local function intrudersMenus( pg )
         if (pg:isInterceptInactive()) then
             pg.interceptMenu:Remove()
             menuSeparator( pg, pg.mainMenu )
-            pg.lookAgainMenu = MENU_GROUP_COMMAND:New(pg.group, "LOOK AGAIN for nearby intruders", pg.mainMenu, intrudersMenus, pg)
+            pg.lookAgainMenu = MENU_GROUP_COMMAND:New(pg.group, "SCAN AREA again", pg.mainMenu, intrudersMenus, pg)
         end
         local intruderMenus = {}
         for k, v in pairs(intruders) do 
@@ -312,11 +314,11 @@ local function intrudersMenus( pg )
         end
         pg:interceptReady(intruderMenus)
         if (pg.interceptAssist) then
-            MessageTo( pg.group, tostring(#intruders).." intruders are nearby. Use menu to intercept", 6)
+            MessageTo( pg.group, tostring(#intruders).." flights spotted nearby. Use menu to intercept", 6)
         end
     else
         if (pg.interceptAssist) then
-            MessageTo( pg.group, "no nearby intruders found", 4)
+            MessageTo( pg.group, "no nearby flights found", 4)
         end
     end
 end
@@ -338,7 +340,7 @@ function inactiveMenus( pg )
 
     -- policing actions
     --pg.showOfForceMenu = MENU_GROUP_COMMAND:New(pg.group, "Begin show-of-force", pg.mainMenu, buildSOFMenus, pg) -- TODO
-    pg.interceptMenu = MENU_GROUP_COMMAND:New(pg.group, "Look for airspace intruders", pg.mainMenu, intrudersMenus, pg)
+    pg.interceptMenu = MENU_GROUP_COMMAND:New(pg.group, "SCAN AREA for nearby flights", pg.mainMenu, intrudersMenus, pg)
 
     local function toggleInterceptAssist()
         pg.interceptAssist = not pg.interceptAssist
