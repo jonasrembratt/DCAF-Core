@@ -6,21 +6,149 @@ DCAFCore = {
 function isString( value ) return type(value) == "string" end
 function isNumber( value ) return type(value) == "number" end
 function isTable( value ) return type(value) == "table" end
-function isUnit( value ) return isTable(value) and value.ClassName == "UNIT" end
-function isGroup( value ) return  isTable(value) and value.ClassName == "GROUP" end
+function isClass( value, class ) return isTable(value) and value.ClassName == class end
+function isUnit( value ) return isClass(value, "UNIT") end
+function isGroup( value ) return isClass(value, "GROUP") end
 
 local feetPerNauticalMile = 6076.1155
+
+function findFirstNonWhitespace( s, start )
+    local sLen = string.len(s)
+    for i=start, sLen, 1 do
+        local c = string.sub(s, i, i)
+        if (c ~= ' ' and c ~= '\n' and c ~= '\t') then
+            return i
+        end
+    end
+    return nil
+end
 
 function Debug( message )
     BASE:E(message)
     if (DCAFCore.DebugToUI) then
       MESSAGE:New("DBG: "..message):ToAll()
     end
-  end
+end
   
+
+--[[
+Resolves a UNIT from an arbitrary source
+]]--
+function getUnit( source )
+    if (isUnit(source)) then return source end
+    if (isString(source)) then
+        return UNIT:FindByName( source )
+    end
+    return nil
+end
+
+--[[
+Resolves a GROUP from an arbitrary source
+]]--
+function getGroup( source )
+    if (isGroup(source)) then 
+        return source 
+    end
+    if (isUnit(source)) then 
+        return source:GetGroup() 
+    end
+    if (not isString(source)) then return nil end
+
+    local group = GROUP:FindByName( source )
+    if (group ~= nil) then 
+        return group 
+    end
+    local unit = UNIT:FindByName( source )
+    if (unit ~= nil) then 
+        return unit:GetGroup() 
+    end
+    return nil
+end
   
+function getControllable( source )
+    local unit = getUnit(source)
+    if (unit ~= nil) then 
+      return unit end
+    
+    local group = getGroup(source)
+    if (group ~= nil) then 
+      return group end
+
+    return nil
+end
+
+
 local NoMessage = "_none_"
 
+--local ignoreMessagingGroups = {}
+--[[ 
+Sends a simple message to groups, clients or lists of groups or clients
+]]--
+function MessageTo( recipient, message, duration )
+
+  if (recipient == nil) then
+      Debug("MessageTo :: Recipient name not specified :: EXITS")
+      return
+  end
+  if (message == nil) then
+      Debug("MessageTo :: Message was not specified :: EXITS")
+      return
+  end
+  duration = duration or 5
+
+  if (isString(recipient)) then
+      local group = getGroup(recipient)
+      if (group == nil) then
+          Debug("MessageTo-?"..recipient.." :: Group could not be resolved :: EXITS")
+          return
+      end
+      local group = GROUP:FindByName( recipient )
+      if (group ~= nil) then
+          MessageTo( group, message, duration )
+          return
+      end
+    
+      local unit = UNIT:FindByName( recipient )
+      if (unit ~= nil) then
+          MessageTo( unit, message, duration )
+          return
+      end
+  end
+
+  if (type(recipient) == "table") then
+      if (recipient.ClassName == "UNIT") then
+          -- MOOSE doesn't support sending messages to units; send to group and ignore other units from same group ...
+          recipient = recipient:GetGroup()
+          MessageTo( group, message, duration )
+    end
+    if (recipient.ClassName == "GROUP") then
+        MESSAGE:New(message, duration):ToGroup(recipient)
+        Debug("MessageTo :: Group "..recipient.GroupName.." :: '"..message.."'")
+        return
+    end
+    if (recipient.ClassName == "CLIENT") then
+        MESSAGE:New(message, duration):ToClient(recipient)
+        Debug("MessageTo :: Client "..recipient:GetName().." :: "..message.."'")
+        return
+    end
+    for k, v in pairs(recipient) do
+        MessageTo( v, message, duration )
+    end
+    return
+  end
+
+  local function SendMessageToClient( recipient )
+      local unit = CLIENT:FindByName( recipient )
+      if (unit ~= nil) then
+          Debug("MessageTo-"..recipient.." :: "..message)
+          MESSAGE:New(message, duration):ToClient(unit)
+          return
+      end
+  end
+
+  if (pcall(SendMessageToClient(recipient))) then return end
+  Debug("MessageTo-"..recipient.." :: Recipient not found")
+end
 
 function GetUnitFromGroupName( groupName, unitNumber )
 
@@ -122,45 +250,6 @@ function GetUnitFromGroupName( groupName, unitNumber )
     return DumpPretty(value, options)
   end
   
-  --[[
-  Resolves a UNIT from an arbitrary source
-  ]]--
-  function getUnit( source )
-    if (isUnit(source)) then return source end
-    if (isString(source)) then
-      return UNIT:FindByName( source )
-    end
-    return nil
-  end
-  
-  --[[
-  Resolves a GROUP from an arbitrary source
-  ]]--
-  function getGroup( source )
-    if (isGroup(source)) then return source end
-    if (isUnit(source)) then return source:GetGroup() end
-    if (not isString(source)) then return nil end
-  
-    local group = GROUP:FindByName( source )
-    if (group ~= nil) then 
-      return group end
-  
-    local unit = UNIT:FindByName( source )
-    if (unit ~= nil) then 
-       return unit:GetGroup() end
-    return nil
-  end
-  
-  function getControllable( source )
-    local unit = getUnit(source)
-    if (unit ~= nil) then return unit end
-    
-    local group = getGroup(source)
-    if (group ~= nil) then return group end
-  
-    return nil
-  end
-  
   function DistanceToStringA2A( meters, estimated )
     
     if (not isNumber(meters)) then error( "<meters> must be a number" ) end
@@ -234,6 +323,148 @@ function GetUnitFromGroupName( groupName, unitNumber )
     return "low"
   end
 
+--------------------------------------------- [[ ROUTING ]] ---------------------------------------------
+
+
+--[[
+Gets the index of a named waypoint and returns a table containing it and its internal route index
+
+Parameters
+  source :: An arbitrary source. This can be a route, group, unit, or the name of group/unit
+  name :: The name of the waypoint to look for
+
+Returns
+  On success, an object; otherwise nil
+  (object)
+  {
+    waypoint :: The requested waypoint object
+    index :: The waypoints internal route index0
+  }
+]]--
+function FindWaypointByName( source, name )
+    local route = nil
+    if (isTable(source) and source.ClassName == nil) then
+        -- assume route ...
+        route = source
+    end
+
+    if (route == nil) then
+        -- try get route from group ...
+        local group = getGroup( source )
+        if ( group ~= nil ) then 
+        route = group:CopyRoute()
+        else
+        return nil end
+    end
+
+    for k,v in pairs(route) do
+        if (v["name"] == name) then
+        return { data = v, index = k }
+        end
+    end
+    return nil
+end
+
+function RouteDirectTo( controllable, steerpoint )
+    if (controllable == nil) then
+        Debug("DirectTo-? :: controllable not specified :: EXITS")
+        return
+    end
+    if (steerpoint == nil) then
+        Debug("DirectTo-? :: steerpoint not specified :: EXITS")
+        return
+    end
+
+    local route = nil
+    local group = getGroup( controllable )
+    if ( group == nil ) then
+        Debug("DirectTo-? :: cannot resolve group: "..Dump(controllable).." :: EXITS")
+        return
+    end
+    
+    route = group:CopyRoute()
+    if (route == nil) then
+        Debug("DirectTo-" .. group.GroupName .." :: cannot resolve route from controllable: "..Dump(controllable).." :: EXITS")
+        return
+    end
+
+    local wpIndex = nil
+    if (isString(steerpoint)) then
+        local wp = FindWaypointByName( route, steerpoint )
+        if (wp == nil) then
+        Debug("DirectTo-" .. group.GroupName .." :: no waypoint found with name '"..steerpoint.."' :: EXITS")
+        return
+        end
+        wpIndex = wp.index
+    elseif (isNumber(steerpoint)) then
+        wpIndex = steerpoint
+    else
+        Debug("DirectTo-" .. group.GroupName .." :: cannot resolved steerpoint: "..Dump(steerpoint).." :: EXITS")
+        return
+    end
+
+    local directToRoute = {}
+    for i=wpIndex,#route,1 do
+        table.insert(directToRoute, route[i])
+    end
+
+    return directToRoute
+
+end
+
+function SetRoute( controllable, route )
+
+    if (controllable == nil) then
+        Debug("SetRoute-? :: controllable not specified :: EXITS")
+        return
+    end
+    if (not isTable(route)) then
+        Debug("SetRoute-? :: invalid route (not a table) :: EXITS")
+        return
+    end
+    local group = getGroup(controllable)
+    if (group == nil) then
+        Debug("SetRoute-? :: group not found: "..Dump(controllable).." :: EXITS")
+        return
+    end
+
+    group:SetTask( group:TaskRoute( route ) )
+    Debug("SetRoute-"..group.GroupName.." :: group route was set :: DONE")
+
+end
+
+function LandHere( controllable, category, coalition )
+
+    local group = getGroup( controllable )
+    if (group == nil) then
+        Debug("LandHere-? :: group not found: "..Dump(controllable).." :: EXITS")
+        return
+    end
+
+    category = category or Airbase.Category.AIRDROME
+
+    local ab = group:GetCoordinate():GetClosestAirbase2( category, coalition )
+    if (ab == nil) then
+        Debug("LandHere-"..group.GroupName.." :: no near airbase found :: EXITS")
+        return
+    end
+
+    local abCoord = ab:GetCoordinate()
+    local landHere = {
+        ["airdromeId"] = ab.AirdromeID,
+        ["action"] = "Landing",
+        ["alt_type"] = "BARO",
+        ["y"] = abCoord.y,
+        ["x"] = abCoord.x,
+        ["alt"] = ab:GetAltitude(),
+        ["type"] = "Land",
+    }
+    group:Route( { landHere } )
+    AirPolicing:RegisterLanding( group )
+    Debug("LandHere-"..group.GroupName.." :: is tasked with landing at airbase ("..ab.AirbaseName..") :: DONE")
+    return ab
+
+end
 --------------------------------------------- [[ TRIGGER ZONES ]] ---------------------------------------------
 
 TRIGGER_ZONE_EVENT_TYPE = {
