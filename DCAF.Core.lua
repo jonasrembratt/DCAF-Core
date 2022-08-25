@@ -10,7 +10,12 @@ function isClass( value, class ) return isTable(value) and value.ClassName == cl
 function isUnit( value ) return isClass(value, "UNIT") end
 function isGroup( value ) return isClass(value, "GROUP") end
 
-local feetPerNauticalMile = 6076.1155
+FeetPerNauticalMile = 6076.1155
+MetersPerNauticalMile = UTILS.NMToMeters(1)
+
+function trim(s)
+    return (s:gsub("^%s*(.-)%s*$", "%1"))
+ end
 
 function findFirstNonWhitespace( s, start )
     local sLen = string.len(s)
@@ -23,10 +28,26 @@ function findFirstNonWhitespace( s, start )
     return nil
 end
 
+function Delay( seconds, userFunction, data )
+    if (not isNumber(seconds)) then error("Delay :: seconds was not specified") end
+    if (userFunction == nil) then error("Delay :: userFunction was not specified") end
+    local timer = TIMER:New(function() 
+        Debug("NISSE")
+        userFunction(data)
+    end):Start(seconds, 0, seconds)
+end
+    
 function Debug( message )
-    BASE:E(message)
+    BASE:E("DBG ===> "..tostring(message))
     if (DCAFCore.DebugToUI) then
       MESSAGE:New("DBG: "..message):ToAll()
+    end
+end
+  
+function Warning( message )
+    BASE:E("WRN ===> "..tostring(message))
+    if (DCAFCore.DebugToUI) then
+      MESSAGE:New("WRN: "..message):ToAll()
     end
 end
   
@@ -77,6 +98,22 @@ function getControllable( source )
     return nil
 end
 
+function GetOtherCoalitions( controllable )
+    local group = getGroup( controllable )
+    if (group == nil) then
+        Debug("GetOtherCoalitions :: group not found: "..Dump(controllable).." :: EXITS")
+        return
+    end
+
+    local coalition = group:GetCoalition()
+    if (coalition == "red" ) then
+        return { "blue", "neutral" }
+    elseif coalition == "blue" then
+        return { "red", "neutral" }
+    elseif coalition == "neutral" then
+        return { "red", "blue" }
+    end
+end
 
 local NoMessage = "_none_"
 
@@ -255,13 +292,13 @@ function GetUnitFromGroupName( groupName, unitNumber )
     if (not isNumber(meters)) then error( "<meters> must be a number" ) end
   
     local feet = UTILS.MetersToFeet( meters )
-    if (feet < feetPerNauticalMile / 2) then
+    if (feet < FeetPerNauticalMile / 2) then
       if (estimated or false) then
         feet = EstimatedDistance( feet )
       end
       return tostring( math.modf(feet) ) .. " feet"
     end
-    local nm = UTILS.Round( feet / feetPerNauticalMile, 1)
+    local nm = UTILS.Round( feet / FeetPerNauticalMile, 1)
     if (estimated) then
       -- round nm to nearest 0.5
       nm = UTILS.Round(nm * 2) / 2
@@ -433,38 +470,45 @@ function SetRoute( controllable, route )
 
 end
 
-function LandHere( controllable, category, coalition )
-
+function OptionsDefensive( controllable )
     local group = getGroup( controllable )
     if (group == nil) then
-        Debug("LandHere-? :: group not found: "..Dump(controllable).." :: EXITS")
+        Debug("OptionsAgressive-? :: cannot resolve group "..Dump(controllable) .." :: EXITS")
         return
     end
-
-    category = category or Airbase.Category.AIRDROME
-
-    local ab = group:GetCoordinate():GetClosestAirbase2( category, coalition )
-    if (ab == nil) then
-        Debug("LandHere-"..group.GroupName.." :: no near airbase found :: EXITS")
-        return
-    end
-
-    local abCoord = ab:GetCoordinate()
-    local landHere = {
-        ["airdromeId"] = ab.AirdromeID,
-        ["action"] = "Landing",
-        ["alt_type"] = "BARO",
-        ["y"] = abCoord.y,
-        ["x"] = abCoord.x,
-        ["alt"] = ab:GetAltitude(),
-        ["type"] = "Land",
-    }
-    group:Route( { landHere } )
-    AirPolicing:RegisterLanding( group )
-    Debug("LandHere-"..group.GroupName.." :: is tasked with landing at airbase ("..ab.AirbaseName..") :: DONE")
-    return ab
-
+    group:OptionROTEvadeFire()
 end
+
+function OptionsAgressive( controllable )
+    local group = getGroup( controllable )
+    if (group == nil) then
+        Debug("OptionsAgressive-? :: cannot resolve group "..Dump(controllable) .." :: EXITS")
+        return
+    end
+    group:OptionROEWeaponFree()
+    OptionsDefensive( controllable )
+end
+
+function SetAIOn( controllable )
+    local group = getGroup( controllable )
+    if (group == nil) then
+        Debug("SetAIOn-? :: cannot resolve group "..Dump(controllable) .." :: EXITS")
+        return
+    end
+    Debug("SetAIOn-"..group.GroupName.." :: sets AI=ON :: DONE")
+    group:SetAIOn()
+end
+
+function SetAIOff( controllable )
+    local group = getGroup( controllable )
+    if (group == nil) then
+        Debug("SetAIOff-? :: cannot resolve group "..Dump(controllable) .." :: EXITS")
+        return
+    end
+    Debug("SetAIOff-"..group.GroupName.." :: sets AI=OFF :: DONE")
+    group:SetAIOff()
+end
+
 --------------------------------------------- [[ TRIGGER ZONES ]] ---------------------------------------------
 
 TRIGGER_ZONE_EVENT_TYPE = {
