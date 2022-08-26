@@ -262,17 +262,21 @@ local function getIntruderBehavior( intruderGroup )
     return {}
 end
 
- function getInterceptedIntruderReaction( intruder, interceptor )
+function getDefaultInterceptedIntruderReaction( useDefault )
+    return  useDefault or AirPolicing.DefaultInterceptedBehavior or INTERCEPT_REACTIONS.None
+end
+
+function getInterceptedIntruderReaction( intruder, interceptor, useDefault )
   
     local itrGrp = getGroup(intruder)
     if (itrGrp == nil) then 
         Debug("getInterceptedIntruderReaction-? :: cannot resolve intruder group from ".. Dump(intruder).." :: EXITS")
-        return AirPolicing.DefaultInterceptedBehavior or INTERCEPT_REACTIONS.None
+        return getDefaultInterceptedIntruderReaction( useDefault )
     end
 
     local behavior = getIntruderBehavior( itrGrp )
     if (#behavior == 0) then
-        return AirPolicing.DefaultInterceptedBehavior or INTERCEPT_REACTIONS.None
+        return getDefaultInterceptedIntruderReaction( useDefault )
     end
 
     function getValidated( reaction )
@@ -320,7 +324,7 @@ end
         end
     end
 
-    return AirPolicing.DefaultInterceptedBehavior or INTERCEPT_REACTIONS.None
+    return getDefaultInterceptedIntruderReaction( useDefault )
 end
 
 local function setDefaultInterceptedBehavior( behavior )
@@ -1381,6 +1385,7 @@ local function establishInterceptMenus( pg, ig, ai ) -- ig = intruder group; ai 
     local function cancel()
         ai:Cancel()
         makeInactiveMenus( pg )
+        pg.intruderReaction = nil
         if (pg.interceptAssist) then
             MessageTo( pg.group, AirPolicing.Assistance.CancelledInstruction, AirPolicing.Assistance.Duration )
         end
@@ -1540,26 +1545,31 @@ local function onAiWasIntercepted( intercept, ig, pg )
   delayTimer:Start(1, 1)
 end
 
-local function beginIntercept( pg, ig ) -- ig = intruder group
+local function beginIntercept( pg, igInfo ) -- ig = intruder group
     
     pg:interceptEstablishing( ig )
     if (pg.lookAgainMenu ~= nil) then
         pg.lookAgainMenu:Remove()
     end
-    pg.intruderReaction = getInterceptedIntruderReaction( ig, pg.group )
+    pg.intruderReaction = getInterceptedIntruderReaction( igInfo.intruder, pg.group, nil )
+    if (pg.intruderReaction == nil and igInfo.escortingGroup ~= nil) then
+        -- there's no explicit reaction for escorting group; fall back to escorted group reaction ...
+        Debug("beginIntercept :: escorting group will react as its escorted group: "..pg.intruderReaction)
+        pg.intruderReaction = getInterceptedIntruderReaction( igInfo.escortingGroup, pg.group )
+    end
     local options = InterceptionOptions:New():WithAssistance( pg.interseptAssist )
     if (options.OnFollowMe.debugTimeoutTrigger ~= nil) then
       Debug("beginIntercept :: uses AI intercept debugging ...")
     end
-    local ai = _ActiveIntercept:New( id, pg.group )
+    local ai = _ActiveIntercept:New( igInfo.intruder, pg.group )
     OnInterception(
-        ig,
+        igInfo.intruder,
         function( intercept ) 
-            onAiWasIntercepted( intercept, ig, pg )
+            onAiWasIntercepted( intercept, igInfo.intruder, pg )
         end, 
         options:WithActiveIntercept( ai ))
 
-    establishInterceptMenus( pg, ig, ai )
+    establishInterceptMenus( pg, igInfo.intruder, ai )
 
 end
 
@@ -1584,13 +1594,12 @@ local function intrudersMenus( pg )
     local countIntruders = 0
     groups:ForEach(
         function(g)
-            local escortedGroupName = nil
             if (pg.group.GroupName == g.GroupName or not g:InAir() or not CanBeIntercepted(g)) then 
                 return end
             
+            local escortedGroupName = nil
             local identAt = string.find(g.GroupName, InterceptionDefault.escortIdentifier)
             if (identAt ~= nil) then
-                -- stash the escorting group and check for escorted group later
                 escortedGroupName = trim(string.sub(g.GroupName, 1, identAt-1))
             end
 
@@ -1638,11 +1647,15 @@ local function intrudersMenus( pg )
             local info = { 
                 text = string.format( "%s %s for %s, %s", sPosition, sLevelPos, sDistance, sAngels ), 
                 intruder = g,
-                distance = distance} 
+                distance = distance,
+                reaction = nil,
+                escortingGroup = escortedGroupName,
+            } 
             if (escortedGroupName == nil) then
                 intruders[g.GroupName] = info
                 countIntruders = countIntruders+1
             else
+                -- stash the escorting group and check for escorted group later
                 escorts[escortedGroupName] = info
             end
         end)
@@ -1653,9 +1666,9 @@ local function intrudersMenus( pg )
         if (escorted ~= nil) then
             local distance = escorted.intruder:GetCoordinate():Get3DDistance(escort.intruder:GetCoordinate())
             if (distance > MetersPerNauticalMile) then
+                -- the escoet group is considered a separate group as it's not flying close to the escorted group;
                 intruders[escort.intruder.GroupName] = escort
                 countIntruders = countIntruders+1
-            else
             end
         end
     end
@@ -1676,8 +1689,8 @@ local function intrudersMenus( pg )
             pg.lookAgainMenu = MENU_GROUP_COMMAND:New(pg.group, "SCAN AREA again", pg.mainMenu, intrudersMenus, pg)
         end
         local intruderMenus = {}
-        for k, v in pairs(intruders) do 
-            table.insert(intruderMenus, MENU_GROUP_COMMAND:New(pg.group, v.text, pg.mainMenu, beginIntercept, pg, v.intruder))
+        for k, info in pairs(intruders) do 
+            table.insert(intruderMenus, MENU_GROUP_COMMAND:New(pg.group, info.text, pg.mainMenu, beginIntercept, pg, info))
         end
         pg:interceptReady(intruderMenus)
         if (pg.interceptAssist) then
