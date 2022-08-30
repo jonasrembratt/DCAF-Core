@@ -19,5 +19,8 @@ A mechanism that provides player with VISID (visual identification) data when he
 ### Ability to specify what phase triggers intruder behavior
 ATM it is always triggered by interceptore signalling 'follow me' but at times it would make sense to have intruder react already as the interceptor is closing or is getting established in the intercept position
 
-### Randomized intruder reactions
-DONE - Suggested syntax, using '@' qualifier: atk1@40%>divt = attack 1 (if intruder feels superior to interceptor) at 40% chance; otherwise intruder diverts
+### Follow offset limits
+
+
+### DONE - Randomized intruder reactions 
+Suggested syntax, using '%' qualifier: atk1%40>divt = attack 1 (if intruder feels superior to interceptor) at 40% chance; otherwise intruder diverts

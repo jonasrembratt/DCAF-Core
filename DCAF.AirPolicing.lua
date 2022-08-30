@@ -134,12 +134,12 @@ end
 function CanBeIntercepted( controllable )
     local group = getGroup(controllable)
     if (group == nil) then
-        Debug("CanBeIntercepted-?  :: group cannot be resolve :: EXITS")
+        Trace("CanBeIntercepted-?  :: group cannot be resolve :: EXITS")
         return false
     end
     local leadUnit = group:GetUnit(1)
     if (leadUnit:IsPlayer()) then  -- TOTEST -- this needs tp be testen on MP server
-        Debug("CanBeIntercepted  :: Lead unit " .. leadUnit:GetName() .. " is player (cannot be intercepted)")
+        Trace("CanBeIntercepted  :: Lead unit " .. leadUnit:GetName() .. " is player (cannot be intercepted)")
         return false 
     end 
     if AirPolicing:IsLanding(group) then return false end
@@ -159,7 +159,7 @@ end
 
 local function parseReaction( s, next ) -- next = start index in 's'
 
-    Debug("parseReaction :: s=" .. s)
+    Trace("parseReaction :: s=" .. s)
     next = next or 1
     local sLength = string.len( s )
     local tokenLen = string.len(INTERCEPT_REACTIONS.None) -- all reaction identifiers are same length
@@ -218,7 +218,7 @@ local function parseBehavior( s, groupName )
 
     while (true) do
         if (not INTERCEPT_REACTION:IsValid( reaction )) then
-            Debug("parseBehavior-".. groupName .." :: invalid reaction: '".. reaction.Name .."'")
+            Trace("parseBehavior-".. groupName .." :: invalid reaction: '".. reaction.Name .."'")
             return behavior
         else
             table.insert( behavior, reaction )
@@ -233,7 +233,7 @@ local function parseBehavior( s, groupName )
         end
     end
 
-    Debug("parseBehavior-".. groupName .." :: unknown reaction: ".. reaction or "nil" .." :: returns nil")
+    Trace("parseBehavior-".. groupName .." :: unknown reaction: ".. reaction or "nil" .." :: returns nil")
     return nil
 
 end
@@ -258,7 +258,7 @@ local function getIntruderBehavior( intruderGroup )
     if (behavior ~= nil) then
         return behavior -- parseBehavior( s, groupName ) or default obsolete
     end
-    --Debug("getIntruderBehavior-".. groupName .." :: reaction not set")
+    --Trace("getIntruderBehavior-".. groupName .." :: reaction not set")
     return {}
 end
 
@@ -270,7 +270,7 @@ function getInterceptedIntruderReaction( intruder, interceptor, useDefault )
   
     local itrGrp = getGroup(intruder)
     if (itrGrp == nil) then 
-        Debug("getInterceptedIntruderReaction-? :: cannot resolve intruder group from ".. Dump(intruder).." :: EXITS")
+        Trace("getInterceptedIntruderReaction-? :: cannot resolve intruder group from ".. Dump(intruder).." :: EXITS")
         return getDefaultInterceptedIntruderReaction( useDefault )
     end
 
@@ -296,24 +296,24 @@ function getInterceptedIntruderReaction( intruder, interceptor, useDefault )
         -- conditional reactions ...
         local itcGrp = getGroup(interceptor)
         if (itcGrp == nil) then 
-            Debug("getInterceptedIntruderReaction-? :: cannot resolved interceptor group from ".. Dump(interceptor).." :: EXITS")
+            Trace("getInterceptedIntruderReaction-? :: cannot resolved interceptor group from ".. Dump(interceptor).." :: EXITS")
             return nil
         end
 
-        if (reaction.Name == INTERCEPT_REACTIONS.Attack1 and GetSuperiority(itrGrp, itcGrp) < 0) then
+        if (reaction.Name == INTERCEPT_REACTIONS.Attack1 and GetGroupSuperiority(itrGrp, itcGrp) < 0) then
             -- intruder is/feels superior ...
-            Debug("getInterceptedIntruderReaction-"..itrGrp.GroupName.." :: intruder feels superior to interceptor")
+            Trace("getInterceptedIntruderReaction-"..itrGrp.GroupName.." :: intruder feels superior to interceptor")
             return INTERCEPT_REACTIONS.Attack3
         end
         
-        if (reaction.Name == INTERCEPT_REACTIONS.Attack2 and GetSuperiority(itrGrp, itcGrp) <= 0) then
+        if (reaction.Name == INTERCEPT_REACTIONS.Attack2 and GetGroupSuperiority(itrGrp, itcGrp) <= 0) then
             -- intruder is/feels superior ...
-            Debug("getInterceptedIntruderReaction-"..itrGrp.GroupName.." :: intruder feels superior or equal to interceptor")
+            Trace("getInterceptedIntruderReaction-"..itrGrp.GroupName.." :: intruder feels superior or equal to interceptor")
             return INTERCEPT_REACTIONS.Attack3
         end
 
         -- todo support validating more reactions here
-        Debug("getInterceptedIntruderReaction-"..itrGrp.GroupName.." :: reaction was ruled out: "..reaction.Name)
+        Trace("getInterceptedIntruderReaction-"..itrGrp.GroupName.." :: reaction was ruled out: "..reaction.Name)
         return nil
     end
 
@@ -332,7 +332,7 @@ local function setDefaultInterceptedBehavior( behavior )
         -- behavior is string ...
         behavior = parseBehavior( behavior )
         if (behavior == nil) then 
-            Debug("setDefaultInterceptedBehavior :: invalid behavior: " .. behavior)
+            Trace("setDefaultInterceptedBehavior :: invalid behavior: " .. behavior)
             return
         end
         AirPolicing.DefaultInterceptedBehavior = behavior
@@ -345,12 +345,12 @@ local function setDefaultInterceptedBehavior( behavior )
 
     for _, reaction in pairs(behavior) do
       if (not INTERCEPT_REACTION:IsValid( reaction )) then
-          Debug("setDefaultInterceptedBehavior :: not a valid raction: "..Dump(reaction).." :: EXITS")
+          Trace("setDefaultInterceptedBehavior :: not a valid raction: "..Dump(reaction).." :: EXITS")
           return self
       end
     end
     AirPolicing.DefaultInterceptedBehavior = behavior
-    Debug("WithDefaultInterceptReaction :: set to " .. reaction) 
+    Trace("WithDefaultInterceptReaction :: set to " .. reaction) 
     return self
 end
 
@@ -388,16 +388,16 @@ OnInsideGroupZoneDefaults =
 
 function OnInsideGroupZone( groupName, callback, options )
     if ( groupName == nil) then
-      Debug("OnInsideGroupZone-? :: Group name missing :: EXITS")
+      Trace("OnInsideGroupZone-? :: Group name missing :: EXITS")
       return 
     end
     if (callback == nil) then 
-      Debug("OnInsideGroupZone-"..groupName.." :: missing callback function :: EXITS")
+      Trace("OnInsideGroupZone-"..groupName.." :: missing callback function :: EXITS")
       return 
     end
     local monitoredGroup = GROUP:FindByName( groupName )
     if (monitoredGroup == nil) then 
-      Debug("OnInsideGroupZone-"..groupName.." :: intruder group not found :: EXITS")
+      Trace("OnInsideGroupZone-"..groupName.." :: intruder group not found :: EXITS")
       return 
     end
 
@@ -410,7 +410,7 @@ function OnInsideGroupZone( groupName, callback, options )
     local unitNo = options.monitoredUnitNo or OnInsideGroupZoneDefaults.monitoredUnitNo
     local monitoredUnit = monitoredGroup:GetUnit(unitNo)
     if (monitoredUnit == nil) then 
-      Debug("OnInsideGroupZone-"..groupName.." :: monitored group unit #"..tostring(unitNo).." not found :: EXITS")
+      Trace("OnInsideGroupZone-"..groupName.." :: monitored group unit #"..tostring(unitNo).." not found :: EXITS")
       return 
     end
 
@@ -424,19 +424,19 @@ function OnInsideGroupZone( groupName, callback, options )
     local groupDeadEvent = EVENT:OnEventForUnit( 
       monitoredUnitName,
       function()
-        Debug("OnInsideGroupZone-"..groupName.." :: Monitored unit () was killed :: EXITS")
+        Trace("OnInsideGroupZone-"..groupName.." :: Monitored unit () was killed :: EXITS")
         stopTimerAfter = interval
       end
       )
     ]]--
 
-    Debug("OnInsideGroupZone-"..groupName.." :: BEGINS :: "..string.format("zoneRadius=%d; interval=%d", zoneRadius, interval))
+    Trace("OnInsideGroupZone-"..groupName.." :: BEGINS :: "..string.format("zoneRadius=%d; interval=%d", zoneRadius, interval))
 
     local function DetectUnits()
 
       monitoredUnit = monitoredGroup:GetUnit(unitNo)
       if (monitoredUnit == nil) then
-        Debug("OnInsideGroupZone-"..groupName.." :: monitored group unit #"..tostring(unitNo).." not found (might be dead) :: Timer stopped!")
+        Trace("OnInsideGroupZone-"..groupName.." :: monitored group unit #"..tostring(unitNo).." not found (might be dead) :: Timer stopped!")
         timer:Stop()      
         return
       end
@@ -466,7 +466,7 @@ function OnInsideGroupZone( groupName, callback, options )
       units:ForEach(
           function(unit)
               if (groupName == unit:GetGroup().GroupName) then
-                  --Debug("OnInsideGroupZone-"..groupName.." :: filters out monitored group's units")
+                  --Trace("OnInsideGroupZone-"..groupName.." :: filters out monitored group's units")
                   return 
               end
               local unitName = unit:GetName()
@@ -475,7 +475,7 @@ function OnInsideGroupZone( groupName, callback, options )
               local distance = math.abs(unitUnitMSL - monitoredUnitMSL)
 
               if (distance > zoneRadius) then 
-                  Debug("OnInsideGroupZone-"..unitName.." :: filters out "..unitName.." (vertically outside radius) :: EXITS")
+                  Trace("OnInsideGroupZone-"..unitName.." :: filters out "..unitName.." (vertically outside radius) :: EXITS")
                   return 
               end
               count = count+1
@@ -485,14 +485,14 @@ function OnInsideGroupZone( groupName, callback, options )
         if (stopTimerAfter > 0) then
             stopTimerAfter = stopTimerAfter - interval
             if (stopTimerAfter <= 0) then
-                Debug("OnInsideGroupZone-"..groupName.." :: TIMER STOPPED")
+                Trace("OnInsideGroupZone-"..groupName.." :: TIMER STOPPED")
                 timer:Stop()
             end
             return
         end
 
         if (count > 0) then
-            Debug("OnInsideGroupZone-"..groupName.." :: "..tostring(count).." units detected inside zone")
+            Trace("OnInsideGroupZone-"..groupName.." :: "..tostring(count).." units detected inside zone")
             local args = {
                 units = detected,
                 monitoredGroup = groupName,
@@ -534,16 +534,16 @@ OnInterceptedDefaults = {
 }
 function OnIntercepted( groupName, callback, options )
     if (groupName == nil) then
-      Debug("OnIntercepted-? :: Group name missing :: EXITS")
+      Trace("OnIntercepted-? :: Group name missing :: EXITS")
       return 
     end
     if (callback == nil) then 
-      Debug("OnIntercepted-"..groupName.." :: missing callback function :: EXITS")
+      Trace("OnIntercepted-"..groupName.." :: missing callback function :: EXITS")
       return 
     end
     local monitoredGroup = GROUP:FindByName( groupName )
     if (monitoredGroup == nil) then 
-      Debug("OnIntercepted-"..groupName.." :: intruder group not found :: EXITS")
+      Trace("OnIntercepted-"..groupName.." :: intruder group not found :: EXITS")
       return 
     end
 
@@ -557,7 +557,7 @@ function OnIntercepted( groupName, callback, options )
     local unitNo = options.interceptedUnitNo or OnInterceptedDefaults.interceptedUnitNo
     local intruderUnit = monitoredGroup:GetUnit(unitNo) 
     if (intruderUnit == nil) then 
-      Debug("OnIntercepted-"..groupName.." :: intruder group unit #"..tostring(unitNo).." not found :: EXITS")
+      Trace("OnIntercepted-"..groupName.." :: intruder group unit #"..tostring(unitNo).." not found :: EXITS")
       return 
     end
     local intruderUnitName = intruderUnit:GetName()
@@ -570,16 +570,16 @@ function OnIntercepted( groupName, callback, options )
     local interceptingUnit = nil
     local timer = nil
 
-    Debug("OnIntercepted-"..groupName.." ::  zoneOffset = {dx = "..tostring(zoneOffset.dx)..", dy="..tostring(zoneOffset.dy)..", dz="..tostring(zoneOffset.dz).."}")
+    Trace("OnIntercepted-"..groupName.." ::  zoneOffset = {dx = "..tostring(zoneOffset.dx)..", dy="..tostring(zoneOffset.dy)..", dz="..tostring(zoneOffset.dz).."}")
 
     local interceptZone = ZONE_UNIT:New(intruderUnitName.."-intercepted", intruderUnit, zoneRadius, zoneOffset)
-    Debug("OnIntercepted-"..groupName.." :: BEGINS :: "..string.format("zoneRadius=%d; delay=%d; interval=%d, description=%s", zoneRadius, delay, interval, description or ""))
+    Trace("OnIntercepted-"..groupName.." :: BEGINS :: "..string.format("zoneRadius=%d; delay=%d; interval=%d, description=%s", zoneRadius, delay, interval, description or ""))
     
     local function FindInterceptors()
 
       intruderUnit = monitoredGroup:GetUnit(unitNo) 
       if (intruderUnit == nil) then
-          Debug("OnIntercepted-"..groupName.." :: monitored group unit #"..tostring(unitNo).." not found (might be dead) :: Timer stopped!")
+          Trace("OnIntercepted-"..groupName.." :: monitored group unit #"..tostring(unitNo).." not found (might be dead) :: Timer stopped!")
           timer:Stop()      
           return
       end
@@ -607,7 +607,7 @@ function OnIntercepted( groupName, callback, options )
       interceptors:ForEach(
         function(interceptor)
             if (groupName == interceptor:GetGroup().GroupName) then
-                --Debug("OnIntercepted-"..groupName.." :: filters out intruder group units")
+                --Trace("OnIntercepted-"..groupName.." :: filters out intruder group units")
                 return 
             end
             local interceptorName = interceptor:GetName()
@@ -616,22 +616,22 @@ function OnIntercepted( groupName, callback, options )
             local distance = math.abs(interceptorUnitMSL - monitoredUnitMSL)
 
             if (distance > zoneRadius) then 
-                --Debug("OnIntercepted-"..groupName.." :: filters out "..interceptorName.." (vertically outside radius)")
+                --Trace("OnIntercepted-"..groupName.." :: filters out "..interceptorName.." (vertically outside radius)")
                 return 
             end
             local interceptorInfo = interceptorInfos[interceptorName]
             local timeEstablished = 0
             if (interceptorInfo == nil) then
-                Debug("OnIntercepted-"..groupName.." :: "..interceptorName.." is established in intercept zone")
+                Trace("OnIntercepted-"..groupName.." :: "..interceptorName.." is established in intercept zone")
                 if (description ~= nil) then
                     MESSAGE:New(description, delay):ToUnit(interceptor)
-                    Debug("OnIntercepted-"..groupName.." :: description sent to "..interceptorName.." :: "..description)
+                    Trace("OnIntercepted-"..groupName.." :: description sent to "..interceptorName.." :: "..description)
                 end
                 interceptorInfo = { establishedTimestamp = timestamp, isDescriptionProvided = true }
                 interceptorInfos[interceptorName] = interceptorInfo
             else
                 timeEstablished = timestamp - interceptorInfo.establishedTimestamp
-                Debug("OnIntercepted-"..groupName.." :: "..interceptorName.." remains in intercept zone :: time="..tostring(timeEstablished).."s")
+                Trace("OnIntercepted-"..groupName.." :: "..interceptorName.." remains in intercept zone :: time="..tostring(timeEstablished).."s")
             end
             if (timeEstablished >= delay) then
                 interceptingUnit = interceptor
@@ -642,7 +642,7 @@ function OnIntercepted( groupName, callback, options )
       if (stopTimerAfter > 0) then
           stopTimerAfter = stopTimerAfter - interval
           if (stopTimerAfter <= 0) then
-              Debug("OnIntercepted-"..groupName.." :: TIMER STOPPED")
+              Trace("OnIntercepted-"..groupName.." :: TIMER STOPPED")
               timer:Stop()
               interceptorInfos = nil
           end
@@ -655,7 +655,7 @@ function OnIntercepted( groupName, callback, options )
                 interceptedGroup = monitoredGroup.GroupName,
                 interceptingUnit = interceptingUnit:GetName()
             }
-            Debug("OnIntercepted-"..groupName.." :: Intercepted by "..interceptingUnit:GetName())
+            Trace("OnIntercepted-"..groupName.." :: Intercepted by "..interceptingUnit:GetName())
             callback( result )
         end 
       
@@ -682,12 +682,12 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
 
     local group = getGroup( intruder )
     if (group == nil) then
-        Debug("OnShowOfForce-? :: cannot resolve group from ".. Dump(intruder) .." :: EXITS")
+        Trace("OnShowOfForce-? :: cannot resolve group from ".. Dump(intruder) .." :: EXITS")
         return 
     end
     local groupName = group.GroupName
     if (callback == nil) then 
-        Debug("OnShowOfForce-"..groupName.." :: missing callback function :: EXITS")
+        Trace("OnShowOfForce-"..groupName.." :: missing callback function :: EXITS")
         return 
     end
 
@@ -703,7 +703,7 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
     local interval = options.interval or OnShowOfForceDefaults.interval
     local description = options.description or OnShowOfForceDefaults.description
 
-    Debug("OnShowOfForce-"..groupName.." :: BEGINS :: "..string.format("radius=%d; minSpeedKts=%d; minCount=%d, minTimeBetween=%d, description=%s, coalitions=%s", radius, minSpeedKts, minCount, minTimeBetween, description or "", Dump(coalitions)))
+    Trace("OnShowOfForce-"..groupName.." :: BEGINS :: "..string.format("radius=%d; minSpeedKts=%d; minCount=%d, minTimeBetween=%d, description=%s, coalitions=%s", radius, minSpeedKts, minCount, minTimeBetween, description or "", Dump(coalitions)))
 
     --local intruderName = group:GetName() obsolete
     local interceptZone = ZONE_GROUP:New(groupName, group, radius)
@@ -719,12 +719,26 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
 
     local function findAircrafts()
 
-        local interceptors = SET_GROUP:New()
-            :FilterCategoryAirplane()
-            :FilterCoalitions(coalitions)
-            :FilterZones({interceptZone})
-            :FilterActive()
-            :FilterOnce()
+        function getSetGroup()
+            return SET_GROUP:New()
+                :FilterCategoryAirplane()
+                :FilterCoalitions(coalitions)
+                :FilterZones({interceptZone})
+                :FilterActive()
+                :FilterOnce()
+        end
+        local ok, interceptors = pcall(getSetGroup)
+        if (not ok) then
+            -- check to see whether the intruder stil exists ...
+            local checkGroup = getGroup( intruder )
+            if (checkGroup == nil) then
+                Trace("OnShowOfForce-"..groupName.." :: group no longer exists :: CANCELS SOF")
+                Timer:Stop()
+                return 
+            end
+            Debug("ERROR ===> OnShowOfForce-"..groupName.." :: "..tostring(interceptors).." :: coalitions="..Dump(coalitions).."; interceptZone="..DumpPretty(interceptZone))
+            return
+        end
 
         local timestamp = UTILS.SecondsOfToday()
 
@@ -736,7 +750,7 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
         local intruderCoord = group:GetCoordinate()
         local foundInterceptor = nil
         
-        Debug("OnShowOfForce-"..groupName.." :: found interceptors "..tostring(#interceptors).." (timestamp = "..tostring(timestamp)..")")
+        --Trace("OnShowOfForce-"..groupName.." :: found interceptors "..tostring(#interceptors).." (timestamp = "..tostring(timestamp)..")")
 
         interceptors:ForEachGroup(
             function(interceptor)
@@ -751,32 +765,32 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
                 end
 
                 if (groupName == interceptor.GroupName) then
-                    -- Debug("OnShowOfForce-"..groupName.." :: filters out intruder from interceptors")
+                    -- Trace("OnShowOfForce-"..groupName.." :: filters out intruder from interceptors")
                     return 
                 end
 
                 local interceptorInfo = interceptorsInfo[interceptor.GroupName]
                 if (interceptorInfo ~= nil and isTooEarly(interceptorInfo)) then
-                    Debug("OnShowOfForce-"..groupName.." :: filters out interceptor (SOF is too early)")
+                    Trace("OnShowOfForce-"..groupName.." :: filters out interceptor (SOF is too early)")
                     return 
                 end
 
                 local velocityKts = interceptor:GetVelocityKNOTS()
                 if (velocityKts < minSpeedKts) then
-                    Debug("OnShowOfForce-"..groupName.." :: filters out interceptor (too slow at "..tostring(velocityKts)..")")
+                    Trace("OnShowOfForce-"..groupName.." :: filters out interceptor (too slow at "..tostring(velocityKts)..")")
                     return
                 end
                 local interceptorCoord = interceptor:GetCoordinate()
                 local distance = interceptorCoord:Get3DDistance(intruderCoord)
                 if (distance > radius) then 
-                Debug("OnShowOfForce-"..groupName.." :: filters out "..interceptor.GroupName.." (vertically outside radius)")
+                Trace("OnShowOfForce-"..groupName.." :: filters out "..interceptor.GroupName.." (vertically outside radius)")
                 return 
                 end
-                Debug("OnShowOfForce-"..groupName.." :: "..string.format("Interceptor %s", interceptor.GroupName))
+                Trace("OnShowOfForce-"..groupName.." :: "..string.format("Interceptor %s", interceptor.GroupName))
                 if (interceptorInfo == nil) then
                 if (description ~= nil) then
                     MESSAGE:New(description, delay):ToGroup(interceptor)
-                    Debug("OnIntercepted-"..groupName.." :: description sent to "..interceptor.GroupName.." :: "..description)
+                    Trace("OnIntercepted-"..groupName.." :: description sent to "..interceptor.GroupName.." :: "..description)
                 end
                 interceptorInfo = {
                     interceptor = interceptor.GroupName,  -- group name for interceptor performing SOF
@@ -786,7 +800,7 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
                 interceptorsInfo[interceptor.GroupName] = interceptorInfo
                 end
                 interceptorInfo.countSof = interceptorInfo.countSof+1
-                Debug("OnShowOfForce-"..groupName.." :: Interceptor "..interceptor.GroupName.." SOF count="..tostring(interceptorInfo.countSof))
+                Trace("OnShowOfForce-"..groupName.." :: Interceptor "..interceptor.GroupName.." SOF count="..tostring(interceptorInfo.countSof))
                 if (interceptorInfo.countSof >= minCount) then
                     foundInterceptor = interceptor.GroupName
                 end
@@ -795,7 +809,7 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
         if (stopTimerAfter > 0) then
         stopTimerAfter = stopTimerAfter - interval
         if (stopTimerAfter <= 0) then
-            Debug("OnShowOfForce-"..groupName.." :: TIMER STOPPED")
+            Trace("OnShowOfForce-"..groupName.." :: TIMER STOPPED")
             Timer:Stop()
             interceptorsInfo = nil
         end
@@ -807,7 +821,7 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
             intruder = groupName,
             interceptors = { foundInterceptor }
         }
-        Debug("OnShowOfForce-"..groupName.." :: Found interceptor '"..foundInterceptor.."'")
+        Trace("OnShowOfForce-"..groupName.." :: Found interceptor '"..foundInterceptor.."'")
         local delay = math.random(2, 12)
         Delay(delay, function() callback( result ) end)
         end
@@ -854,25 +868,25 @@ OnFollowMeDefaults = {
 function OnFollowMe( unitName, escortedGroupName, callback, options )
 
     if (unitName == nil) then
-      Debug("OnFollowMe-? :: unitName not specified :: EXITS")
+      Trace("OnFollowMe-? :: unitName not specified :: EXITS")
       return
     end
     local unit = UNIT:FindByName( unitName )
     if (unit == nil) then
-      Debug("OnFollowMe-"..unitName.." :: Unit was not found :: EXITS")
+      Trace("OnFollowMe-"..unitName.." :: Unit was not found :: EXITS")
       return
     end
     if (escortedGroupName == nil) then
-      Debug("OnFollowMe-"..groupName.." :: missing escortedGroupName :: EXITS")
+      Trace("OnFollowMe-"..groupName.." :: missing escortedGroupName :: EXITS")
       return
     end
     local escortedGroup = GROUP:FindByName( escortedGroupName )
     if (escortedGroup == nil) then
-      Debug("OnFollowMe-"..groupName.." :: Escorted group ("..escortedGroupName..") not found :: EXITS")
+      Trace("OnFollowMe-"..groupName.." :: Escorted group ("..escortedGroupName..") not found :: EXITS")
       return
     end
     if (callback == nil) then 
-      Debug("OnFollowMe-"..groupName.." :: missing callback function :: EXITS")
+      Trace("OnFollowMe-"..groupName.." :: missing callback function :: EXITS")
       return 
     end
 
@@ -895,25 +909,25 @@ function OnFollowMe( unitName, escortedGroupName, callback, options )
     local startTime = UTILS.SecondsOfToday()
     local totalTime = 0
 
-    Debug("OnFollowMe-"..unitName.." :: BEGINS :: "..string.format("rockWings="..tostring(rockWings ~= nil).."; minBankAngle=%d, minCount=%d, maxTime=%d", minBankAngle, minCount, maxTime))
+    Trace("OnFollowMe-"..unitName.." :: BEGINS :: "..string.format("rockWings="..tostring(rockWings ~= nil).."; minBankAngle=%d, minCount=%d, maxTime=%d", minBankAngle, minCount, maxTime))
 
     local function DetectFollowMeSignal()
 
         local timestamp = UTILS.SecondsOfToday()
         totalTime = timestamp - startTime
         local bankAngle = unit:GetRoll()
-        --    Debug("OnFollowMe :: '"..unitName.." :: "..string.format("bankAngle=%d; lastMaxBankAngle=%d", bankAngle, lastMaxBankAngle or 0))
+        --    Trace("OnFollowMe :: '"..unitName.." :: "..string.format("bankAngle=%d; lastMaxBankAngle=%d", bankAngle, lastMaxBankAngle or 0))
         local absBankAngle = math.abs(bankAngle)
 
         function getIsWingRockComplete() 
             table.insert(bankEvents, 1, timestamp)
             countEvents = countEvents+1
-            --Debug("OnFollowMe :: '"..unitName.." :: count="..tostring(countEvents).."/"..tostring(minCount))
+            --Trace("OnFollowMe :: '"..unitName.." :: count="..tostring(countEvents).."/"..tostring(minCount))
             if (countEvents < minCount) then return false end
             local prevTimestamp = bankEvents[minCount]
             local timeSpent = timestamp - prevTimestamp
             if (timeSpent > maxTime) then
-                Debug("OnFollowMe :: '"..unitName.." :: TOO SLOW")
+                Trace("OnFollowMe :: '"..unitName.." :: TOO SLOW")
                 return false
             end
             return true
@@ -945,12 +959,12 @@ function OnFollowMe( unitName, escortedGroupName, callback, options )
         local isComplete = isWingRockComplete or isLightsFlashedComplete
         if (not isComplete and autoTriggerTimeout > 0 and totalTime >= autoTriggerTimeout) then
             isComplete = true
-            Debug("OnFollowMe :: '"..unitName.." :: Triggers automatically (debug)")
+            Trace("OnFollowMe :: '"..unitName.." :: Triggers automatically (debug)")
         end
 
         if (not isComplete) then
             if (totalTime >= timeout) then
-                Debug("OnFollowMe :: '"..unitName.." :: Times out :: Timer stops!")
+                Trace("OnFollowMe :: '"..unitName.." :: Times out :: Timer stops!")
                 timer:Stop()
                 bankEvents = nil
             end
@@ -962,7 +976,7 @@ function OnFollowMe( unitName, escortedGroupName, callback, options )
             interceptor = unit:GetName(), 
             intruder = escortedGroupName 
         })
-        Debug("OnFollowMe :: '"..unitName.." :: Follow-me signal detected! :: Timer stops!")
+        Trace("OnFollowMe :: '"..unitName.." :: Follow-me signal detected! :: Timer stops!")
         timer:Stop()
         bankEvents = nil
 
@@ -1122,11 +1136,11 @@ See also
 function OnInterception( group, callback, options )
     group = getGroup( group )
     if (group == nil) then
-        Debug("OnInterception-? :: Group could not be resolved :: EXITS")
+        Trace("OnInterception-? :: Group could not be resolved :: EXITS")
         return 
     end
     if (callback == nil) then
-        Debug("OnInterception-"..group.GroupName.." :: Callback function missing :: EXITS")
+        Trace("OnInterception-"..group.GroupName.." :: Callback function missing :: EXITS")
         return 
     end
     options = options or InterceptionOptions
@@ -1198,22 +1212,22 @@ Parameters
 function Follow( follower, leader, offsetLimits, lastWaypoint )
 
     if (follower == nil) then
-        Debug("Follow-? :: Follower was not specified :: EXITS")
+        Trace("Follow-? :: Follower was not specified :: EXITS")
         return
     end
     local followerGrp = getGroup(follower)
     if (followerGrp == nil) then
-        Debug("Follow-? :: Cannot find follower: "..Dump(follower).." :: EXITS")
+        Trace("Follow-? :: Cannot find follower: "..Dump(follower).." :: EXITS")
         return
     end
 
     if (leader == nil) then
-        Debug("Follow-? :: Leader was not specified :: EXITS")
+        Trace("Follow-? :: Leader was not specified :: EXITS")
         return
     end
     local leaderGrp = getGroup(leader)
     if (leaderGrp == nil) then
-        Debug("Follow-? :: Cannot find leader: "..Dump(leader).." :: EXITS")
+        Trace("Follow-? :: Cannot find leader: "..Dump(leader).." :: EXITS")
         return
     end
 
@@ -1230,14 +1244,14 @@ function Follow( follower, leader, offsetLimits, lastWaypoint )
     end
     local task = followerGrp:TaskFollow( leaderGrp, off, lastWaypoint)
     followerGrp:SetTask( task )
-    Debug("FollowGroup-"..follower.." ::  Group is now following "..leader.." to WP #"..tostring(lastWaypoint))
+    Trace("FollowGroup-"..follower.." ::  Group is now following "..leader.." to WP #"..tostring(lastWaypoint))
 
 end
 
 function Divert( controllable )
     local divertRoute = RouteDirectTo(controllable, InterceptionDefault.divertToWaypointName)
 
-Debug("Divert :: " .. DumpPretty(divertRoute) )    
+--Trace("Divert :: " .. DumpPretty(divertRoute) )    
 
     return SetRoute( controllable, divertRoute )
 end
@@ -1246,7 +1260,7 @@ function LandHere( controllable, category, coalition )
 
     local group = getGroup( controllable )
     if (group == nil) then
-        Debug("LandHere-? :: group not found: "..Dump(controllable).." :: EXITS")
+        Trace("LandHere-? :: group not found: "..Dump(controllable).." :: EXITS")
         return
     end
 
@@ -1254,7 +1268,7 @@ function LandHere( controllable, category, coalition )
 
     local ab = group:GetCoordinate():GetClosestAirbase2( category, coalition )
     if (ab == nil) then
-        Debug("LandHere-"..group.GroupName.." :: no near airbase found :: EXITS")
+        Trace("LandHere-"..group.GroupName.." :: no near airbase found :: EXITS")
         return
     end
 
@@ -1270,7 +1284,7 @@ function LandHere( controllable, category, coalition )
     }
     group:Route( { landHere } )
     AirPolicing:RegisterLanding( group )
-    Debug("LandHere-"..group.GroupName.." :: is tasked with landing at airbase ("..ab.AirbaseName..") :: DONE")
+    Trace("LandHere-"..group.GroupName.." :: is tasked with landing at airbase ("..ab.AirbaseName..") :: DONE")
     return ab
 
 end
@@ -1379,6 +1393,7 @@ function PolicingGroup:RemoveIntruderMenus()
     end
 end
 
+local _debugTriggerOnAiWasInterceptedFunction = nil
 local function establishInterceptMenus( pg, ig, ai ) -- ig = intruder group; ai = _ActiveIntercept
 
     pg.mainMenu:RemoveSubMenus()
@@ -1391,6 +1406,9 @@ local function establishInterceptMenus( pg, ig, ai ) -- ig = intruder group; ai 
         end
     end
     MENU_GROUP_COMMAND:New(pg.group, "--CANCEL Interception--", pg.mainMenu, cancel, ig)
+    if (DCAFCore.Debug) then
+        MENU_GROUP_COMMAND:New(pg.group, ">> DEBUG: Trigger intercept", pg.mainMenu, _debugTriggerOnAiWasInterceptedFunction, ai, ig, pg)
+    end
 end
 
 local function controllingInterceptMenus( pg, ig, ai ) -- ig = intruder group; ai = _ActiveIntercept
@@ -1453,7 +1471,7 @@ local function onAiWasIntercepted( intercept, ig, pg )
 
         if (reaction == INTERCEPT_REACTIONS.None) then
             -- intruder disobeys order ...
-            Debug("Interception-"..icptorName.." :: "..ig.GroupName.." ignores interceptor")
+            Trace("Interception-"..icptorName.." :: "..ig.GroupName.." ignores interceptor")
             if (pg ~= nil) then
                 pg:interceptInactive()
                 inactiveMenus( pg )
@@ -1473,8 +1491,8 @@ local function onAiWasIntercepted( intercept, ig, pg )
                     MessageTo( intercept.interceptor, AirPolicing.Assistance.AttackingInstruction, AirPolicing.Assistance.Duration )
                 end
             end
-            Debug("Interception-"..icptorName.." :: "..ig.GroupName.." goes defensive")
-            OptionsDefensive( ig )
+            Trace("Interception-"..icptorName.." :: "..ig.GroupName.." goes defensive")
+            ROEDefensive( ig )
           return
         end
 
@@ -1487,11 +1505,11 @@ local function onAiWasIntercepted( intercept, ig, pg )
                     MessageTo( intercept.interceptor, AirPolicing.Assistance.AttackingInstruction, AirPolicing.Assistance.Duration )
                 end
             end
-            Debug("Interception-"..icptorName.." :: "..ig.GroupName.." attacks interceptor")
-            OptionsAgressive( ig )
+            Trace("Interception-"..icptorName.." :: "..ig.GroupName.." attacks interceptor")
+            OptionsOffensive( ig )
             local escortGroup = getGroup( ig.GroupName.." escort" )
             if (escortGroup ~= nil) then
-                OptionsAgressive( escortGroup )
+                OptionsOffensive( escortGroup )
             end
             return
         end
@@ -1505,7 +1523,7 @@ local function onAiWasIntercepted( intercept, ig, pg )
                     MessageTo( intercept.interceptor, AirPolicing.Assistance.DisobeyingInstruction, AirPolicing.Assistance.Duration )
                 end
             end
-            Debug("Interception-"..icptorName.." :: "..ig.GroupName.." diverts")
+            Trace("Interception-"..icptorName.." :: "..ig.GroupName.." diverts")
             Divert( intercept.intruder )
             return
         end
@@ -1519,7 +1537,7 @@ local function onAiWasIntercepted( intercept, ig, pg )
                     MessageTo( intercept.interceptor, AirPolicing.Assistance.DisobeyingInstruction, AirPolicing.Assistance.Duration )
                 end
             end
-            Debug("Interception-"..icptorName.." :: "..ig.GroupName.." lands")
+            Trace("Interception-"..icptorName.." :: "..ig.GroupName.." lands")
             LandHere( intercept.intruder )
             return
         end
@@ -1533,33 +1551,36 @@ local function onAiWasIntercepted( intercept, ig, pg )
                   MessageTo( intercept.interceptor, AirPolicing.Assistance.ObeyingInstruction, AirPolicing.Assistance.Duration )
               end
             end
-            Debug("Interception-"..icptorName.." :: "..ig.GroupName.." follows interceptor")
+            Trace("Interception-"..icptorName.." :: "..ig.GroupName.." follows interceptor")
             Follow( intercept.intruder, intercept.interceptor )
             return
         end
 
         -- NOTE we should not reach this line!
-        Debug("Interception-"..icptorName.." :: HUH?!")
+        Trace("Interception-"..icptorName.." :: HUH?!")
 
       end)
   delayTimer:Start(1, 1)
 end
 
+_debugTriggerOnAiWasInterceptedFunction = onAiWasIntercepted
+
 local function beginIntercept( pg, igInfo ) -- ig = intruder group
     
-    pg:interceptEstablishing( ig )
+    pg:interceptEstablishing( igInfo.intruder )
     if (pg.lookAgainMenu ~= nil) then
         pg.lookAgainMenu:Remove()
     end
-    pg.intruderReaction = getInterceptedIntruderReaction( igInfo.intruder, pg.group, nil )
-    if (pg.intruderReaction == nil and igInfo.escortingGroup ~= nil) then
+    pg.intruderReaction = getInterceptedIntruderReaction( igInfo.intruder, pg.group, "unknown" )
+    Trace("beginIntercept-"..igInfo.intruder.GroupName.." :: reaction: "..DumpPretty(pg.intruderReaction))
+    if (pg.intruderReaction == "unknown" and igInfo.escortingGroup ~= nil) then
         -- there's no explicit reaction for escorting group; fall back to escorted group reaction ...
-        Debug("beginIntercept :: escorting group will react as its escorted group: "..pg.intruderReaction)
         pg.intruderReaction = getInterceptedIntruderReaction( igInfo.escortingGroup, pg.group )
+        Trace("beginIntercept :: escorting group will react as its escorted group: "..pg.intruderReaction)
     end
     local options = InterceptionOptions:New():WithAssistance( pg.interseptAssist )
     if (options.OnFollowMe.debugTimeoutTrigger ~= nil) then
-      Debug("beginIntercept :: uses AI intercept debugging ...")
+      Trace("beginIntercept :: uses AI intercept debugging ...")
     end
     local ai = _ActiveIntercept:New( igInfo.intruder, pg.group )
     OnInterception(
@@ -1606,7 +1627,7 @@ local function intrudersMenus( pg )
             local ownCoordinate =  pg.group:GetCoordinate()
             local intruderCoordinate = g:GetCoordinate()
             if (not ownCoordinate:IsLOS(intruderCoordinate)) then 
-                Debug("intrudersMenus-"..pg.group.GroupName.." :: group "..g.GroupName.." is obscured (no line of sight)")
+                Trace("intrudersMenus-"..pg.group.GroupName.." :: group "..g.GroupName.." is obscured (no line of sight)")
                 return 
             end
             
@@ -1733,7 +1754,7 @@ function inactiveMenus( pg )
     end
 
     local function addOptionsMenus()
-        Debug("updateOptionsMenus :: Updates options menu (itcpt assist="..tostring(pg.interceptAssist).."; sofAssist="..tostring(pg.sofAssist)..")")
+        Trace("updateOptionsMenus :: Updates options menu (itcpt assist="..tostring(pg.interceptAssist).."; sofAssist="..tostring(pg.sofAssist)..")")
         optionsMenu:RemoveSubMenus()
 
         if (not AirPolicing.Assistance.IsAllowed) then
@@ -1823,7 +1844,7 @@ Remarks
   TODO : explain conditioned behaviors
 ]]--
 function AirPolicingOptions:WithAiInterceptBehavior( ... )
-    Debug("AirPolicingOptions:WithAiInterceptBehavior :: " .. DumpPretty(arg))
+    Trace("AirPolicingOptions:WithAiInterceptBehavior :: " .. DumpPretty(arg))
     if (#arg == 0) then
         error("Expected arguments!")
     end
@@ -1842,18 +1863,36 @@ function AirPolicingOptions:WithAiInterceptBehavior( ... )
         behaviors[k] = behavior
     end
     _aiInterceptedBehavior = behaviors
-    Debug("AirPolicingOptions :: behavior was set: "..DumpPretty(_aiInterceptedBehavior))
-
     return self
 end
 
 function AirPolicingOptions:WithAiInterceptorDebugging( timeout )
   OnFollowMeDefaults.debugTimeoutTrigger = timeout or 2
-  Debug("AirPolicingOptions:WithAiInterceptorDebugging :: " .. tostring(OnFollowMeDefaults.debugTimeoutTrigger))
+  Trace("AirPolicingOptions:WithAiInterceptorDebugging :: " .. tostring(OnFollowMeDefaults.debugTimeoutTrigger))
   return self
 end
 
 function AirPolicingOptions:WithTracing( value )
+    value = value or true
+    if (value and not DCAFCore.Trace) then
+        DCAFCore.Trace = value
+    elseif (not DCAFCore.Trace) then
+        DCAFCore.Trace = false
+    end
+    return self
+end
+
+function AirPolicingOptions:WithTracingToUI( value )
+    value = value or true
+    if (value and not DCAFCore.TraceToUI) then
+        DCAFCore.TraceToUI = value
+    elseif (not DCAFCore.TraceToUI) then
+        DCAFCore.TraceToUI = false
+    end
+    return self
+end
+
+function AirPolicingOptions:WithDebugging( value )
     value = value or true
     if (value and not DCAFCore.Debug) then
         DCAFCore.Debug = value
@@ -1863,7 +1902,7 @@ function AirPolicingOptions:WithTracing( value )
     return self
 end
 
-function AirPolicingOptions:WithUITracing( value )
+function AirPolicingOptions:WithDebuggingToUI( value )
     value = value or true
     if (value and not DCAFCore.DebugToUI) then
         DCAFCore.DebugToUI = value
@@ -1881,22 +1920,21 @@ function EnableAirPolicing( options ) -- todo consider allowing filtering which 
         local group = getGroup( data.IniGroupName )
         if (group ~= null) then 
             if (PolicingGroup:isPolicing(group)) then
-                Debug("EnableAirPolicing :: player ("..data.IniPlayerName..") entered "..data.IniUnitName.." :: group is already air police: "..data.IniGroupName)
+                Trace("EnableAirPolicing :: player ("..data.IniPlayerName..") entered "..data.IniUnitName.." :: group is already air police: "..data.IniGroupName)
                 return
             end
             PolicingGroup:New(group, options)
-
+            Trace("EnableAirPolicing :: player ("..data.IniPlayerName..") entered "..data.IniUnitName.." :: air policing options added for group "..data.IniGroupName)
         end
-        Debug("EnableAirPolicing :: player ("..data.IniPlayerName..") entered "..data.IniUnitName.." :: air policing options added for group "..data.IniGroupName)
   
     end)
-    Debug("AirPolicing was enabled")
+    Trace("AirPolicing was enabled")
 end
 
 
 function DebugIntercept( intruder )
 
-    Debug("DebugIntercept-"..Dump(intruder).." :: initiated")  
+    Trace("DebugIntercept-"..Dump(intruder).." :: initiated")  
     OnInterception(
         intruder, 
         function( intercept ) 
