@@ -1,7 +1,7 @@
 -- local _isDebuggingWithAiInterceptor = false obsolete
 local _aiInterceptedBehavior = {}
 
-local AirPolicing = {
+AirPolicing = {
     -- Obey/disobey patterns are mutually exclusive; if one is set the other should be set to nil
     -- (using the AirPolicing:WithObeyPattern and AirPolicing:WithDisobeyPattern functions will ensure this behavior)
     -- If both obey and disobey patterns are set, only the ObeyPattern is honored (meaning all groups not matching the ObeyPattern) will
@@ -32,7 +32,8 @@ local AirPolicing = {
         DivertNowOrderedInstruction =
           "The flight now resumes its route from this location. Good job!"
     },
-    LandingIntruders = {}
+    LandingIntruders = {},
+    _aiGroupDescriptions = {}
 }
 
 local InterceptionDefault = {
@@ -109,6 +110,27 @@ end
 
 function AirPolicing:IsLanding( group )
     return self.LandingIntruders[group.GroupName] ~= nil
+end
+
+function AirPolicing:GetGroupDescription( group )
+    group = getGroup(group)
+    if (group == nil) then
+        Warning("AirPolicing:GetGroupDescription :: cannot resolve group from "..Dump(group).." :: EXITS")
+        return
+    end
+
+    local description = self._aiGroupDescriptions[group.GroupName]
+    if (description) then 
+        return description
+    end
+
+    for k, d in ipairs(self._aiGroupDescriptions) do
+        if (string.match(group.GroupName, k)) then
+            return d
+        end
+    end
+
+    return nil
 end
 
 _ActiveIntercept = {
@@ -1863,6 +1885,11 @@ function AirPolicingOptions:WithAiInterceptBehavior( ... )
         behaviors[k] = behavior
     end
     _aiInterceptedBehavior = behaviors
+    return self
+end
+
+function AirPolicingOptions:WithGroupDescriptions( descriptions )
+    AirPolicing._aiGroupDescriptions = descriptions or {}
     return self
 end
 
