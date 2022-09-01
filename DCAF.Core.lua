@@ -1,8 +1,12 @@
 DCAFCore = {
-    Trace = false,
+    Trace = true,
     TraceToUI = false, 
     Debug = false,
     DebugToUI = false, 
+    WaypointNames = {
+        RTB = '_rtb_',
+        Divert = '_divert_',
+    }
 }
 
 function isString( value ) return type(value) == "string" end
@@ -333,11 +337,12 @@ Parameters
 DumpPrettyOptions = {
     asJson = false,
     indentSize = 2,
-    deep = false
+    deep = false,
+    includeFunctions = false
 }
 
 function DumpPrettyOptions:New()
-    return routines.util.deepCopy(DumpPrettyOptions)
+    return routines.utils.deepCopy(DumpPrettyOptions)
 end
 
 function DumpPrettyOptions:AsJson( value )
@@ -352,6 +357,11 @@ end
 
 function DumpPrettyOptions:Deep( value )
     self.deep = value or true
+    return self
+end
+
+function DumpPrettyOptions:IncludeFunctions( value )
+    self.includeFunctions = value or true
     return self
 end
 
@@ -379,15 +389,17 @@ function DumpPretty(value, options)
       local s = '{\n'
       local indent = mkIndent(ilvl * idtSize)
       for k,v in pairs(value) do
-        if (asJson) then
-          s = s .. indent..'"'..k..'"'..' : '
-        else
-          if type(k) ~= 'number' then k = '"'..k..'"' end
-          s = s .. indent.. '['..k..'] = '
+        if (options.includeFunctions or type(v) ~= "function") then
+            if (asJson) then
+                s = s .. indent..'"'..k..'"'..' : '
+            else
+                if type(k) ~= 'number' then k = '"'..k..'"' end
+                s = s .. indent.. '['..k..'] = '
+                end
+                s = s .. dumpRecursive(v, ilvl+1, idtSize) .. ',\n'
+            end
         end
-        s = s .. dumpRecursive(v, ilvl+1, idtSize) .. ',\n'
-      end
-      return s .. mkIndent((ilvl-1) * idtSize) .. '}'
+        return s .. mkIndent((ilvl-1) * idtSize) .. '}'
     end
   
     return dumpRecursive(value, 0)
@@ -607,8 +619,146 @@ function SetRoute( controllable, route )
         return
     end
 
-    group:SetTask( group:TaskRoute( route ) )
+    group:Route( route )
     Trace("SetRoute-"..group.GroupName.." :: group route was set :: DONE")
+--[[
+    local taskRoute = group:TaskRoute( route )
+
+    Debug("SetRoute (nisse) :: taskRoute: " .. DumpPretty(taskRoute, DumpPrettyOptions:New():Deep()))
+
+    group:SetTask( taskRoute )
+    Trace("SetRoute-"..group.GroupName.." :: group route was set :: DONE")
+]]--    
+end
+
+local function calcGroupOffset( group1, group2 )
+
+    local coord1 = group1:GetCoordinate()
+    local coord2 = group2:GetCoordinate()
+    return {
+        x = coord1.x-coord2.x,
+        y = coord1.y-coord2.y,
+        z = coord1.z-coord2.z
+    }
+
+end
+
+--[[
+Follow
+  Simplifies forcing a group to follow another group to a specified waypoint
+
+Parameters
+  follower :: (arbitrary) Specifies the group to be tasked with following the leader group
+  leader :: (arbitrary) Specifies the group to be followed
+  offset :: (Vec3) When set (individual elements can be set to force separation in that dimension) the follower will take a position, relative to the leader, offset by this value
+  lastWaypoint :: (integer; default=last waypoint) When specifed the follower will stop following the leader when this waypont is reached
+]]--
+function TaskFollow( follower, leader, offsetLimits, lastWaypoint )
+
+    if (follower == nil) then
+        Trace("Follow-? :: Follower was not specified :: EXITS")
+        return
+    end
+    local followerGrp = getGroup(follower)
+    if (followerGrp == nil) then
+        Trace("Follow-? :: Cannot find follower: "..Dump(follower).." :: EXITS")
+        return
+    end
+
+    if (leader == nil) then
+        Trace("Follow-? :: Leader was not specified :: EXITS")
+        return
+    end
+    local leaderGrp = getGroup(leader)
+    if (leaderGrp == nil) then
+        Trace("Follow-? :: Cannot find leader: "..Dump(leader).." :: EXITS")
+        return
+    end
+
+    if (lastWaypoint == nil) then
+        local route = leaderGrp:CopyRoute()
+        lastWaypoint = #route
+    end
+
+    local off = calcGroupOffset(followerGrp, leaderGrp)
+    if (offset ~= nil) then
+        off.x = offset.x or off.x
+        off.y = offset.y or off.y
+        off.z = offset.z or off.z
+    end
+    local task = followerGrp:TaskFollow( leaderGrp, off, lastWaypoint)
+    followerGrp:SetTask( task )
+    Trace("FollowGroup-"..followerGrp.GroupName.." ::  Group is now following "..leaderGrp.GroupName.." to WP #"..tostring(lastWaypoint))
+
+end
+
+function GetRTBWaypoint( group ) 
+    -- TODO consider returning -true- if last WP in route is landing WP
+    return FindWaypointByName( group, DCAFCore.WaypointNames.RTB ) ~= nil
+end
+
+function CanRTB( group ) 
+    return GetDivertWaypoint( group ) ~= nil
+end
+
+function RTB( controllable, steerpointName )
+
+local deep = DumpPrettyOptions:New():Deep()
+local nisse_grp = getGroup(controllable)
+local nisse_route = nisse_grp:TaskRoute()
+Debug("RTB :: nisse_route: " .. DumpPretty(nisse_route, deep))
+
+    local steerpointName = steerpointName or DCAFCore.WaypointNames.RTB
+    local route = RouteDirectTo(controllable, steerpointName)
+
+Debug("RTB :: route: " .. DumpPretty(route, deep))
+
+    return SetRoute( controllable, route )
+end
+
+function GetDivertWaypoint( group ) 
+    return FindWaypointByName( group, DCAFCore.WaypointNames.Divert ) ~= nil
+end
+
+function CanDivert( group ) 
+    return GetDivertWaypoint( group ) ~= nil
+end
+
+function Divert( controllable, steerpointName )
+    local steerpointName = steerpointName or DCAFCore.WaypointNames.Divert
+    local divertRoute = RouteDirectTo(controllable, steerpointName)
+    return SetRoute( controllable, divertRoute )
+end
+
+function LandHere( controllable, category, coalition )
+
+    local group = getGroup( controllable )
+    if (group == nil) then
+        Trace("LandHere-? :: group not found: "..Dump(controllable).." :: EXITS")
+        return
+    end
+
+    category = category or Airbase.Category.AIRDROME
+
+    local ab = group:GetCoordinate():GetClosestAirbase2( category, coalition )
+    if (ab == nil) then
+        Trace("LandHere-"..group.GroupName.." :: no near airbase found :: EXITS")
+        return
+    end
+
+    local abCoord = ab:GetCoordinate()
+    local landHere = {
+        ["airdromeId"] = ab.AirdromeID,
+        ["action"] = "Landing",
+        ["alt_type"] = "BARO",
+        ["y"] = abCoord.y,
+        ["x"] = abCoord.x,
+        ["alt"] = ab:GetAltitude(),
+        ["type"] = "Land",
+    }
+    group:Route( { landHere } )
+    Trace("LandHere-"..group.GroupName.." :: is tasked with landing at airbase ("..ab.AirbaseName..") :: DONE")
+    return ab
 
 end
 

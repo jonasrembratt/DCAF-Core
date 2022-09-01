@@ -37,7 +37,6 @@ AirPolicing = {
 }
 
 local InterceptionDefault = {
-    divertToWaypointName = '_divert_',
     interceptReactionQualifier = 'icpt',
     interceptReactionFallbackQualifier = '>',
     escortIdentifier = 'escort',
@@ -49,7 +48,7 @@ INTERCEPT_REACTIONS = {
     Attack2 = "atk2",    -- icpt=atk2 (changes to aggressive behavior if intruder is larger or equal in size to interceptor group)
     Attack3 = "atk3",    -- icpt=atk3 (changes to aggressive behavior unconditionally)
     Defensive1 = "def1", -- icpt=def1 (changes to defensive behavior)
-    Divert = "divt",     -- icpt=divt (if flight has InterceptionDefault.divertToWaypointName) in route it goes DIRECT; otherwise RTB (back to 1st wp)
+    Divert = "divt",     -- icpt=divt (if flight has divert waypoint) in route it goes DIRECT; otherwise RTB (back to 1st wp)
     Land =   "land",     -- icpt=land (lands at nearest friendly airbase)
     Follow = "folw",     -- icpt=folw (follows interceptor)
 }
@@ -1009,18 +1008,6 @@ function OnFollowMe( unitName, escortedGroupName, callback, options )
 
 end
 
-local function CalcGroupOffset( group1, group2 )
-
-    local coord1 = group1:GetCoordinate()
-    local coord2 = group2:GetCoordinate()
-    return {
-        x = coord1.x-coord2.x,
-        y = coord1.y-coord2.y,
-        z = coord1.z-coord2.z
-    }
-
-end
-
 InterceptionOptions = {
     OnInsideZone = OnInsideGroupZoneDefaults,
     OnIntercepted = OnInterceptedDefaults,
@@ -1192,15 +1179,6 @@ function OnInterception( group, callback, options )
         end, options.OnInsideZone)
 end
 
-function GetDivertWaypoint( group ) 
-    local nisse = FindWaypointByName( group, InterceptionDefault.divertToWaypointName ) 
-    return nisse ~= nil
-end
-
-function CanDivert( group ) 
-    return GetDivertWaypoint( group ) ~= nil
-end
-
 FollowOffsetLimits = {
     -- longitudinal offset limits
     xMin = nil,
@@ -1221,93 +1199,10 @@ function FollowOffsetLimits:GetFor( follower )
 
 end
 
---[[
-Follow
-  Simplifies forcing a group to follow another group to a specified waypoint
+function OrderLandHere( controllable, category, coalition )
 
-Parameters
-  follower :: (arbitrary) Specifies the group to be tasked with following the leader group
-  leader :: (arbitrary) Specifies the group to be followed
-  offset :: (Vec3) When set (individual elements can be set to force separation in that dimension) the follower will take a position, relative to the leader, offset by this value
-  lastWaypoint :: (integer; default=last waypoint) When specifed the follower will stop following the leader when this waypont is reached
-]]--
-function Follow( follower, leader, offsetLimits, lastWaypoint )
-
-    if (follower == nil) then
-        Trace("Follow-? :: Follower was not specified :: EXITS")
-        return
-    end
-    local followerGrp = getGroup(follower)
-    if (followerGrp == nil) then
-        Trace("Follow-? :: Cannot find follower: "..Dump(follower).." :: EXITS")
-        return
-    end
-
-    if (leader == nil) then
-        Trace("Follow-? :: Leader was not specified :: EXITS")
-        return
-    end
-    local leaderGrp = getGroup(leader)
-    if (leaderGrp == nil) then
-        Trace("Follow-? :: Cannot find leader: "..Dump(leader).." :: EXITS")
-        return
-    end
-
-    if (lastWaypoint == nil) then
-        local route = leaderGrp:CopyRoute()
-        lastWaypoint = #route
-    end
-
-    local off = CalcGroupOffset(followerGrp, leaderGrp)
-    if (offset ~= nil) then
-        off.x = offset.x or off.x
-        off.y = offset.y or off.y
-        off.z = offset.z or off.z
-    end
-    local task = followerGrp:TaskFollow( leaderGrp, off, lastWaypoint)
-    followerGrp:SetTask( task )
-    Trace("FollowGroup-"..follower.." ::  Group is now following "..leader.." to WP #"..tostring(lastWaypoint))
-
-end
-
-function Divert( controllable )
-    local divertRoute = RouteDirectTo(controllable, InterceptionDefault.divertToWaypointName)
-
---Trace("Divert :: " .. DumpPretty(divertRoute) )    
-
-    return SetRoute( controllable, divertRoute )
-end
-
-function LandHere( controllable, category, coalition )
-
-    local group = getGroup( controllable )
-    if (group == nil) then
-        Trace("LandHere-? :: group not found: "..Dump(controllable).." :: EXITS")
-        return
-    end
-
-    category = category or Airbase.Category.AIRDROME
-
-    local ab = group:GetCoordinate():GetClosestAirbase2( category, coalition )
-    if (ab == nil) then
-        Trace("LandHere-"..group.GroupName.." :: no near airbase found :: EXITS")
-        return
-    end
-
-    local abCoord = ab:GetCoordinate()
-    local landHere = {
-        ["airdromeId"] = ab.AirdromeID,
-        ["action"] = "Landing",
-        ["alt_type"] = "BARO",
-        ["y"] = abCoord.y,
-        ["x"] = abCoord.x,
-        ["alt"] = ab:GetAltitude(),
-        ["type"] = "Land",
-    }
-    group:Route( { landHere } )
     AirPolicing:RegisterLanding( group )
-    Trace("LandHere-"..group.GroupName.." :: is tasked with landing at airbase ("..ab.AirbaseName..") :: DONE")
-    return ab
+    return LandHere( controllable, category, coalition )
 
 end
 
@@ -1438,7 +1333,7 @@ local function controllingInterceptMenus( pg, ig, ai ) -- ig = intruder group; a
     pg.mainMenu:RemoveSubMenus()
 
     function landHereCommand()
-        local airbase = LandHere( ig )
+        local airbase = OrderLandHere( ig )
         if (pg.interceptAssist) then
             local text = string.format( AirPolicing.Assistance.LandHereOrderedInstruction, airbase.AirbaseName )
             MessageTo( pg.group, text, AirPolicing.Assistance.Duration )
@@ -1560,7 +1455,7 @@ local function onAiWasIntercepted( intercept, ig, pg )
                 end
             end
             Trace("Interception-"..icptorName.." :: "..ig.GroupName.." lands")
-            LandHere( intercept.intruder )
+            OrderLandHere( intercept.intruder )
             return
         end
 
@@ -1574,7 +1469,7 @@ local function onAiWasIntercepted( intercept, ig, pg )
               end
             end
             Trace("Interception-"..icptorName.." :: "..ig.GroupName.." follows interceptor")
-            Follow( intercept.intruder, intercept.interceptor )
+            TaskFollow( intercept.intruder, intercept.interceptor )
             return
         end
 
