@@ -9,6 +9,7 @@ AirPolicing = {
     DefaultInterceptedBehavior = nil,
     Assistance = {
         IsAllowed = true,
+        DescriptionDelay = 7, -- delay from entering intruder zone to intruder description is presented (if available); see AirPolicingOptions:WithGroupDescriptions
         Duration = 12, -- the duration (seconds) for all assistance messages
         ApproachInstruction = 
           "Approach slowly and non-aggressively, especially with civilian aircraft",
@@ -26,7 +27,7 @@ AirPolicing = {
         AttackingInstruction = 
           "The flight doesn't seem to obey your orders and is behaving aggressively. Be cautious and ready for a fight!",
         CancelledInstruction = 
-          "Interceopt was cancelled. Please use menu for further airspace policing",
+          "Intercept procedure was cancelled. Please use menu for further airspace policing",
         LandHereOrderedInstruction =
           "The flight leaves your formation to land at %s. Good job!",
         DivertNowOrderedInstruction =
@@ -550,7 +551,7 @@ OnInterceptedDefaults = {
     },
     coalitions = { "blue" },
     description = nil,
-    delay = 4,         -- time (seconds) required for interceptor to be established in interceopt zone before interception is triggered
+    delay = 4,         -- time (seconds) required for interceptor to be established in intercept zone before interception is triggered
     interval = 2
 }
 function OnIntercepted( groupName, callback, options )
@@ -740,6 +741,12 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
 
     local function findAircrafts()
 
+        if (not group:IsAlive()) then
+            Trace("OnShowOfForce-"..group.GroupName.." :: group is no longer alive :: STOPS")
+            Timer:Stop()
+            return
+        end
+
         function getSetGroup()
             return SET_GROUP:New()
                 :FilterCategoryAirplane()
@@ -750,14 +757,20 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
         end
         local ok, interceptors = pcall(getSetGroup)
         if (not ok) then
-            -- check to see whether the intruder stil exists ...
-            local checkGroup = getGroup( intruder )
-            if (checkGroup == nil) then
-                Trace("OnShowOfForce-"..groupName.." :: group no longer exists :: CANCELS SOF")
+            -- check to see whether the intruder still exists ...
+            if (not group:IsAlive()) then
+                Trace("OnShowOfForce-"..groupName.." :: group now is dead :: STOPS")
                 Timer:Stop()
                 return 
             end
-            Debug("ERROR ===> OnShowOfForce-"..groupName.." :: "..tostring(interceptors).." :: coalitions="..Dump(coalitions).."; interceptZone="..DumpPretty(interceptZone))
+            local checkGroup = getGroup( intruder )
+            if (checkGroup == nil) then
+                Trace("OnShowOfForce-"..groupName.." :: group no longer exists :: STOPS")
+                Timer:Stop()
+                return 
+            end
+            --Debug("ERROR ===> OnShowOfForce-"..groupName.." :: "..Dump(interceptors))
+            --Debug("ERROR ===> OnShowOfForce-"..groupName.." :: "..tostring(interceptors).." :: coalitions="..Dump(coalitions).."; interceptZone="..DumpPretty(interceptZone))
             return
         end
 
@@ -830,7 +843,7 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
         if (stopTimerAfter > 0) then
         stopTimerAfter = stopTimerAfter - interval
         if (stopTimerAfter <= 0) then
-            Trace("OnShowOfForce-"..groupName.." :: TIMER STOPPED")
+            Trace("OnShowOfForce-"..groupName.." :: STOPS")
             Timer:Stop()
             interceptorsInfo = nil
         end
@@ -1158,24 +1171,32 @@ function OnInterception( group, callback, options )
         MessageTo( ai.interceptor, AirPolicing.Assistance.ApproachInstruction, options.assistanceDuration )
     end
     OnInsideGroupZone( group.GroupName,
-    function( closing )
-
-        if (ai and options.showAssistance) then
-        MessageTo( ai.interceptor, AirPolicing.Assistance.EstablishInstruction, options.assistanceDuration )
-        end
-        OnIntercepted( closing.monitoredGroup, 
-        function( intercepted )
+        function( closing )
 
             if (ai and options.showAssistance) then
-            MessageTo( ai.interceptor, AirPolicing.Assistance.SignalInstruction, options.assistanceDuration )
+                MessageTo( ai.interceptor, AirPolicing.Assistance.EstablishInstruction, options.assistanceDuration )
             end
-            OnFollowMe(
-            intercepted.interceptingUnit, 
-            intercepted.interceptedGroup,
-            callback,
-            options.OnFollowMe)
+            -- display intruder description if available ...
+            Delay( AirPolicing.Assistance.DescriptionDelay, 
+                function()
+                    local desc = AirPolicing:GetGroupDescription( group )
+                    if desc then
+                        MessageTo( ai.interceptor, desc, options.assistanceDuration )
+                    end
+                end)
+            OnIntercepted( closing.monitoredGroup, 
+                function( intercepted )
 
-        end, options.OnIntercepted)
+                    if (ai and options.showAssistance) then
+                        MessageTo( ai.interceptor, AirPolicing.Assistance.SignalInstruction, options.assistanceDuration )
+                    end
+                    OnFollowMe(
+                        intercepted.interceptingUnit, 
+                        intercepted.interceptedGroup,
+                        callback,
+                        options.OnFollowMe)
+
+                end, options.OnIntercepted)
         end, options.OnInsideZone)
 end
 
