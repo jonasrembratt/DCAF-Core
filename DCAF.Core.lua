@@ -806,7 +806,6 @@ function ROEOpenFire( ... )
         else
             group:OptionAlarmStateRed()
             Trace("ROEOpenFire-"..group.GroupName.." :: is alarm state RED")
-            --ROTEvadeFire( controllable )
             group:OptionROEOpenFire()
             Trace("ROEOpenFire-"..group.GroupName.." :: can open fire at designated targets")
         end 
@@ -845,6 +844,21 @@ function ROEWeaponFree( ... )
     end
 end
 
+function ROEDefensive( ... )
+    for _, controllable in ipairs(arg) do
+        local group = getGroup( controllable )
+        if (group == nil) then
+            Warning("ROEWeaponsFree-? :: cannot resolve group "..Dump(controllable) .." :: IGNORES")
+        else
+            ROTEvadeFire( controllable )
+            group:OptionAlarmStateRed()
+            Trace("ROEWeaponsFree-"..group.GroupName.." :: is alarm state RED")
+            ROEHoldFire( group )
+            Trace("ROEWeaponsFree-"..group.GroupName.." :: is weapons free")
+        end
+    end
+end
+
 function ROEAggressive( ... )
     for _, controllable in ipairs(arg) do
         local group = getGroup( controllable )
@@ -855,7 +869,6 @@ function ROEAggressive( ... )
             group:OptionAlarmStateRed()
             Trace("ROEWeaponsFree-"..group.GroupName.." :: is alarm state RED")
             ROEWeaponFree( group )
-            --group:OptionROEWeaponFree()
             Trace("ROEWeaponsFree-"..group.GroupName.." :: is weapons free")
         end
     end
@@ -907,7 +920,7 @@ end
 --------------------------------------------- [[ MISSION EVENTS ]] ---------------------------------------------
 
 MissionEvents = {
-    _groupBirthHandlers = {},
+    _groupSpawnedHandlers = {},
     _unitDeadHandlers = {}
 }
 
@@ -921,13 +934,18 @@ function _e:onEvent( event )
         end
     end
 
-    if (event.id == world.event.S_EVENT_BIRTH and event.IniGroup and #MissionEvents._groupBirthHandlers > 0) then
-        invokeHandlers( MissionEvents._groupBirthHandlers, { IniGroupName = event.IniGroup.GroupName } )
+    if (event.id == world.event.S_EVENT_BIRTH and event.IniGroup and #MissionEvents._groupSpawnedHandlers > 0) then
+        invokeHandlers( MissionEvents._groupSpawnedHandlers, { IniGroupName = event.IniGroup.GroupName } )
         return
     end
 
     if (event.id == world.event.S_EVENT_DEAD and event.IniUnit and #MissionEvents._unitDeadHandlers > 0) then
-        invokeHandlers( MissionEvents._unitDeadHandlers, { IniUnitName = event.IniUnit.UnitName, IniGroupName=event.IniUnit.GroupName } )
+        invokeHandlers( MissionEvents._unitDeadHandlers, { 
+            IniUnit = event.IniUnit,
+            IniUnitName = event.IniUnit.UnitName,
+            IniGroup = event.IniGroup,
+            IniGroupName=event.IniUnit.GroupName
+        })
         return
     end
 end
@@ -941,7 +959,7 @@ local function registerEventListener( listeners, func)
     world.addEventHandler(_e)
 end
 
-function MissionEvents:OnGroupBirth( func ) registerEventListener(MissionEvents._groupBirthHandlers, func) end
+function MissionEvents:OnGroupSpawned( func ) registerEventListener(MissionEvents._groupSpawnedHandlers, func) end
 function MissionEvents:OnUnitDead( func ) registerEventListener(MissionEvents._unitDeadHandlers, func) end
 
 

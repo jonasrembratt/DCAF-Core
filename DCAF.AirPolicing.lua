@@ -456,52 +456,52 @@ function OnInsideGroupZone( groupName, callback, options )
 
     local function DetectUnits()
 
-      monitoredUnit = monitoredGroup:GetUnit(unitNo)
-      if (monitoredUnit == nil) then
-        Trace("OnInsideGroupZone-"..groupName.." :: monitored group unit #"..tostring(unitNo).." not found (might be dead) :: Timer stopped!")
-        timer:Stop()      
-        return
-      end
+        monitoredUnit = monitoredGroup:GetUnit(unitNo)
+        if (monitoredUnit == nil) then
+            Trace("OnInsideGroupZone-"..groupName.." :: monitored group unit #"..tostring(unitNo).." not found (might be dead) :: Timer stopped!")
+            timer:Stop()      
+            return
+        end
 
-      local units = SET_UNIT:New()
-        :FilterCategories({ "plane" })
-        :FilterCoalitions( coalitions )
-        :FilterZones( { interceptZone } )
-        :FilterActive()
-        :FilterOnce()
-      local timestamp = UTILS.SecondsOfToday()
-    
-      --[[
+        local units = SET_UNIT:New()
+            :FilterCategories({ "plane" })
+            :FilterCoalitions( coalitions )
+            :FilterZones( { interceptZone } )
+            :FilterActive()
+            :FilterOnce()
+        local timestamp = UTILS.SecondsOfToday()
+        
+        --[[
 
-      if the detected unit belongs to interceptor(s) coalition it will be included in the `units` set, so needs to be fitered out
-      also, oddly enough, the above filtering doesn't exclude groups flying vertically outside the radius 
-      (zone appears to be cylinder rather than orb, not sure if that's a MOOSE bug)
-      so we need to filter those out manually 
+        if the detected unit belongs to interceptor(s) coalition it will be included in the `units` set, so needs to be fitered out
+        also, oddly enough, the above filtering doesn't exclude groups flying vertically outside the radius 
+        (zone appears to be cylinder rather than orb, not sure if that's a MOOSE bug)
+        so we need to filter those out manually 
 
-      ]]--
-      
-      local pos = Unit.getByName(monitoredUnitName):getPoint()
-      local monitoredUnitMSL = pos.y
-      local detected = {}
-      local count = 0
+        ]]--
+        
+        local pos = Unit.getByName(monitoredUnitName):getPoint()
+        local monitoredUnitMSL = pos.y
+        local detected = {}
+        local count = 0
 
-      units:ForEach(
-          function(unit)
-              if (groupName == unit:GetGroup().GroupName) then
-                  --Trace("OnInsideGroupZone-"..groupName.." :: filters out monitored group's units")
-                  return 
-              end
-              local unitName = unit:GetName()
-              local pos = Unit.getByName(unitName):getPoint()
-              local unitUnitMSL = pos.y
-              local distance = math.abs(unitUnitMSL - monitoredUnitMSL)
+        units:ForEach(
+            function(unit)
+                if (groupName == unit:GetGroup().GroupName) then
+                    --Trace("OnInsideGroupZone-"..groupName.." :: filters out monitored group's units")
+                    return 
+                end
+                local unitName = unit:GetName()
+                local pos = Unit.getByName(unitName):getPoint()
+                local unitUnitMSL = pos.y
+                local distance = math.abs(unitUnitMSL - monitoredUnitMSL)
 
-              if (distance > zoneRadius) then 
-                  Trace("OnInsideGroupZone-"..unitName.." :: filters out "..unitName.." (vertically outside radius) :: EXITS")
-                  return 
-              end
-              count = count+1
-              table.insert(detected, count, unit:GetName())
+                if (distance > zoneRadius) then 
+                    Trace("OnInsideGroupZone-"..unitName.." :: filters out "..unitName.." (vertically outside radius) :: EXITS")
+                    return 
+                end
+                count = count+1
+                table.insert(detected, count, unit:GetName())
             end)
 
         if (stopTimerAfter > 0) then
@@ -599,77 +599,77 @@ function OnIntercepted( groupName, callback, options )
     
     local function FindInterceptors()
 
-      intruderUnit = monitoredGroup:GetUnit(unitNo) 
-      if (intruderUnit == nil) then
-          Trace("OnIntercepted-"..groupName.." :: monitored group unit #"..tostring(unitNo).." not found (might be dead) :: Timer stopped!")
-          timer:Stop()      
-          return
-      end
+        intruderUnit = monitoredGroup:GetUnit(unitNo) 
+        if (intruderUnit == nil) then
+            Trace("OnIntercepted-"..groupName.." :: monitored group unit #"..tostring(unitNo).." not found (might be dead) :: Timer stopped!")
+            timer:Stop()      
+            return
+        end
 
-      local interceptors = SET_UNIT:New()
-          :FilterCategories({ "plane" })
-          :FilterCoalitions( coalitions )
-          :FilterZones( { interceptZone } )
-          :FilterActive()
-          :FilterOnce()
-      
-      --[[
+        local interceptors = SET_UNIT:New()
+            :FilterCategories({ "plane" })
+            :FilterCoalitions( coalitions )
+            :FilterZones( { interceptZone } )
+            :FilterActive()
+            :FilterOnce()
+        
+        --[[
 
-      if the intruder belongs to interceptor(s) coalition it will be included in the `interceptors` set, so needs to be fitered out
-      also, oddly enough, the above filtering doesn't exclude groups flying vertically outside the radius 
-      (zone appears to be cylinder rather than orb, not sure if that's a MOOSE bug)
-      so we need to filter those out manually 
+        if the intruder belongs to interceptor(s) coalition it will be included in the `interceptors` set, so needs to be fitered out
+        also, oddly enough, the above filtering doesn't exclude groups flying vertically outside the radius 
+        (zone appears to be cylinder rather than orb, not sure if that's a MOOSE bug)
+        so we need to filter those out manually 
 
-      ]]--
-      
-      local pos = Unit.getByName(intruderUnitName):getPoint()
-      local monitoredUnitMSL = pos.y
-      local timestamp = UTILS.SecondsOfToday()
+        ]]--
+        
+        local pos = Unit.getByName(intruderUnitName):getPoint()
+        local monitoredUnitMSL = pos.y
+        local timestamp = UTILS.SecondsOfToday()
 
-      interceptors:ForEach(
-        function(interceptor)
-            if (groupName == interceptor:GetGroup().GroupName) then
-                --Trace("OnIntercepted-"..groupName.." :: filters out intruder group units")
-                return 
-            end
-            local interceptorName = interceptor:GetName()
-            local pos = Unit.getByName(interceptorName):getPoint()
-            local interceptorUnitMSL = pos.y
-            local distance = math.abs(interceptorUnitMSL - monitoredUnitMSL)
-
-            if (distance > zoneRadius) then 
-                --Trace("OnIntercepted-"..groupName.." :: filters out "..interceptorName.." (vertically outside radius)")
-                return 
-            end
-            local interceptorInfo = interceptorInfos[interceptorName]
-            local timeEstablished = 0
-            if (interceptorInfo == nil) then
-                Trace("OnIntercepted-"..groupName.." :: "..interceptorName.." is established in intercept zone")
-                if (description ~= nil) then
-                    MESSAGE:New(description, delay):ToUnit(interceptor)
-                    Trace("OnIntercepted-"..groupName.." :: description sent to "..interceptorName.." :: "..description)
+        interceptors:ForEach(
+            function(interceptor)
+                if (groupName == interceptor:GetGroup().GroupName) then
+                    --Trace("OnIntercepted-"..groupName.." :: filters out intruder group units")
+                    return 
                 end
-                interceptorInfo = { establishedTimestamp = timestamp, isDescriptionProvided = true }
-                interceptorInfos[interceptorName] = interceptorInfo
-            else
-                timeEstablished = timestamp - interceptorInfo.establishedTimestamp
-                Trace("OnIntercepted-"..groupName.." :: "..interceptorName.." remains in intercept zone :: time="..tostring(timeEstablished).."s")
-            end
-            if (timeEstablished >= delay) then
-                interceptingUnit = interceptor
-            end
+                local interceptorName = interceptor:GetName()
+                local pos = Unit.getByName(interceptorName):getPoint()
+                local interceptorUnitMSL = pos.y
+                local distance = math.abs(interceptorUnitMSL - monitoredUnitMSL)
+
+                if (distance > zoneRadius) then 
+                    --Trace("OnIntercepted-"..groupName.." :: filters out "..interceptorName.." (vertically outside radius)")
+                    return 
+                end
+                local interceptorInfo = interceptorInfos[interceptorName]
+                local timeEstablished = 0
+                if (interceptorInfo == nil) then
+                    Trace("OnIntercepted-"..groupName.." :: "..interceptorName.." is established in intercept zone")
+                    if (description ~= nil) then
+                        MESSAGE:New(description, delay):ToUnit(interceptor)
+                        Trace("OnIntercepted-"..groupName.." :: description sent to "..interceptorName.." :: "..description)
+                    end
+                    interceptorInfo = { establishedTimestamp = timestamp, isDescriptionProvided = true }
+                    interceptorInfos[interceptorName] = interceptorInfo
+                else
+                    timeEstablished = timestamp - interceptorInfo.establishedTimestamp
+                    Trace("OnIntercepted-"..groupName.." :: "..interceptorName.." remains in intercept zone :: time="..tostring(timeEstablished).."s")
+                end
+                if (timeEstablished >= delay) then
+                    interceptingUnit = interceptor
+                end
           end,
           interceptors)
 
-      if (stopTimerAfter > 0) then
-          stopTimerAfter = stopTimerAfter - interval
-          if (stopTimerAfter <= 0) then
-              Trace("OnIntercepted-"..groupName.." :: TIMER STOPPED")
-              timer:Stop()
-              interceptorInfos = nil
-          end
-          return
-      end
+        if (stopTimerAfter > 0) then
+            stopTimerAfter = stopTimerAfter - interval
+            if (stopTimerAfter <= 0) then
+                Trace("OnIntercepted-"..groupName.." :: TIMER STOPPED")
+                timer:Stop()
+                interceptorInfos = nil
+            end
+            return
+        end
 
         if (interceptingUnit ~= nil) then
             stopTimerAfter = 3 -- seconds
@@ -689,8 +689,7 @@ function OnIntercepted( groupName, callback, options )
 end
 
 -- consider different default options for different types of groups (naval, helis, ground ...)
-OnShowOfForceDefaults =
-{
+OnShowOfForceDefaults = {
     -- options
     radius = 300,            -- in meters, max distance between interceptor and intruder for show of force to trigger
     minCount = 1,            -- number of show-of force buzzes needed to trigger 
@@ -700,6 +699,50 @@ OnShowOfForceDefaults =
     interval = 2,            -- 
     description = nil        -- (string) when provided a message is sent to interceptor (describing the intruder)
 }
+
+--[[  WORK IN PROGRESS (rebuild show of force into a more object-oriented api and allow detection and menus, like with intercept)
+ShowOfForceState = {
+    Idle = 1,                -- no intruders detected yet
+    IntrudersDetected = 2,   -- a list of detected intruders are available
+    Active = 3               -- a show of force is in progress
+}
+
+ShowOfForce = {
+    _state = ShowOfForceState.Idle,
+    _interceptorGrp = nil,
+    _detectedGroups = {}
+}
+
+function ShowOfForce:New( interceptor, detectionRange )
+    local sof = routines.utils.deepCopy(ShowOfForce)
+    local group = getGroup( interceptor )
+    if (sof._interceptorGrp == nil) then
+        Warning("ShowOfForce:New :: interceptor cannot be resolved from " .. Dump(interceptor) .. " :: EXITS")
+        return nil
+    end
+    sof._interceptorGrp = group
+    if (not isNumber(detectionRange)) then
+        error("ShowOfForce:New :: detectionRange was not a number")
+        Warning(debug.traceback())
+    end
+    local setGroup = SET_GROUP:New():AddGroup( sof._interceptorGrp )
+    local detection = DETECTION_TYPES:New( setGroup ):SetAcceptRange( detectionRange )
+    sof._detection = detection
+    return sof
+end
+
+function ShowOfForce:Cancel()
+    self._state = ShowOfForceState.Idle
+    self._detectedGroups = {}
+    return self
+end
+
+SofDetectOptions = {}
+
+function ShowOfForce:Detect( range, options )
+end
+]]--
+
 function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minSpeedKts, coalitions, minTimeBetween, interval)
 
     local group = getGroup( intruder )
@@ -757,15 +800,15 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
         end
         local ok, interceptors = pcall(getSetGroup)
         if (not ok) then
-            -- check to see whether the intruder still exists ...
-            if (not group:IsAlive()) then
-                Trace("OnShowOfForce-"..groupName.." :: group now is dead :: STOPS")
-                Timer:Stop()
-                return 
-            end
+            -- check to see whether the intruder still exists, or is dead ...
             local checkGroup = getGroup( intruder )
             if (checkGroup == nil) then
                 Trace("OnShowOfForce-"..groupName.." :: group no longer exists :: STOPS")
+                Timer:Stop()
+                return 
+            end
+            if (not group:IsAlive()) then
+                Trace("OnShowOfForce-"..groupName.." :: group now is dead :: STOPS")
                 Timer:Stop()
                 return 
             end
@@ -788,14 +831,13 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
 
         interceptors:ForEachGroup(
             function(interceptor)
-            
-            function isTooEarly(Info)
-                -- check if enought time have passed since last SOF
-                local timeSinceLastSof = timestamp - (Info.lastTimeStamp or timestamp)
-                if (timeSinceLastSof > minTimeBetween) then 
-                    return true
-                end
-                return false
+                function isTooEarly(Info)
+                    -- check if enough time have passed since last SOF
+                    local timeSinceLastSof = timestamp - (Info.lastTimeStamp or timestamp)
+                    if (timeSinceLastSof > minTimeBetween) then 
+                        return true
+                    end
+                    return false
                 end
 
                 if (groupName == interceptor.GroupName) then
@@ -817,21 +859,21 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
                 local interceptorCoord = interceptor:GetCoordinate()
                 local distance = interceptorCoord:Get3DDistance(intruderCoord)
                 if (distance > radius) then 
-                Trace("OnShowOfForce-"..groupName.." :: filters out "..interceptor.GroupName.." (vertically outside radius)")
-                return 
+                    Trace("OnShowOfForce-"..groupName.." :: filters out "..interceptor.GroupName.." (vertically outside radius)")
+                    return 
                 end
                 Trace("OnShowOfForce-"..groupName.." :: "..string.format("Interceptor %s", interceptor.GroupName))
                 if (interceptorInfo == nil) then
-                if (description ~= nil) then
-                    MESSAGE:New(description, delay):ToGroup(interceptor)
-                    Trace("OnIntercepted-"..groupName.." :: description sent to "..interceptor.GroupName.." :: "..description)
-                end
-                interceptorInfo = {
-                    interceptor = interceptor.GroupName,  -- group name for interceptor performing SOF
-                    countSof = 0,                         -- counts no. of show-of-forces performed for intruder
-                    lastTimestamp = timestamp             -- used to calculate next SOF when more than one is required
-                }
-                interceptorsInfo[interceptor.GroupName] = interceptorInfo
+                    if (description ~= nil) then
+                        MESSAGE:New(description, delay):ToGroup(interceptor)
+                        Trace("OnIntercepted-"..groupName.." :: description sent to "..interceptor.GroupName.." :: "..description)
+                    end
+                    interceptorInfo = {
+                        interceptor = interceptor.GroupName,  -- group name for interceptor performing SOF
+                        countSof = 0,                         -- counts no. of show-of-forces performed for intruder
+                        lastTimestamp = timestamp             -- used to calculate next SOF when more than one is required
+                    }
+                    interceptorsInfo[interceptor.GroupName] = interceptorInfo
                 end
                 interceptorInfo.countSof = interceptorInfo.countSof+1
                 Trace("OnShowOfForce-"..groupName.." :: Interceptor "..interceptor.GroupName.." SOF count="..tostring(interceptorInfo.countSof))
@@ -841,29 +883,31 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
             end)
 
         if (stopTimerAfter > 0) then
-        stopTimerAfter = stopTimerAfter - interval
-        if (stopTimerAfter <= 0) then
-            Trace("OnShowOfForce-"..groupName.." :: STOPS")
-            Timer:Stop()
-            interceptorsInfo = nil
+            stopTimerAfter = stopTimerAfter - interval
+            if (stopTimerAfter <= 0) then
+                Trace("OnShowOfForce-"..groupName.." :: STOPS")
+                Timer:Stop()
+                interceptorsInfo = nil
+            end
+            return
         end
-        return
+        if foundInterceptor then
+            stopTimerAfter = 5 -- seconds
+            local result = {
+                intruder = groupName,
+                interceptors = { foundInterceptor.GroupName }
+            }
+            Trace("OnShowOfForce-"..groupName.." :: Found interceptor '"..foundInterceptor.GroupName.."'")
+            local desc = AirPolicing:GetGroupDescription(group)
+            if desc then
+                MessageTo( foundInterceptor, desc, AirPolicing.Assistance.Duration )
+            end
+            Delay(math.random(2, 12), function() callback( result )  end)
         end
-        if (foundInterceptor ~= nil) then
-        stopTimerAfter = 5 -- seconds
-        local result = {
-            intruder = groupName,
-            interceptors = { foundInterceptor }
-        }
-        Trace("OnShowOfForce-"..groupName.." :: Found interceptor '"..foundInterceptor.."'")
-        local delay = math.random(2, 12)
-        Delay(delay, function() callback( result ) end)
-        end
-        
+
     end
 
     Timer = TIMER:New(findAircrafts):Start(interval, interval)
-    --Timer:Start(interval, interval)
 
 end
 
@@ -1444,10 +1488,10 @@ local function onAiWasIntercepted( intercept, ig, pg )
                 end
             end
             Trace("Interception-"..icptorName.." :: "..ig.GroupName.." attacks interceptor")
-            OptionsOffensive( ig )
+            ROEAggressive( ig )
             local escortGroup = getGroup( ig.GroupName.." escort" )
             if (escortGroup ~= nil) then
-                OptionsOffensive( escortGroup )
+                ROEAggressive( escortGroup )
             end
             return
         end
@@ -1858,19 +1902,19 @@ end
 function EnableAirPolicing( options ) -- todo consider allowing filtering which groups/type of groups are to be policing
     options = options or AirPolicingOptions
     EVENTHANDLER:New():HandleEvent(EVENTS.PlayerEnterAircraft,
-    function( event, data )
-  
-        local group = getGroup( data.IniGroupName )
-        if (group ~= null) then 
-            if (PolicingGroup:isPolicing(group)) then
-                Trace("EnableAirPolicing :: player ("..data.IniPlayerName..") entered "..data.IniUnitName.." :: group is already air police: "..data.IniGroupName)
-                return
+        function( event, data )
+    
+            local group = getGroup( data.IniGroupName )
+            if (group ~= null) then 
+                if (PolicingGroup:isPolicing(group)) then
+                    Trace("EnableAirPolicing :: player ("..data.IniPlayerName..") entered "..data.IniUnitName.." :: group is already air police: "..data.IniGroupName)
+                    return
+                end
+                PolicingGroup:New(group, options)
+                Trace("EnableAirPolicing :: player ("..data.IniPlayerName..") entered "..data.IniUnitName.." :: air policing options added for group "..data.IniGroupName)
             end
-            PolicingGroup:New(group, options)
-            Trace("EnableAirPolicing :: player ("..data.IniPlayerName..") entered "..data.IniUnitName.." :: air policing options added for group "..data.IniGroupName)
-        end
-  
-    end)
+    
+        end)
     Trace("AirPolicing was enabled")
 end
 
