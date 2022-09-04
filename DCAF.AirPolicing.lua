@@ -1899,11 +1899,20 @@ function AirPolicingOptions:WithDebuggingToUI( value )
     return self
 end
 
+
 function EnableAirPolicing( options ) -- todo consider allowing filtering which groups/type of groups are to be policing
     options = options or AirPolicingOptions
-    EVENTHANDLER:New():HandleEvent(EVENTS.PlayerEnterAircraft,
-        function( event, data )
+    MissionEvents:OnPlayerEnteredUnit(
+     --[[
+    function( event )
+        Debug( "EnableAirPolicing :: " .. DumpPretty( event ) )
+    end)
+    ]]--
+    --EVENTHANDLER:New():HandleEvent(EVENTS.PlayerEnterAircraft,
+        function( data )
     
+            Debug("EnableAirPolicing :: " .. DumpPretty(data))
+
             local group = getGroup( data.IniGroupName )
             if (group ~= null) then 
                 if (PolicingGroup:isPolicing(group)) then

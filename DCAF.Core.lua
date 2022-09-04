@@ -921,13 +921,18 @@ end
 
 MissionEvents = {
     _groupSpawnedHandlers = {},
-    _unitDeadHandlers = {}
+    _unitDeadHandlers = {},
+    _playerEnteredUnitHandlers = {},
 }
 
 local isMissionEventsListenerRegistered = false
 local _e = {}
 
 function _e:onEvent( event )
+    
+    --Debug("_e:onEvent :: " .. DumpPretty(event.id) )
+
+
     local function invokeHandlers( handlers, data )
         for _, handler in ipairs(handlers) do
             handler( data )
@@ -948,6 +953,26 @@ function _e:onEvent( event )
         })
         return
     end
+
+    if (event.id == world.event.S_EVENT_PLAYER_ENTER_UNIT and event.initiator) then
+        local unit = UNIT:FindByName(Unit.getName(event.initiator))
+        invokeHandlers( MissionEvents._playerEnteredUnitHandlers, {
+            IniUnit = unit,
+            IniUnitName = Unit.getName(event.initiator),
+            IniGroup = unit:GetGroup(),
+            IniGroupName = Group.getName(Unit.getGroup(event.initiator)),
+--            Callsign = Unit.getCallsign(event.initiator),
+            IniPlayerName = Unit.getPlayerName(event.initiator)
+        })
+
+
+        -- invokeHandlers( MissionEvents._playerEnteredUnitHandlers, { 
+        --     IniUnit = event.IniUnit,
+        --     IniUnitName = event.IniUnit.UnitName,
+        --     IniGroup = event.IniGroup,
+        --     IniGroupName=event.IniUnit.GroupName,
+        -- })
+    end
 end
 
 local function registerEventListener( listeners, func)
@@ -961,6 +986,7 @@ end
 
 function MissionEvents:OnGroupSpawned( func ) registerEventListener(MissionEvents._groupSpawnedHandlers, func) end
 function MissionEvents:OnUnitDead( func ) registerEventListener(MissionEvents._unitDeadHandlers, func) end
+function MissionEvents:OnPlayerEnteredUnit( func ) registerEventListener(MissionEvents._playerEnteredUnitHandlers, func) end
 
 
 --------------------------------------------- [[ TRIGGER ZONES ]] ---------------------------------------------
