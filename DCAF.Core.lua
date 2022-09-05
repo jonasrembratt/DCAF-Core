@@ -42,9 +42,10 @@ end
 function Delay( seconds, userFunction, data )
     if (not isNumber(seconds)) then error("Delay :: seconds was not specified") end
     if (userFunction == nil) then error("Delay :: userFunction was not specified") end
-    local timer = TIMER:New(function() 
-        userFunction(data)
-    end):Start(seconds, 0, seconds)
+    local timer = TIMER:New(
+        function() 
+            userFunction(data)
+        end):Start(seconds)
 end
 
 local _missionStartTime = UTILS.SecondsOfToday()
@@ -232,17 +233,27 @@ function MessageTo( recipient, message, duration )
   end
 
   if (type(recipient) == "table") then
-      if (recipient.ClassName == "UNIT") then
+      if (isUnit(recipient)) then
           -- MOOSE doesn't support sending messages to units; send to group and ignore other units from same group ...
           recipient = recipient:GetGroup()
-          MessageTo( group, message, duration )
+          MessageTo( recipient, message, duration )
     end
-    if (recipient.ClassName == "GROUP") then
+    if (isGroup(recipient)) then
+        if (string.match(message, ".\.ogg") or string.match(message, ".\.wav")) then
+            USERSOUND:New(message):ToGroup(recipient)
+            Trace("MessageTo (audio) :: Group "..recipient.GroupName.." :: '"..message.."'")
+            return
+        end
         MESSAGE:New(message, duration):ToGroup(recipient)
         Trace("MessageTo :: Group "..recipient.GroupName.." :: '"..message.."'")
         return
     end
     if (recipient.ClassName == "CLIENT") then
+        if (string.match(message, ".\.ogg") or string.match(message, ".\.wav")) then
+            USERSOUND:New(message):ToGroup(recipient)
+            Trace("MessageTo (sound) :: Group "..recipient.GroupName.." :: '"..message.."'")
+            return
+        end
         MESSAGE:New(message, duration):ToClient(recipient)
         Trace("MessageTo :: Client "..recipient:GetName().." :: "..message.."'")
         return
@@ -643,6 +654,72 @@ local function calcGroupOffset( group1, group2 )
 
 end
 
+FollowOffsetLimits = {
+    -- longitudinal offset limits
+    xMin = 200,
+    xMax = 1000,
+
+    -- vertical offset limits
+    yMin = 0,
+    yMax = 100,
+
+    -- latitudinal offset limits
+    zMin = -30,
+    zMax = -1000 
+}
+
+function FollowOffsetLimits:New()
+    return routines.utils.deepCopy(FollowOffsetLimits)
+end
+
+function FollowOffsetLimits:Normalize( vec3 )
+
+Debug("FollowOffsetLimits:Normalize :: self: " .. Dump(self))
+Debug("FollowOffsetLimits:Normalize :: vec3: " .. Dump(vec3))
+
+    if (math.abs(vec3.x) < math.abs(self.xMin)) then
+        if (vec3.x < 0) then
+            vec3.x = -self.xMin
+        else
+            vec3.x = math.abs(self.xMin)
+        end
+Debug("FollowOffsetLimits:Normalize :: increased x: " .. vec3.x)
+    elseif (math.abs(vec3.x) > math.abs(self.xMax)) then
+        if (vec3.x < 0) then
+            vec3.x = -self.xMax
+        else
+            vec3.x = math.abs(self.xMax)
+        end
+Debug("FollowOffsetLimits:Normalize :: decreased x: " .. vec3.x)
+    end
+
+    if (math.abs(vec3.y) < math.abs(self.yMin)) then
+        if (vec3.y < 0) then
+            vec3.y = -self.yMin
+        else
+            vec3.y = math.abs(self.yMin)
+        end
+Debug("FollowOffsetLimits:Normalize :: increased y: " .. vec3.y)
+    elseif (math.abs(vec3.y) > math.abs(self.yMax)) then
+        if (vec3.y < 0) then
+            vec3.y = -self.yMax
+        else
+            vec3.y = math.abs(self.yMax)
+        end
+Debug("FollowOffsetLimits:Normalize :: decreased y: " .. vec3.y)
+    end
+
+    if (math.abs(vec3.z) < math.abs(self.zMin)) then
+        vec3.z = self.zMin
+Debug("FollowOffsetLimits:Normalize :: increased z: " .. vec3.z)
+    elseif (math.abs(vec3.z) > math.abs(self.zMax)) then
+        vec3.z = self.xMax
+Debug("FollowOffsetLimits:Normalize :: decreased z: " .. vec3.z)
+    end
+
+    return vec3
+end
+
 --[[
 Follow
   Simplifies forcing a group to follow another group to a specified waypoint
@@ -680,12 +757,18 @@ function TaskFollow( follower, leader, offsetLimits, lastWaypoint )
         lastWaypoint = #route
     end
 
-    local off = calcGroupOffset(followerGrp, leaderGrp)
-    if (offset ~= nil) then
-        off.x = offset.x or off.x
-        off.y = offset.y or off.y
-        off.z = offset.z or off.z
+    local off = calcGroupOffset(leaderGrp, followerGrp)
+
+Debug( "TaskFollow :: off: " .. DumpPretty( off ) )    
+
+    if offsetLimits then
+        off = offsetLimits:Normalize(off)
+--        off.x = offset.x or off.x obsolete
+--        off.y = offset.y or off.y
+--        off.z = offset.z or off.z
+Debug( "TaskFollow :: normalized off: " .. DumpPretty( off ) )    
     end
+
     local task = followerGrp:TaskFollow( leaderGrp, off, lastWaypoint)
     followerGrp:SetTask( task )
     Trace("FollowGroup-"..followerGrp.GroupName.." ::  Group is now following "..leaderGrp.GroupName.." to WP #"..tostring(lastWaypoint))
@@ -964,14 +1047,6 @@ function _e:onEvent( event )
 --            Callsign = Unit.getCallsign(event.initiator),
             IniPlayerName = Unit.getPlayerName(event.initiator)
         })
-
-
-        -- invokeHandlers( MissionEvents._playerEnteredUnitHandlers, { 
-        --     IniUnit = event.IniUnit,
-        --     IniUnitName = event.IniUnit.UnitName,
-        --     IniGroup = event.IniGroup,
-        --     IniGroupName=event.IniUnit.GroupName,
-        -- })
     end
 end
 
