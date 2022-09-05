@@ -878,7 +878,7 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
                 interceptorInfo.countSof = interceptorInfo.countSof+1
                 Trace("OnShowOfForce-"..groupName.." :: Interceptor "..interceptor.GroupName.." SOF count="..tostring(interceptorInfo.countSof))
                 if (interceptorInfo.countSof >= minCount) then
-                    foundInterceptor = interceptor.GroupName
+                    foundInterceptor = interceptor
                 end
             end)
 
@@ -1905,13 +1905,13 @@ function EnableAirPolicing( options ) -- todo consider allowing filtering which 
     MissionEvents:OnPlayerEnteredUnit(
      --[[
     function( event )
-        Debug( "EnableAirPolicing :: " .. DumpPretty( event ) )
+        Debug( "EnableAirPolicing :: " .. DumpPretty( event ) ) obsolete
     end)
     ]]--
     --EVENTHANDLER:New():HandleEvent(EVENTS.PlayerEnterAircraft,
         function( data )
     
-            Debug("EnableAirPolicing :: " .. DumpPretty(data))
+            --Debug("EnableAirPolicing :: " .. DumpPretty(data))
 
             local group = getGroup( data.IniGroupName )
             if (group ~= null) then 
