@@ -1163,8 +1163,20 @@ function InterceptionOptions:PolicingAssistanceAllowed( value )
 end
 
 function InterceptionOptions:WithAssistance( value, duration )
-    self.showAssistance = value or true
-    self.assistanceDuration = value or AirPolicing.Assistance.Duration
+Debug("InterceptionOptions:WithAssistance :: value = " .. tostring(value))    
+    if value ~= nil then
+        self.showAssistance = value
+    else
+        self.showAssistance = true
+    end
+
+    if duration ~= nil then
+        self.assistanceDuration = duration
+    else
+        self.assistanceDuration = AirPolicing.Assistance.Duration
+    end
+Debug("InterceptionOptions:WithAssistance :: self.showAssistance = " .. tostring(self.showAssistance))    
+
     return self
 end
 
@@ -1234,6 +1246,9 @@ function OnInterception( group, callback, options )
     end
     options = options or InterceptionOptions
     local ai = options._activeIntercept
+
+Debug(" OnInterception :: options.showAssistance = " .. tostring(options.showAssistance))    
+
     if (ai and options.showAssistance) then
         MessageTo( ai.interceptor, AirPolicing.Assistance.ApproachInstruction, options.assistanceDuration )
         MessageTo( ai.interceptor, AirPolicing.Assistance.ApproachInstructionAudio )
@@ -1578,7 +1593,13 @@ local function beginIntercept( pg, igInfo ) -- ig = intruder group
             pg.intruderReaction = getDefaultInterceptedIntruderReaction()
         end
     end
-    local options = InterceptionOptions:New():WithAssistance( pg.interseptAssist )
+
+Debug(" beginIntercept :: pg.interceptAssist = " .. tostring(pg.interceptAssist))
+
+    local options = InterceptionOptions:New():WithAssistance( pg.interceptAssist )
+
+Debug(" beginIntercept :: options.showAssistance = " .. tostring(options.showAssistance))    
+
     if (options.OnFollowMe.debugTimeoutTrigger ~= nil) then
       Trace("beginIntercept :: uses AI intercept debugging ...")
     end
@@ -1600,6 +1621,7 @@ local function menuSeparator( pg, parentMenu )
 end
 
 local function intrudersMenus( pg )
+
     local radius = UTILS.NMToMeters(AirPolicingOptions.scanRadius)
     local zone = ZONE_UNIT:New(pg.group.GroupName.."-scan", pg.group, radius)
     
@@ -1761,9 +1783,9 @@ function inactiveMenus( pg )
             return end
 
         if (pg.interceptAssist) then
-            MENU_GROUP_COMMAND:New(pg.group, "Turn OFF intersept assistance", optionsMenu, toggleInterceptAssist)
+            MENU_GROUP_COMMAND:New(pg.group, "Turn OFF intercept assistance", optionsMenu, toggleInterceptAssist)
         else
-            MENU_GROUP_COMMAND:New(pg.group, "ACTIVATE intersept assistance", optionsMenu, toggleInterceptAssist)
+            MENU_GROUP_COMMAND:New(pg.group, "ACTIVATE intercept assistance", optionsMenu, toggleInterceptAssist)
         end
         if (pg.sofAssist) then
             MENU_GROUP_COMMAND:New(pg.group, "Turn OFF Show-of-Force assistance", optionsMenu, toggleSofAssist, false)

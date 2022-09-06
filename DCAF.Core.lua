@@ -45,7 +45,7 @@ function Delay( seconds, userFunction, data )
     local timer = TIMER:New(
         function() 
             userFunction(data)
-        end):Start(seconds)
+         end):Start(seconds)
 end
 
 local _missionStartTime = UTILS.SecondsOfToday()
@@ -267,7 +267,7 @@ function MessageTo( recipient, message, duration )
   local function SendMessageToClient( recipient )
       local unit = CLIENT:FindByName( recipient )
       if (unit ~= nil) then
-          Debug("MessageTo-"..recipient.." :: "..message)
+          Trace("MessageTo-"..recipient.." :: "..message)
           MESSAGE:New(message, duration):ToClient(unit)
           return
       end
@@ -601,7 +601,7 @@ function RouteDirectTo( controllable, steerpoint )
     elseif (isNumber(steerpoint)) then
         wpIndex = steerpoint
     else
-        Debug("DirectTo-" .. group.GroupName .." :: cannot resolved steerpoint: "..Dump(steerpoint).." :: EXITS")
+        Warning("DirectTo-" .. group.GroupName .." :: cannot resolved steerpoint: "..Dump(steerpoint).." :: EXITS")
         return
     end
 
@@ -674,23 +674,18 @@ end
 
 function FollowOffsetLimits:Normalize( vec3 )
 
-Debug("FollowOffsetLimits:Normalize :: self: " .. Dump(self))
-Debug("FollowOffsetLimits:Normalize :: vec3: " .. Dump(vec3))
-
     if (math.abs(vec3.x) < math.abs(self.xMin)) then
         if (vec3.x < 0) then
             vec3.x = -self.xMin
         else
             vec3.x = math.abs(self.xMin)
         end
-Debug("FollowOffsetLimits:Normalize :: increased x: " .. vec3.x)
     elseif (math.abs(vec3.x) > math.abs(self.xMax)) then
         if (vec3.x < 0) then
             vec3.x = -self.xMax
         else
             vec3.x = math.abs(self.xMax)
         end
-Debug("FollowOffsetLimits:Normalize :: decreased x: " .. vec3.x)
     end
 
     if (math.abs(vec3.y) < math.abs(self.yMin)) then
@@ -699,22 +694,18 @@ Debug("FollowOffsetLimits:Normalize :: decreased x: " .. vec3.x)
         else
             vec3.y = math.abs(self.yMin)
         end
-Debug("FollowOffsetLimits:Normalize :: increased y: " .. vec3.y)
     elseif (math.abs(vec3.y) > math.abs(self.yMax)) then
         if (vec3.y < 0) then
             vec3.y = -self.yMax
         else
             vec3.y = math.abs(self.yMax)
         end
-Debug("FollowOffsetLimits:Normalize :: decreased y: " .. vec3.y)
     end
 
     if (math.abs(vec3.z) < math.abs(self.zMin)) then
         vec3.z = self.zMin
-Debug("FollowOffsetLimits:Normalize :: increased z: " .. vec3.z)
     elseif (math.abs(vec3.z) > math.abs(self.zMax)) then
         vec3.z = self.xMax
-Debug("FollowOffsetLimits:Normalize :: decreased z: " .. vec3.z)
     end
 
     return vec3
@@ -759,14 +750,11 @@ function TaskFollow( follower, leader, offsetLimits, lastWaypoint )
 
     local off = calcGroupOffset(leaderGrp, followerGrp)
 
-Debug( "TaskFollow :: off: " .. DumpPretty( off ) )    
+--Debug( "TaskFollow :: off: " .. DumpPretty( off ) )    
 
     if offsetLimits then
         off = offsetLimits:Normalize(off)
---        off.x = offset.x or off.x obsolete
---        off.y = offset.y or off.y
---        off.z = offset.z or off.z
-Debug( "TaskFollow :: normalized off: " .. DumpPretty( off ) )    
+--Debug( "TaskFollow :: normalized off: " .. DumpPretty( off ) )    
     end
 
     local task = followerGrp:TaskFollow( leaderGrp, off, lastWaypoint)
@@ -789,12 +777,12 @@ function RTB( controllable, steerpointName )
 local deep = DumpPrettyOptions:New():Deep()
 local nisse_grp = getGroup(controllable)
 local nisse_route = nisse_grp:TaskRoute()
-Debug("RTB :: nisse_route: " .. DumpPretty(nisse_route, deep))
+--Debug("RTB :: nisse_route: " .. DumpPretty(nisse_route, deep))
 
     local steerpointName = steerpointName or DCAFCore.WaypointNames.RTB
     local route = RouteDirectTo(controllable, steerpointName)
 
-Debug("RTB :: route: " .. DumpPretty(route, deep))
+--Debug("RTB :: route: " .. DumpPretty(route, deep))
 
     return SetRoute( controllable, route )
 end
