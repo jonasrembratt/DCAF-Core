@@ -15,6 +15,7 @@ function isTable( value ) return type(value) == "table" end
 function isClass( value, class ) return isTable(value) and value.ClassName == class end
 function isUnit( value ) return isClass(value, "UNIT") end
 function isGroup( value ) return isClass(value, "GROUP") end
+function isZone( value ) return isClass(value, "ZONE") end
 
 FeetPerNauticalMile = 6076.1155
 MetersPerNauticalMile = UTILS.NMToMeters(1)
@@ -55,6 +56,10 @@ function MissionClock( short )
         short = true
     end
     return UTILS.SecondsToClock(UTILS.SecondsOfToday(), short)
+end
+
+function MissionStartTime()
+    return _missionStartTime
 end
 
 function MissionTime()
@@ -112,7 +117,8 @@ function getUnit( source )
 end
 
 --[[
-Resolves a GROUP from an arbitrary source
+getGroup    
+    Resolves a GROUP from an arbitrary source
 ]]--
 function getGroup( source )
     if (isGroup(source)) then 
@@ -134,6 +140,157 @@ function getGroup( source )
     return nil
 end
   
+function isSameHeading( group1, group2 ) 
+--Debug("isSameHeading :: g1.heading: " .. tostring(group1:GetHeading() .. " :: g2.heading: " .. tostring(group2:GetHeading())))
+    return math.abs(group1:GetHeading() - group2:GetHeading()) < 5 
+end
+
+function isSameAltitude( group1, group2 ) 
+    return math.abs(group1:GetAltitude() - group2:GetAltitude()) < 500 
+end
+function isSameCoalition( group1, group2 ) return group1:GetCoalition() == group2:GetCoalition() end
+ 
+local function isSubjectivelySameGroup( group1, group2 )
+    -- determines whether a group _appears_ to be flying together with another group 
+
+    return group1:IsAlive() and group2:IsAlive() 
+            and isSameCoalition(group1, group2)
+            and isSameHeading(group1, group2) 
+            and isSameAltitude(group1, group2) 
+end
+
+local function isEscortingFromTask( escortGroup, clientGroup )
+    -- determines whether a group is tasked with escorting a 'client' group ...
+    -- TODO the below logic only find out if there's a task somewhere in the group's route that escorts the source group. See if we can figure out whether it's a _current_ task
+    local route = escortGroup:GetTaskRoute()
+
+local i = 1 -- nisse (remove after debugging)    
+    for k,wp in pairs(route) do
+        local tasks = wp.task.params.tasks
+        if tasks then
+
+-- local deep = DumpPrettyOptions:New():Deep()
+-- Debug("isEscortingFromTask-" .. escortGroup.GroupName .. " :: client group id: " .. tostring(clientGroup:GetID()))
+            for _, task in ipairs(tasks) do
+-- if (task.id == ENUMS.MissionTask.ESCORT) then
+--     Debug("isEscortingFromTask-" .. escortGroup.GroupName .. " :: escort task group task ["..tostring(_).."]: " .. DumpPretty(task, deep))
+-- end
+                if (task.id == ENUMS.MissionTask.ESCORT and task.params.groupId == clientGroup:GetID()) then
+                    return true
+                end
+            end
+        end
+    end
+end
+
+-- getEscortingGroup :: Resolves one or more GROUPs that is escorting a specified (arbitrary) source
+-- @param source 
+function GetEscortingGroups( source, subjectiveOnly )
+
+    if (subjectiveOnly == nil) then
+        subjectiveOnly = false
+    end
+    local group = getGroup(source)
+    if not group then
+        Warning("GetEscortingGroups :: cannot resolve group from " .. Dump(source) .. " :: EXITS")
+        return
+    end
+
+    local zone = ZONE_GROUP:New(group.GroupName.."-escorts", group, NauticalMilesToMeters(5))
+    local nearbyGroups = SET_GROUP:New()
+    if (group:IsAirPlane()) then
+        nearbyGroups:FilterCategoryAirplane()
+    end
+    if (group:IsHelicopter()) then
+        nearbyGroups:FilterCategoryHelicopter()
+    end
+    nearbyGroups
+        :FilterZones({ zone })
+        :FilterCoalitions({ string.lower( group:GetCoalitionName() ) })
+        :FilterActive()
+        :FilterOnce()
+
+    local escortingGroups = {}
+
+    nearbyGroups:ForEach(
+        function(g)
+
+            if g == group or not g:IsAlive() or not isSubjectivelySameGroup( g, group ) then
+                return
+            end
+
+            if subjectiveOnly or isEscortingFromTask( g, group ) then
+                table.insert(escortingGroups, g)
+            end
+        end)
+
+    return escortingGroups
+end
+
+function IsEscorted( source, subjectiveOnly )
+
+    local escorts = GetEscortingGroups( source, subjectiveOnly )
+    return #escorts > 0
+
+end
+
+function GetEscortClientGroup( source, maxDistance, resolveSubjective )
+
+    if (maxDistance == nil) then
+        maxDistance = NauticalMilesToMeters(1.5)
+    end
+    if (resolveSubjective == nil) then
+        resolveSubjective = false
+    end
+    local group = getGroup(source)
+    if not group then
+        Warning("GetEscortClientGroup :: cannot resolve group from " .. Dump(source) .. " :: EXITS")
+        return
+    end
+
+--Debug("GetEscortClientGroup-" .. group.GroupName .. "..." )
+
+    local zone = ZONE_GROUP:New(group.GroupName.."-escorts", group, maxDistance)
+    local nearbyGroups = SET_GROUP:New()
+    if (group:IsAirPlane()) then
+        nearbyGroups:FilterCategoryAirplane()
+    end
+    if (group:IsHelicopter()) then
+        nearbyGroups:FilterCategoryHelicopter()
+    end
+    nearbyGroups:FilterZones({ zone }):FilterActive():FilterOnce()
+
+    local escortedGroup = {}
+    local clientGroup = nil
+
+    nearbyGroups:ForEachGroupAlive(
+        function(g)
+
+            if clientGroup or g == group then return end -- client group was alrady resolved
+
+            if not isSubjectivelySameGroup( group, g ) then
+                return
+--Debug("GetEscortClientGroup-" .. group.GroupName .. " :: is not subjectively same group: " .. g.GroupName )
+            end
+
+            if resolveSubjective or isEscortingFromTask( group, g ) then
+                clientGroup = g
+Debug("GetEscortClientGroup-" .. group.GroupName .. " :: client group found: " .. tostring(clientGroup) )
+                return 
+            end
+            -- if g == group or not isSubjectivelySameGroup( group, g ) then return end
+            -- if resolveSubjective or isEscortingFromTask( group, g ) then
+            --     clientGroup = g
+            --     return
+            -- end
+        end)
+
+Debug("GetEscortClientGroup-" .. group.GroupName .. " :: client group returned: " .. tostring(clientGroup) )
+
+    return clientGroup
+
+end
+  
 function getControllable( source )
     local unit = getUnit(source)
     if (unit ~= nil) then 
@@ -144,6 +301,10 @@ function getControllable( source )
       return group end
 
     return nil
+end
+
+function getZone( source )
+
 end
 
 function GetOtherCoalitions( controllable )
@@ -175,27 +336,52 @@ Returns
     A negative value if group a is considered superior to group b
     A positive value if group b is considered superior to group a
 ]]--
-function GetGroupSuperiority( a, b )
-    local groupA = getGroup(a)
-    local groupB = getGroup(b)
-    if (groupA == nil) then
-        if (groupB == nil) then return 0 end
+function GetGroupSuperiority( a, b, aSize, aMissiles, bSize, bMissiles )
+    local aGroup = getGroup(a)
+    local bGroup = getGroup(b)
+    if (aGroup == nil) then
+        if (bGroup == nil) then return 0 end
         return 1
     end
 
-    if (groupB == nil) then
+    if (bGroup == nil) then
         return -1
     end
 
     -- todo consider more interesting ways to compare groups relative superiority/inferiority
-    local aSize = groupA:CountAliveUnits()
-    local bSize = groupB:CountAliveUnits()
+    local aSize = aSize or aGroup:CountAliveUnits()
+    local bSize = bSize or bGroup:CountAliveUnits()
     if (aSize > bSize) then return -1 end
-    if (aSize < bSize) then return 1 end
+
+    -- b is equal or greater in size; compare missiles loadout ...
+    if aMissiles == nil then
+        local _, _, _, _, countMissiles = aGroup:GetAmmunition()
+        aMissiles = countMissiles
+    end
+    if bMissiles == nil then
+        local _, _, _, _, countMissiles = bGroup:GetAmmunition()
+        bMissiles = countMissiles
+    end
+    -- todo Would be great to check type of missiles here, depending on groups' distance from each other
+    local missileRatio = (aMissiles / aSize) / (bMissiles / bSize)
+Debug("GetGroupSuperiority-"..aGroup.GroupName.." / "..bGroup.GroupName.." :: missileRatio: "..tostring(missileRatio))
+    if (aSize < bSize) then 
+        if missileRatio > 2 then
+            -- a is smaller than be but a is strongly superior in armament ...
+            return -1
+        end
+        if (missileRatio > 1.5) then
+            -- a is smaller than be but a is slightly superior in armament ...
+            return 0
+        end
+        return 1 
+    end
     return 0
 end
 
-local NoMessage = "_none_"
+NoMessage = "_none_"
+
+DebugAudioMessageToAll = false -- set to true to debug audio messages
 
 --local ignoreMessagingGroups = {}
 --[[ 
@@ -240,7 +426,12 @@ function MessageTo( recipient, message, duration )
     end
     if (isGroup(recipient)) then
         if (string.match(message, ".\.ogg") or string.match(message, ".\.wav")) then
-            USERSOUND:New(message):ToGroup(recipient)
+            local audio = USERSOUND:New(message)
+            if DebugAudioMessageToAll then
+                audio:ToAll()
+            else
+                audio:ToGroup(recipient)
+            end
             Trace("MessageTo (audio) :: Group "..recipient.GroupName.." :: '"..message.."'")
             return
         end
@@ -442,10 +633,11 @@ function DistanceToStringA2A( meters, estimated )
         return tostring( nm ) .. " miles"
 end
   
-function GetAltitudeAsAngelsOrCherubs( controllable ) 
-    controllable = getControllable( controllable )
-    if (controllable == nil) then error( "Could not resolve controllable" ) end
-    local feet = UTILS.MetersToFeet( controllable:GetCoordinate().y )
+function GetAltitudeAsAngelsOrCherubs( coordinate ) 
+    -- controllable = getControllable( controllable )
+    -- if (controllable == nil) then error( "Could not resolve controllable from " .. Dump(controllable) ) end
+    -- local coordinate = controllable:GetCoordinate()
+    local feet = UTILS.MetersToFeet( coordinate.y )
     if (feet >= 1000) then
         local angels = feet / 1000
         return "angels " .. tostring(UTILS.Round( angels, 0 ))
@@ -454,7 +646,67 @@ function GetAltitudeAsAngelsOrCherubs( controllable )
     local cherubs = feet / 100
     return "cherubs " .. tostring(UTILS.Round( cherubs, 0 ))
 end
-  
+
+-- GetRelativeLocation :: Produces information to reopresent the subjective, relative, location between two locations
+-- @param sourceCoordinate :: The subject location
+-- @param targetLocation :: The 'other' location
+-- @returns object :: 
+--    {
+--      Bearing :: The bearing from source to target
+--      Distance :: The distance between source and target
+--      TextDistance :: Textual distance between source and target
+--      TextPosition :: Textual (o'clock) position of target, relative to source
+--      TextLevel :: Textual, relative (high, level or low), vertical position of target relative to source
+--      TextAngels :: Textual altitude in angels or sherubs
+--      ToString() :: function; Returns standardized textual relative location, including all of the above
+--    }
+function GetRelativeLocation( source, target )
+    local sourceGroup = getGroup(source)
+    if not sourceGroup then
+        Warning("GetRelativeLocation :: cannot resolve source group from " .. Dump(source) .. " :: EXITS")
+        return nil
+    end
+    local targetGroup = getGroup(target)
+    if not targetGroup then
+        Warning("GetRelativeLocation :: cannot resolve target group from " .. Dump(target) .. " :: EXITS")
+        return nil
+    end
+
+    local sourceCoordinate = sourceGroup:GetCoordinate()
+    local targetCoordinate = targetGroup:GetCoordinate()
+
+    -- bearing
+    local dirVec3 = sourceCoordinate:GetDirectionVec3( targetCoordinate )
+    local angleRadians = sourceCoordinate:GetAngleRadians( dirVec3 )
+    local bearing = UTILS.Round( UTILS.ToDegree( angleRadians ), 0 )
+
+    --  o'clock position
+    local heading = sourceGroup:GetUnit(1):GetHeading()
+    local sPosition = GetClockPosition( heading, bearing )
+
+    -- distance
+    local distance = sourceCoordinate:Get2DDistance(targetCoordinate)
+    local sDistance = DistanceToStringA2A( distance, true )
+
+    -- level position
+    local sLevelPos = GetLevelPosition( sourceCoordinate, targetCoordinate )
+    
+    -- angels
+    local sAngels = GetAltitudeAsAngelsOrCherubs( targetCoordinate )
+
+    return {
+        Bearing = bearing,
+        Distance = distance,
+        TextDistance = sDistance,
+        TextPosition = sPosition,
+        TextLevel = sLevelPos,
+        TextAngels = sAngels,
+        ToString = function()
+            return string.format( "%s %s for %s, %s", sPosition, sLevelPos, sDistance, sAngels )
+        end
+    }
+end
+ 
 local _numbers = {
     [1] = "one",
     [2] = "two",
@@ -1038,7 +1290,7 @@ function _e:onEvent( event )
     end
 end
 
-local function registerEventListener( listeners, func)
+local function registerEventListener( listeners, func, predicateFunc )
     table.insert(listeners, func)
     if (isMissionEventsListenerRegistered) then
         return 
@@ -1050,6 +1302,22 @@ end
 function MissionEvents:OnGroupSpawned( func ) registerEventListener(MissionEvents._groupSpawnedHandlers, func) end
 function MissionEvents:OnUnitDead( func ) registerEventListener(MissionEvents._unitDeadHandlers, func) end
 function MissionEvents:OnPlayerEnteredUnit( func ) registerEventListener(MissionEvents._playerEnteredUnitHandlers, func) end
+function MissionEvents:OnPlayerEnteredAirplane( func ) 
+    registerEventListener(MissionEvents._playerEnteredUnitHandlers, 
+        function( data )
+            if (data.IniUnit:IsAirPlane()) then
+                func( data )
+            end
+        end) 
+end
+function MissionEvents:OnPlayerEnteredHelicopter( func ) 
+    registerEventListener(MissionEvents._playerEnteredUnitHandlers, 
+        function( data )
+            if (data.IniUnit:IsHelicopter()) then
+                func( data )
+            end
+        end) 
+end
 
 
 --------------------------------------------- [[ TRIGGER ZONES ]] ---------------------------------------------
