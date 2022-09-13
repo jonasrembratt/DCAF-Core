@@ -164,17 +164,10 @@ local function isEscortingFromTask( escortGroup, clientGroup )
     -- TODO the below logic only find out if there's a task somewhere in the group's route that escorts the source group. See if we can figure out whether it's a _current_ task
     local route = escortGroup:GetTaskRoute()
 
-local i = 1 -- nisse (remove after debugging)    
     for k,wp in pairs(route) do
         local tasks = wp.task.params.tasks
         if tasks then
-
--- local deep = DumpPrettyOptions:New():Deep()
--- Debug("isEscortingFromTask-" .. escortGroup.GroupName .. " :: client group id: " .. tostring(clientGroup:GetID()))
             for _, task in ipairs(tasks) do
--- if (task.id == ENUMS.MissionTask.ESCORT) then
---     Debug("isEscortingFromTask-" .. escortGroup.GroupName .. " :: escort task group task ["..tostring(_).."]: " .. DumpPretty(task, deep))
--- end
                 if (task.id == ENUMS.MissionTask.ESCORT and task.params.groupId == clientGroup:GetID()) then
                     return true
                 end
@@ -275,7 +268,7 @@ function GetEscortClientGroup( source, maxDistance, resolveSubjective )
 
             if resolveSubjective or isEscortingFromTask( group, g ) then
                 clientGroup = g
-Debug("GetEscortClientGroup-" .. group.GroupName .. " :: client group found: " .. tostring(clientGroup) )
+--Debug("GetEscortClientGroup-" .. group.GroupName .. " :: client group found: " .. tostring(clientGroup) )
                 return 
             end
             -- if g == group or not isSubjectivelySameGroup( group, g ) then return end
@@ -285,7 +278,7 @@ Debug("GetEscortClientGroup-" .. group.GroupName .. " :: client group found: " .
             -- end
         end)
 
-Debug("GetEscortClientGroup-" .. group.GroupName .. " :: client group returned: " .. tostring(clientGroup) )
+--Debug("GetEscortClientGroup-" .. group.GroupName .. " :: client group returned: " .. tostring(clientGroup) )
 
     return clientGroup
 
@@ -1026,17 +1019,10 @@ end
 
 function RTB( controllable, steerpointName )
 
-local deep = DumpPrettyOptions:New():Deep()
-local nisse_grp = getGroup(controllable)
-local nisse_route = nisse_grp:TaskRoute()
---Debug("RTB :: nisse_route: " .. DumpPretty(nisse_route, deep))
-
     local steerpointName = steerpointName or DCAFCore.WaypointNames.RTB
     local route = RouteDirectTo(controllable, steerpointName)
-
---Debug("RTB :: route: " .. DumpPretty(route, deep))
-
     return SetRoute( controllable, route )
+
 end
 
 function GetDivertWaypoint( group ) 
@@ -1252,9 +1238,6 @@ local isMissionEventsListenerRegistered = false
 local _e = {}
 
 function _e:onEvent( event )
-    
-    --Debug("_e:onEvent :: " .. DumpPretty(event.id) )
-
 
     local function invokeHandlers( handlers, data )
         for _, handler in ipairs(handlers) do

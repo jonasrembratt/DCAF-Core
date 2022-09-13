@@ -1,4 +1,4 @@
-local _isDebuggingWithAiInterceptor = true -- nisse
+local _isDebuggingWithAiInterceptor = false -- nisse
 local _aiInterceptedBehavior = {}
 
 AirPolicing = {
@@ -220,8 +220,6 @@ end
 local function tryGetRegisteredInterceptedBehavior( s )
 
 local deep = DumpPrettyOptions:New():Deep()
-Debug("ccccc :: s: " .. s .. " _aiInterceptedBehavior: " .. DumpPretty(_aiInterceptedBehavior, deep))
-
     for pattern, behavior in pairs(_aiInterceptedBehavior) do
         if (s == pattern or string.match( s, pattern )) then
             return behavior
@@ -347,9 +345,6 @@ local function resolveIntruderReaction( behavior, intruder, interceptor, intrude
     intruderMissiles = getMissiles(intruder, intruderMissiles)
     interceptorMissiles = getMissiles( interceptor, interceptorMissiles )
 
--- Debug("resolveIntruderReaction-" .. intruder.GroupName .. " :: " ..string.format(" intruderSize=%d; intruderMissiles=%d", intruderSize, intruderMissiles))
--- Debug("resolveIntruderReaction-" .. intruder.GroupName .. " :: " ..string.format(" interceptorSize=%d; interceptorMissiles=%d", interceptorSize, interceptorMissiles))
-
     function getValidated( reaction )
         if (isNumber(reaction.Randomization) and reaction.Randomization < 100) then
             local outcome = math.random(0, reaction.Randomization)
@@ -412,8 +407,6 @@ local function getIntrudersReactions( intruder, interceptor, escorts, useDefault
     if not intruder then error("getIntrudersReactions :: intruder was nil") end
     if not interceptor then error("getIntrudersReactions :: interceptor was nil") end
 
--- Debug("getIntrudersReactions-".. intruder.GroupName .." :: interceptor: " .. interceptor.GroupName)
-
     -- get total size and amount iof missiles ...
     if (#escorts > 0) then
         for _, escortGrp in ipairs(escorts) do
@@ -435,8 +428,6 @@ local function getIntrudersReactions( intruder, interceptor, escorts, useDefault
         end
 
         local behavior = getGroupBehavior( g )
-
--- Debug("getIntrudersReactions.getGroupReaction-".. g.GroupName .." :: behavior: " .. DumpPretty(behavior))
 
         if #behavior == 0 then
             Trace("getIntrudersReactions.getGroupReaction-".. g.GroupName .." :: cannot resolve group reaction :: uses default reaction")
@@ -877,7 +868,6 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
 
     Trace("OnShowOfForce-"..groupName.." :: BEGINS :: "..string.format("radius=%d; minSpeedKts=%d; minCount=%d, minTimeBetween=%d, description=%s, coalitions=%s", radius, minSpeedKts, minCount, minTimeBetween, description or "", Dump(coalitions)))
 
-    --local intruderName = group:GetName() obsolete
     local interceptZone = ZONE_GROUP:New(groupName, group, radius)
     local interceptorsInfo = {}
 
@@ -1442,10 +1432,10 @@ local REF_TYPE = {
 
 local PolicingGroup = {
     group = nil,
-    --intruderReaction = INTERCEPT_REACTIONS.None, obsolete
 
     -- menus
     mainMenu = nil,
+    optionsMenu = nil,
     interceptMenu = nil,
     showOfForceMenu = nil,
     lookAgainMenu = nil,
@@ -1464,7 +1454,7 @@ local PolicingGroup = {
     aiReactionAssistAudio = false,
 }
 
-makeInactiveMenus = nil
+local makeInactiveMenus = nil
 
 function PolicingGroup:isPolicing(group)
     local coalition = group:GetCoalition()
@@ -1532,13 +1522,14 @@ function PolicingGroup:RemoveIntruderMenus()
 end
 
 local _debugTriggerOnAiWasInterceptedFunction = nil
+local makeOptionsMenus = nil
+
 local function establishInterceptMenus( pg, ig, ai ) -- ig = intruder group; ai = _ActiveIntercept
 
     pg.mainMenu:RemoveSubMenus()
     local function cancel()
         ai:Cancel()
         makeInactiveMenus( pg )
-        -- pg.intruderReaction = nil obsolete
         if (pg.interceptAssist) then
             MessageTo( pg.group, AirPolicing.Assistance.CancelledInstruction, AirPolicing.Assistance.Duration )
         end
@@ -1546,6 +1537,7 @@ local function establishInterceptMenus( pg, ig, ai ) -- ig = intruder group; ai 
             MessageTo( pg.group, AirPolicing.Assistance.CancelledInstructionAudio )
         end
     end
+    makeOptionsMenus( pg )
     MENU_GROUP_COMMAND:New(pg.group, "--CANCEL Interception--", pg.mainMenu, cancel, ig)
     if (DCAFCore.Debug) then
         MENU_GROUP_COMMAND:New(pg.group, ">> DEBUG: Trigger intercept", pg.mainMenu, _debugTriggerOnAiWasInterceptedFunction, ai, ig, pg)
@@ -1601,10 +1593,7 @@ end
 local function onAiWasIntercepted( intercept, ig, pg )
 
     local audioDelay = 0
-    local function delayAudio( time )
-        audioDelay = audioDelay + time
-Debug("audioDelay= " .. tostring(audioDelay))        
-    end
+    local function delayAudio( time ) audioDelay = audioDelay + time end
 
     -- delay reaction (random no. of seconds) ...
     Delay(
@@ -1778,14 +1767,12 @@ Debug("audioDelay= " .. tostring(audioDelay))
                     if not applyReactionTo( eGroup, eReaction ) then
                         Trace("Interception-"..icptorName.." :: HUH?! :: Unknown escort reaction: " .. tostring(eReaction))
                     elseif eReaction ~= intruderReaction and eReaction == INTERCEPT_REACTIONS.Attack3 then
-Debug("escort attacks :: delay: " .. tostring(audioDelay))
                         Delay(audioDelay,
                             function()
                                 if (pg.aiReactionAssist) then
                                     MessageTo( intercept.interceptor, AirPolicing.Assistance.AiEscortAttacks, AirPolicing.Assistance.Duration )
                                 end
                                 if (pg.aiReactionAssistAudio) then
-Debug("escort attacks :: message!")
                                     MessageTo( intercept.interceptor, AirPolicing.Assistance.AiEscortAttacksAudio )
                                     delayAudio(AirPolicing.Assistance.AiEscortAttacksAudioTime)
                                 end
@@ -1988,8 +1975,6 @@ local function intrudersMenus( pg )
 
     local countIntruders, intruders = GetSpottedFlights( pg.group )
 
-local deep = DumpPrettyOptions:New():Deep()    
-
     -- remove existing intruder menus and build new ones ...
     if (#pg.intruderMenus > 0) then
         for k,v in pairs(pg.intruderMenus) do
@@ -2005,13 +1990,11 @@ local deep = DumpPrettyOptions:New():Deep()
     
     if (pg:isInterceptInactive()) then
         pg.interceptMenu:Remove()
-        menuSeparator( pg, pg.mainMenu )
+        --menuSeparator( pg, pg.mainMenu )
         pg.lookAgainMenu = MENU_GROUP_COMMAND:New(pg.group, "SCAN AREA again", pg.mainMenu, intrudersMenus, pg)
     end
     local intruderMenus = {}
---Debug("intrudersMenus-"..pg.group.GroupName .. " :: countIntruders: " .. tostring(countIntruders) .. "; intruders: " .. DumpPretty(intruders, deep ))
     for k, info in pairs(intruders) do 
---Debug("intrudersMenus-"..pg.group.GroupName .. " :: info type: " .. type(info) ..  ";  " .. DumpPretty(info, deep ))
         if isTable(info) then
             table.insert(intruderMenus, MENU_GROUP_COMMAND:New(pg.group, info.text, pg.mainMenu, beginIntercept, pg, info))
         end
@@ -2029,20 +2012,12 @@ local function buildSOFMenus( pg )
     -- todo (add ground groups)
 end
 
-function inactiveMenus( pg )
+function optionsMenus( pg )
 
-    -- options
     local optionsMenu = nil
-    pg:interceptInactive()
-    pg.mainMenu:RemoveSubMenus()
     if (AirPolicing.Assistance.IsAllowed) then -- currently the OPTIONS menu only contains assistance options 
         optionsMenu = MENU_GROUP:New(pg.group, "OPTIONS", pg.mainMenu)
     end
-    local updateOptionsMenuFunction = nil
-
-    -- policing actions
-    --pg.showOfForceMenu = MENU_GROUP_COMMAND:New(pg.group, "Begin show-of-force", pg.mainMenu, buildSOFMenus, pg) -- TODO
-    pg.interceptMenu = MENU_GROUP_COMMAND:New(pg.group, "SCAN AREA for nearby flights", pg.mainMenu, intrudersMenus, pg)
 
     local function toggleInterceptAssist()
         pg.interceptAssist = not pg.interceptAssist
@@ -2070,7 +2045,7 @@ function inactiveMenus( pg )
     end
 
     local function addOptionsMenus()
-        Trace("updateOptionsMenus :: Updates options menu (itcpt assist="..tostring(pg.interceptAssist).."; sofAssist="..tostring(pg.sofAssist)..")")
+        Trace("updateOptionsMenus :: Updates options menu (interceptAssist="..tostring(pg.interceptAssist).."; sofAssist="..tostring(pg.sofAssist)..")")
         optionsMenu:RemoveSubMenus()
 
         if (not AirPolicing.Assistance.IsAllowed) then
@@ -2082,18 +2057,17 @@ function inactiveMenus( pg )
             MENU_GROUP_COMMAND:New(pg.group, "ACTIVATE intercept assistance", optionsMenu, toggleInterceptAssist)
         end
 
-        if (pg.interceptAssistAudio) then
-            MENU_GROUP_COMMAND:New(pg.group, "Turn OFF intercept assistance", optionsMenu, toggleInterceptAssistAudio)
-        else
-            MENU_GROUP_COMMAND:New(pg.group, "ACTIVATE intercept assistance", optionsMenu, toggleInterceptAssistAudio)
-        end
-
         if (pg.aiReactionAssist) then
             MENU_GROUP_COMMAND:New(pg.group, "Turn OFF AI reaction assistance", optionsMenu, toggleAiReaactionAssist)
         else
             MENU_GROUP_COMMAND:New(pg.group, "ACTIVATE AI reaction assistance", optionsMenu, toggleAiReaactionAssist)
         end
 
+        if (pg.interceptAssistAudio) then
+            MENU_GROUP_COMMAND:New(pg.group, "Turn OFF verbal assistance", optionsMenu, toggleInterceptAssistAudio)
+        else
+            MENU_GROUP_COMMAND:New(pg.group, "ACTIVATE verbal assistance", optionsMenu, toggleInterceptAssistAudio)
+        end
 --[[
     TODO add SoF assist options menu
         if (pg.sofAssist) then
@@ -2114,6 +2088,16 @@ function inactiveMenus( pg )
         addOptionsMenus()
     end
 
+end
+
+makeOptionsMenus = optionsMenus
+
+function inactiveMenus( pg )
+
+    pg:interceptInactive()
+    pg.mainMenu:RemoveSubMenus()
+    makeOptionsMenus( pg )
+    pg.interceptMenu = MENU_GROUP_COMMAND:New(pg.group, "SCAN AREA for nearby flights", pg.mainMenu, intrudersMenus, pg)
 end
 
 makeInactiveMenus = inactiveMenus
@@ -2349,6 +2333,7 @@ end
 function DebugBeginIntercept( interceptor )
 
     DebugAudioMessageToAll = true
+    _isDebuggingWithAiInterceptor = true
 
     local interceptorGrp = getGroup( interceptor )
 
