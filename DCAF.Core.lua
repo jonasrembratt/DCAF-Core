@@ -1395,9 +1395,13 @@ end
 
 local function triggerZoneEventDispatcher( event )
 
-    local function invokeGroupLeft( group )
-        if (group:IsPartlyOrCompletelyInZone(event.Zone)) then
-            -- there are other units remaining in the zone soe we're sjipping this event
+-- local deep = DumpPrettyOptions:New():Deep() -- nisse
+-- Debug("triggerZoneEventDispatcher :: event: " .. DumpPretty(event))
+
+    local group = event.Group
+    if (group:IsPartlyOrCompletelyInZone(event.Zone)) then
+        local function invokeGroupLeft( group )
+            -- there are other units remaining in the zone so we're skipping this event
             return 
         end
         for k, handler in pairs(_triggerZoneUnitHandlers.groupLeft) do
@@ -1420,6 +1424,7 @@ local function triggerZoneEventDispatcher( event )
     end
 
     local function invokeGroupEnters( group )
+-- Debug("invokeGroupEnters :: count 'enters' handlers: " .. tostring(#_triggerZoneUnitHandlers.groupEnters)) -- nisse
         for k, handler in pairs(_triggerZoneUnitHandlers.groupEnters) do
             local groupEvent = routines.utils.deepCopy(event)
             args.Group = group
@@ -1464,9 +1469,9 @@ end
 
 local _triggerZoneUnitsInfo = {}
 
-function MonitorTriggerZones( options ) 
+function MonitorTriggerZones( options )
 
-    if (_triggerZoneUnitHandlers.isMonitoring) then error("Trigger zones are already monitored for events") end
+   if (_triggerZoneUnitHandlers.isMonitoring) then error("Trigger zones are already monitored for events") end
     _triggerZoneUnitHandlers.isMonitoring = true
     options = options or TriggerZoneOptions
     local handler = triggerZoneEventDispatcher
@@ -1476,16 +1481,17 @@ function MonitorTriggerZones( options )
         -- todo Consider some filtering mechanism to avoid scanning TZ's that are intended for other purposes
         for zoneName, zone in pairs(_DATABASE.ZONES) do
             local ignoreZone = false
-            if (options.IncludeZoneNamePattern ~= nil and not string.match(zoneName, options.IncludeZoneNamePattern)) then
-                --Debug("---> Filters out zone " .. zoneName .. " (does not match pattern '".. options.IncludeZoneNamePattern .."'")
+
+            if (options.IncludeZoneNamePattern ~= nil and not string.find(zoneName, options.IncludeZoneNamePattern)) then --  not string.match(zoneName, options.IncludeZoneNamePattern)) then
+                -- Debug("---> Filters out zone " .. zoneName .. " (does not match pattern '".. options.IncludeZoneNamePattern .."')")
                 ignoreZone = true
             elseif (options.ExcludeZoneNamePattern ~= nil and string.match(zoneName, options.ExcludeZoneNamePattern)) then
-                --Debug("---> Filters out zone " .. zoneName .. " (matches pattern '".. options.ExcludeZoneNamePattern .."'")
+                -- Debug("---> Filters out zone " .. zoneName .. " (matches pattern '".. options.ExcludeZoneNamePattern .."')")
                 ignoreZone = true
             end
                                         
             if (not ignoreZone) then
-                local unitsInZone = SET_UNIT:New():FilterZones({ zone }):FilterCategories({ "plane" })
+                local unitsInZone = SET_UNIT:New():FilterZones({ zone })--:FilterCategories({ "plane" })
                 if (coalitions ~= nil) then
                     unitsInZone:FilterCoalitions(coalitions)
                 end
@@ -1500,7 +1506,9 @@ function MonitorTriggerZones( options )
                         local unitName = unit:GetName()
                         local handlerArgs = { 
                             Zone = zone, 
+                            ZoneName = zoneName,
                             Unit = unit, 
+                            Group = unit:GetGroup(),
                             Time = timestamp,
                             EntryTime = timestamp,
                             EventType = nil
@@ -1510,9 +1518,9 @@ function MonitorTriggerZones( options )
                             zoneInfo = { [unitName] =  { unit = unit, entryTime = timestamp } }
                             _triggerZoneUnitsInfo[zoneName] = zoneInfo
                             handlerArgs.EventType = TRIGGER_ZONE_EVENT_TYPE.Entered
-                            --Debug("---> MonitorTriggerZones-" .. zoneName .." :: unit name " .. unitName .. " :: ENTERED")
+                            Debug("---> MonitorTriggerZones-" .. zoneName .." :: unit name " .. unitName .. " :: ENTERED")
                         elseif (zoneInfo[unitName] == nil) then
-                            --Debug("---> MonitorTriggerZones-" .. zoneName .." :: unit name " .. unitName .. " :: ENTERED")
+                            Debug("---> MonitorTriggerZones-" .. zoneName .." :: unit name " .. unitName .. " :: ENTERED")
                             handlerArgs.EventType = TRIGGER_ZONE_EVENT_TYPE.Entered
                             zoneInfo[unitName] = { unit = unit, entryTime = timestamp }
                         else

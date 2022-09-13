@@ -503,7 +503,7 @@ OnInsideGroupZoneDefaults =
     coalitions = { "blue" },
     messageToDetected = NoMessage,
     messageToDetectedDuration = 30,
-    interval = 5
+    interval = 2
 }
 
 function OnInsideGroupZone( groupName, callback, options )
@@ -1337,7 +1337,7 @@ Remarks
 See also
   `Follow` (function)
 ]]--
-function OnInterception( group, callback, options )
+function OnInterception( group, callback, options, pg )
 
     group = getGroup( group )
     if (group == nil) then
@@ -1990,7 +1990,7 @@ local function intrudersMenus( pg )
     
     if (pg:isInterceptInactive()) then
         pg.interceptMenu:Remove()
-        --menuSeparator( pg, pg.mainMenu )
+        --menuSeparator( pg, pg.mainMenu ) obsolete
         pg.lookAgainMenu = MENU_GROUP_COMMAND:New(pg.group, "SCAN AREA again", pg.mainMenu, intrudersMenus, pg)
     end
     local intruderMenus = {}
@@ -2121,7 +2121,7 @@ function PolicingGroup:New( group, options )
 end
 
 AirPolicingOptions = {
-    scanRadius = NauticalMilesToMeters(4),
+    scanRadius = NauticalMilesToMeters(5),
     aiReactionDelayMin = 2,          -- minimum time after an order was issued until AI reacts
     aiReactionDelayMax = 5,          -- maximum time after an order was issued until AI reacts
     interceptAssist = false,
