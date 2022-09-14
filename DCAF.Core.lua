@@ -1273,8 +1273,15 @@ function _e:onEvent( event )
     end
 end
 
-local function registerEventListener( listeners, func, predicateFunc )
-    table.insert(listeners, func)
+local function registerEventListener( listeners, func, predicateFunc, insertFirst )
+    if insertFirst == nil then
+        insertFirst = false
+    end
+    if insertFirst then
+        table.insert(listeners, 1, func)
+    else
+        table.insert(listeners, func)
+    end
     if (isMissionEventsListenerRegistered) then
         return 
     end
@@ -1282,24 +1289,28 @@ local function registerEventListener( listeners, func, predicateFunc )
     world.addEventHandler(_e)
 end
 
-function MissionEvents:OnGroupSpawned( func ) registerEventListener(MissionEvents._groupSpawnedHandlers, func) end
-function MissionEvents:OnUnitDead( func ) registerEventListener(MissionEvents._unitDeadHandlers, func) end
-function MissionEvents:OnPlayerEnteredUnit( func ) registerEventListener(MissionEvents._playerEnteredUnitHandlers, func) end
-function MissionEvents:OnPlayerEnteredAirplane( func ) 
+function MissionEvents:OnGroupSpawned( func, insertFirst ) registerEventListener(MissionEvents._groupSpawnedHandlers, func, nil, insertFirst) end
+function MissionEvents:OnUnitDead( func, insertFirst ) registerEventListener(MissionEvents._unitDeadHandlers, func, nil, insertFirst) end
+function MissionEvents:OnPlayerEnteredUnit( func, insertFirst ) registerEventListener(MissionEvents._playerEnteredUnitHandlers, func, nil, insertFirst) end
+function MissionEvents:OnPlayerEnteredAirplane( func, insertFirst ) 
     registerEventListener(MissionEvents._playerEnteredUnitHandlers, 
         function( data )
             if (data.IniUnit:IsAirPlane()) then
                 func( data )
             end
-        end) 
+        end,
+        nil,
+        insertFirst) 
 end
-function MissionEvents:OnPlayerEnteredHelicopter( func ) 
+function MissionEvents:OnPlayerEnteredHelicopter( func, insertFirst ) 
     registerEventListener(MissionEvents._playerEnteredUnitHandlers, 
         function( data )
             if (data.IniUnit:IsHelicopter()) then
                 func( data )
             end
-        end) 
+        end,
+        nil,
+        insertFirst) 
 end
 
 
