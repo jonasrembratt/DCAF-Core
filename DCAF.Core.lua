@@ -1218,7 +1218,7 @@ function TaskAttackGroup( attacker, target )
         Warning("TaskAttackGroup-? :: cannot resolve target group "..Dump(tg) .." :: EXITS")
     end
 
-    if (not ag:OptionROEOpenFirePossible()) then
+    if (ag:OptionROEOpenFirePossible()) then
         ROEOpenFire(ag)
     end
     ag:SetTask(ag:TaskAttackGroup(tg))
@@ -1231,7 +1231,9 @@ end
 MissionEvents = {
     _groupSpawnedHandlers = {},
     _unitDeadHandlers = {},
+    _unitKilledHandlers = {},
     _playerEnteredUnitHandlers = {},
+    _ejectionHandlers = {},
 }
 
 local isMissionEventsListenerRegistered = false
@@ -1245,18 +1247,40 @@ function _e:onEvent( event )
         end
     end
 
+    -- if (event.id >= 27 and event.id <= 29) or event.id == 8 or event.id == 30 then
+    --     local deep = DumpPrettyOptions:New():Deep()
+    --     Trace("_e:onEvent :: event (id = ".. tostring(event.id) ..") " .. DumpPretty(event, deep) )
+    -- end
+
     if (event.id == world.event.S_EVENT_BIRTH and event.IniGroup and #MissionEvents._groupSpawnedHandlers > 0) then
         invokeHandlers( MissionEvents._groupSpawnedHandlers, { IniGroupName = event.IniGroup.GroupName } )
         return
     end
 
-    if (event.id == world.event.S_EVENT_DEAD and event.IniUnit and #MissionEvents._unitDeadHandlers > 0) then
-        invokeHandlers( MissionEvents._unitDeadHandlers, { 
-            IniUnit = event.IniUnit,
-            IniUnitName = event.IniUnit.UnitName,
-            IniGroup = event.IniGroup,
-            IniGroupName=event.IniUnit.GroupName
-        })
+    if (event.id == world.event.S_EVENT_DEAD) then
+        
+        if (event.IniUnit and #MissionEvents._unitDeadHandlers > 0) then
+            invokeHandlers( MissionEvents._unitDeadHandlers, {
+                IniUnit = event.IniUnit,
+                IniUnitName = event.IniUnit.UnitName,
+                IniGroup = event.IniGroup,
+                IniGroupName=event.IniUnit.GroupName
+            })
+        end
+        return
+    end
+
+    if (event.id == world.event.S_EVENT_KILL) then
+        if (#MissionEvents._unitKilledHandlers > 0) then
+            invokeHandlers( MissionEvents._unitKilledHandlers, event)
+        end
+        return
+    end
+
+    if (event.id == world.event.S_EVENT_EJECTION) then
+        if (#MissionEvents._ejectionHandlers > 0) then
+            invokeHandlers( MissionEvents._ejectionHandlers, event)
+        end
         return
     end
 
@@ -1271,6 +1295,7 @@ function _e:onEvent( event )
             IniPlayerName = Unit.getPlayerName(event.initiator)
         })
     end
+
 end
 
 local function registerEventListener( listeners, func, predicateFunc, insertFirst )
@@ -1291,7 +1316,9 @@ end
 
 function MissionEvents:OnGroupSpawned( func, insertFirst ) registerEventListener(MissionEvents._groupSpawnedHandlers, func, nil, insertFirst) end
 function MissionEvents:OnUnitDead( func, insertFirst ) registerEventListener(MissionEvents._unitDeadHandlers, func, nil, insertFirst) end
+function MissionEvents:OnUnitKilled( func, insertFirst ) registerEventListener(MissionEvents._unitKilledHandlers, func, nil, insertFirst) end
 function MissionEvents:OnPlayerEnteredUnit( func, insertFirst ) registerEventListener(MissionEvents._playerEnteredUnitHandlers, func, nil, insertFirst) end
+function MissionEvents:OnEjection( func, insertFirst ) registerEventListener(MissionEvents._ejectionHandlers, func, nil, insertFirst) end
 function MissionEvents:OnPlayerEnteredAirplane( func, insertFirst ) 
     registerEventListener(MissionEvents._playerEnteredUnitHandlers, 
         function( data )
