@@ -1286,14 +1286,16 @@ function _e:onEvent( event )
 
     if (event.id == world.event.S_EVENT_PLAYER_ENTER_UNIT and event.initiator) then
         local unit = UNIT:FindByName(Unit.getName(event.initiator))
-        invokeHandlers( MissionEvents._playerEnteredUnitHandlers, {
-            IniUnit = unit,
-            IniUnitName = Unit.getName(event.initiator),
-            IniGroup = unit:GetGroup(),
-            IniGroupName = Group.getName(Unit.getGroup(event.initiator)),
---            Callsign = Unit.getCallsign(event.initiator),
-            IniPlayerName = Unit.getPlayerName(event.initiator)
-        })
+        invokeHandlers( MissionEvents._playerEnteredUnitHandlers, event
+--         {
+--             IniUnit = unit,
+--             IniUnitName = Unit.getName(event.initiator),
+--             IniGroup = unit:GetGroup(),
+--             IniGroupName = Group.getName(Unit.getGroup(event.initiator)),
+-- --            Callsign = Unit.getCallsign(event.initiator),
+--             IniPlayerName = Unit.getPlayerName(event.initiator)
+--         }
+    )
     end
 
 end
