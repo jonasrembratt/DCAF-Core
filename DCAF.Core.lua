@@ -27,7 +27,11 @@ end
 
 function trim(s)
     return (s:gsub("^%s*(.-)%s*$", "%1"))
- end
+end
+
+function inString( s, pattern )
+    return string.find(s, pattern ) ~= nil 
+end
 
 function findFirstNonWhitespace( s, start )
     local sLen = string.len(s)
@@ -178,8 +182,8 @@ end
 
 -- getEscortingGroup :: Resolves one or more GROUPs that is escorting a specified (arbitrary) source
 -- @param source 
-function GetEscortingGroups( source, subjectiveOnly )
 
+function GetEscortingGroups( source, subjectiveOnly )
     if (subjectiveOnly == nil) then
         subjectiveOnly = false
     end
@@ -769,6 +773,25 @@ function IsGroupAirborne( controllable, tolerance )
     return agl > tolerance
 end
 
+local _navyAircrafts = {
+    ["FA-18C_hornet"] = 1,
+    ["F-14A-135-GR"] = 2,
+    ["AV8BNA"] = 3,
+    ["SH-60B"] = 4
+}
+
+function IsNavyAircraft( source )
+    if isTable(source) then
+        -- assume event
+        source = source.IniTypeName
+        if not source then
+            return false end
+    end
+    if isString(source) then
+        return _navyAircrafts[source] ~= nil end
+
+    return false
+end
 
 --------------------------------------------- [[ ROUTING ]] ---------------------------------------------
 
@@ -1034,6 +1057,9 @@ function CanDivert( group )
 end
 
 function Divert( controllable, steerpointName )
+
+Debug("Divert :: " .. tostring(controllable))
+    
     local steerpointName = steerpointName or DCAFCore.WaypointNames.Divert
     local divertRoute = RouteDirectTo(controllable, steerpointName)
     return SetRoute( controllable, divertRoute )
@@ -1230,6 +1256,7 @@ end
 
 MissionEvents = {
     _groupSpawnedHandlers = {},
+    _unitSpawnedHandlers = {},
     _unitDeadHandlers = {},
     _unitKilledHandlers = {},
     _playerEnteredUnitHandlers = {},
@@ -1245,15 +1272,19 @@ function _e:onEvent( event )
         for _, handler in ipairs(handlers) do
             handler( data )
         end
-    end
-
-    -- if (event.id >= 27 and event.id <= 29) or event.id == 8 or event.id == 30 then
-    --     local deep = DumpPrettyOptions:New():Deep()
-    --     Trace("_e:onEvent :: event (id = ".. tostring(event.id) ..") " .. DumpPretty(event, deep) )
-    -- end
-
-    if (event.id == world.event.S_EVENT_BIRTH and event.IniGroup and #MissionEvents._groupSpawnedHandlers > 0) then
-        invokeHandlers( MissionEvents._groupSpawnedHandlers, { IniGroupName = event.IniGroup.GroupName } )
+    end  
+    if (event.id == EVENTS.Birth) then
+        if event.IniGroup and #MissionEvents._groupSpawnedHandlers > 0 then
+            invokeHandlers( MissionEvents._groupSpawnedHandlers, event )
+        end
+        if event.IniUnit then
+            if #MissionEvents._unitSpawnedHandlers > 0 then
+                invokeHandlers( MissionEvents._unitSpawnedHandlers, event )
+            end
+            if  event.IniPlayerName then
+                invokeHandlers( MissionEvents._playerEnteredUnitHandlers, event )
+            end
+        end
         return
     end
 
@@ -1284,19 +1315,22 @@ function _e:onEvent( event )
         return
     end
 
-    if (event.id == world.event.S_EVENT_PLAYER_ENTER_UNIT and event.initiator) then
-        local unit = UNIT:FindByName(Unit.getName(event.initiator))
-        invokeHandlers( MissionEvents._playerEnteredUnitHandlers, event
---         {
---             IniUnit = unit,
---             IniUnitName = Unit.getName(event.initiator),
---             IniGroup = unit:GetGroup(),
---             IniGroupName = Group.getName(Unit.getGroup(event.initiator)),
--- --            Callsign = Unit.getCallsign(event.initiator),
---             IniPlayerName = Unit.getPlayerName(event.initiator)
---         }
-    )
-    end
+--     if (event.id == world.event.S_EVENT_PLAYER_ENTER_UNIT and event.initiator) then
+
+--         local unit = UNIT:FindByName(Unit.getName(event.initiator))
+--         if event.IniUnit and event.IniPlayerName then
+--             invokeHandlers( MissionEvents._playerEnteredUnitHandlers, event 
+-- --         {
+-- --             IniUnit = unit,
+-- --             IniUnitName = Unit.getName(event.initiator),
+-- --             IniGroup = unit:GetGroup(),
+-- --             IniGroupName = Group.getName(Unit.getGroup(event.initiator)),
+-- -- --            Callsign = Unit.getCallsign(event.initiator),
+-- --             IniPlayerName = Unit.getPlayerName(event.initiator)
+-- --         }
+--             )
+--         end
+--     end
 
 end
 
@@ -1317,15 +1351,16 @@ local function registerEventListener( listeners, func, predicateFunc, insertFirs
 end
 
 function MissionEvents:OnGroupSpawned( func, insertFirst ) registerEventListener(MissionEvents._groupSpawnedHandlers, func, nil, insertFirst) end
+function MissionEvents:OnUnitSpawned( func, insertFirst ) registerEventListener(MissionEvents._unitSpawnedHandlers, func, nil, insertFirst) end
 function MissionEvents:OnUnitDead( func, insertFirst ) registerEventListener(MissionEvents._unitDeadHandlers, func, nil, insertFirst) end
 function MissionEvents:OnUnitKilled( func, insertFirst ) registerEventListener(MissionEvents._unitKilledHandlers, func, nil, insertFirst) end
 function MissionEvents:OnPlayerEnteredUnit( func, insertFirst ) registerEventListener(MissionEvents._playerEnteredUnitHandlers, func, nil, insertFirst) end
 function MissionEvents:OnEjection( func, insertFirst ) registerEventListener(MissionEvents._ejectionHandlers, func, nil, insertFirst) end
 function MissionEvents:OnPlayerEnteredAirplane( func, insertFirst ) 
     registerEventListener(MissionEvents._playerEnteredUnitHandlers, 
-        function( data )
-            if (data.IniUnit:IsAirPlane()) then
-                func( data )
+        function( event )
+            if event.IniUnit:IsAirPlane() then
+                func( event )
             end
         end,
         nil,
@@ -1333,13 +1368,13 @@ function MissionEvents:OnPlayerEnteredAirplane( func, insertFirst )
 end
 function MissionEvents:OnPlayerEnteredHelicopter( func, insertFirst ) 
     registerEventListener(MissionEvents._playerEnteredUnitHandlers, 
-        function( data )
-            if (data.IniUnit:IsHelicopter()) then
-                func( data )
+        function( event )
+            if (event.IniUnit:IsHelicopter()) then
+                func( event )
             end
         end,
         nil,
-        insertFirst) 
+        insertFirst)
 end
 
 
@@ -1435,9 +1470,6 @@ end
 
 local function triggerZoneEventDispatcher( event )
 
--- local deep = DumpPrettyOptions:New():Deep() -- nisse
--- Debug("triggerZoneEventDispatcher :: event: " .. DumpPretty(event))
-
     local group = event.Group
     if (group:IsPartlyOrCompletelyInZone(event.Zone)) then
         local function invokeGroupLeft( group )
@@ -1464,7 +1496,6 @@ local function triggerZoneEventDispatcher( event )
     end
 
     local function invokeGroupEnters( group )
--- Debug("invokeGroupEnters :: count 'enters' handlers: " .. tostring(#_triggerZoneUnitHandlers.groupEnters)) -- nisse
         for k, handler in pairs(_triggerZoneUnitHandlers.groupEnters) do
             local groupEvent = routines.utils.deepCopy(event)
             args.Group = group

@@ -218,8 +218,6 @@ end
 --------------------------------------------- [[ INTRUDER BEHAVIOR ]] ---------------------------------------------
 
 local function tryGetRegisteredInterceptedBehavior( s )
-
-local deep = DumpPrettyOptions:New():Deep()
     for pattern, behavior in pairs(_aiInterceptedBehavior) do
         if (s == pattern or string.match( s, pattern )) then
             return behavior
@@ -557,7 +555,7 @@ function OnInsideGroupZone( groupName, callback, options )
         monitoredUnit = monitoredGroup:GetUnit(unitNo)
         if (monitoredUnit == nil) then
             Trace("OnInsideGroupZone-"..groupName.." :: monitored group unit #"..tostring(unitNo).." not found (might be dead) :: Timer stopped!")
-            timer:Stop()      
+            timer:Stop()
             return
         end
 
@@ -2294,12 +2292,6 @@ end
 function EnableAirPolicing( options ) -- todo consider allowing filtering which groups/type of groups are to be policing
     options = options or AirPolicingOptions
     MissionEvents:OnPlayerEnteredAirplane(
-     --[[
-    function( event )
-        Debug( "EnableAirPolicing :: " .. DumpPretty( event ) ) obsolete
-    end)
-    ]]--
-    --EVENTHANDLER:New():HandleEvent(EVENTS.PlayerEnterAircraft,
         function( data )
             local group = getGroup( data.IniGroupName )
             if (group ~= null) then 
