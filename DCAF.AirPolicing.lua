@@ -1837,7 +1837,8 @@ function GetSpottedFlights( source, radius, coalitions )
     groups
         :FilterCategoryAirplane()
         :FilterZones( { zone } )
-        :FilterActive():FilterOnce()
+        :FilterActive()
+        :FilterOnce()
 
     local flights = { }
         function flights:isIn( g )
@@ -1874,6 +1875,11 @@ function GetSpottedFlights( source, radius, coalitions )
     --- escorts ---
 
     local countflights = 0
+
+    -- ensure plane spotting is OFF until player takes off ...
+    if not group:InAir() then
+        return countflights, flights end
+
     groups:ForEachGroupAlive(
         function(g)
 
