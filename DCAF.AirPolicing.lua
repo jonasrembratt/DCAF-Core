@@ -907,8 +907,6 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
                 Timer:Stop()
                 return 
             end
-            --Debug("ERROR ===> OnShowOfForce-"..groupName.." :: "..Dump(interceptors))
-            --Debug("ERROR ===> OnShowOfForce-"..groupName.." :: "..tostring(interceptors).." :: coalitions="..Dump(coalitions).."; interceptZone="..DumpPretty(interceptZone))
             return
         end
 
@@ -2288,7 +2286,6 @@ function AirPolicingOptions:WithDebuggingToUI( value )
     return self
 end
 
-
 function EnableAirPolicing( options ) -- todo consider allowing filtering which groups/type of groups are to be policing
     options = options or AirPolicingOptions
     MissionEvents:OnPlayerEnteredAirplane(
@@ -2306,7 +2303,6 @@ function EnableAirPolicing( options ) -- todo consider allowing filtering which 
         end)
     Trace("AirPolicing was enabled")
 end
-
 
 function DebugIntercept( intruder )
 
@@ -2415,3 +2411,5 @@ end
 --     Debug( "no. of nearby flights: " .. tostring(count) .. " :: { " .. txt .. " }")
     
 -- end
+
+Trace("DCAF.AirPolicing was loaded")

@@ -12,6 +12,7 @@ DCAFCore = {
 function isString( value ) return type(value) == "string" end
 function isNumber( value ) return type(value) == "number" end
 function isTable( value ) return type(value) == "table" end
+function isFunction( value ) return type(value) == "function" end
 function isClass( value, class ) return isTable(value) and value.ClassName == class end
 function isUnit( value ) return isClass(value, "UNIT") end
 function isGroup( value ) return isClass(value, "GROUP") end
@@ -1056,13 +1057,46 @@ function CanDivert( group )
     return GetDivertWaypoint( group ) ~= nil
 end
 
-function Divert( controllable, steerpointName )
+local _onDivertFunc = nil
 
-Debug("Divert :: " .. tostring(controllable))
-    
+function Divert( controllable, steerpointName )
     local steerpointName = steerpointName or DCAFCore.WaypointNames.Divert
     local divertRoute = RouteDirectTo(controllable, steerpointName)
-    return SetRoute( controllable, divertRoute )
+    local route = SetRoute( controllable, divertRoute )
+    if _onDivertFunc then
+        _onDivertFunc( controllable, divertRoute )
+    end
+    return route
+end
+
+function GotoWaypoint( controllable, from, to, offset)
+    local group = nil
+    if not controllable then
+        Warning("GotoWaypoint :: missing controllable :: EXITS")
+        return
+    else
+        group = getGroup(controllable)
+        if not group then
+            Warning("GotoWaypoint :: cannot resolve group from "..Dump(controllable).." :: EXITS")
+            return
+        end
+    end
+    if not from then
+        Warning("GotoWaypoint :: missing 'from' :: EXITS")
+        return
+    elseif not isNumber(from) then
+        Warning("GotoWaypoint :: 'from' is not a number :: EXITS")
+        return
+    end
+    if not to then
+        Warning("GotoWaypoint :: missing 'to' :: EXITS")
+        return
+    elseif not isNumber(to) then
+        Warning("GotoWaypoint :: 'to' is not a number :: EXITS")
+        return
+    end
+    offset = offset or 1
+    group:SetCommand(group:CommandSwitchWayPoint( from + offset, to + offset ))
 end
 
 function LandHere( controllable, category, coalition )
@@ -1261,28 +1295,35 @@ MissionEvents = {
     _unitKilledHandlers = {},
     _playerEnteredUnitHandlers = {},
     _ejectionHandlers = {},
+    _groupDivertedHandlers = {},
 }
 
 local isMissionEventsListenerRegistered = false
 local _e = {}
 
+function MissionEvents:Invoke(handlers, data)
+    for _, handler in ipairs(handlers) do
+        handler( data )
+    end
+end
+
 function _e:onEvent( event )
 
-    local function invokeHandlers( handlers, data )
-        for _, handler in ipairs(handlers) do
-            handler( data )
-        end
-    end  
+    -- local function invokeHandlers( handlers, data ) obsolete
+    --     for _, handler in ipairs(handlers) do
+    --         handler( data )
+    --     end
+    -- end  
     if (event.id == EVENTS.Birth) then
         if event.IniGroup and #MissionEvents._groupSpawnedHandlers > 0 then
-            invokeHandlers( MissionEvents._groupSpawnedHandlers, event )
+            MissionEvents:Invoke( MissionEvents._groupSpawnedHandlers, event )
         end
         if event.IniUnit then
             if #MissionEvents._unitSpawnedHandlers > 0 then
-                invokeHandlers( MissionEvents._unitSpawnedHandlers, event )
+                MissionEvents:Invoke( MissionEvents._unitSpawnedHandlers, event )
             end
             if  event.IniPlayerName then
-                invokeHandlers( MissionEvents._playerEnteredUnitHandlers, event )
+                MissionEvents:Invoke( MissionEvents._playerEnteredUnitHandlers, event )
             end
         end
         return
@@ -1291,7 +1332,7 @@ function _e:onEvent( event )
     if (event.id == world.event.S_EVENT_DEAD) then
         
         if (event.IniUnit and #MissionEvents._unitDeadHandlers > 0) then
-            invokeHandlers( MissionEvents._unitDeadHandlers, {
+            MissionEvents:Invoke( MissionEvents._unitDeadHandlers, {
                 IniUnit = event.IniUnit,
                 IniUnitName = event.IniUnit.UnitName,
                 IniGroup = event.IniGroup,
@@ -1303,38 +1344,21 @@ function _e:onEvent( event )
 
     if (event.id == world.event.S_EVENT_KILL) then
         if (#MissionEvents._unitKilledHandlers > 0) then
-            invokeHandlers( MissionEvents._unitKilledHandlers, event)
+            MissionEvents:Invoke( MissionEvents._unitKilledHandlers, event)
         end
         return
     end
 
     if (event.id == world.event.S_EVENT_EJECTION) then
         if (#MissionEvents._ejectionHandlers > 0) then
-            invokeHandlers( MissionEvents._ejectionHandlers, event)
+            MissionEvents:Invoke( MissionEvents._ejectionHandlers, event)
         end
         return
     end
 
---     if (event.id == world.event.S_EVENT_PLAYER_ENTER_UNIT and event.initiator) then
-
---         local unit = UNIT:FindByName(Unit.getName(event.initiator))
---         if event.IniUnit and event.IniPlayerName then
---             invokeHandlers( MissionEvents._playerEnteredUnitHandlers, event 
--- --         {
--- --             IniUnit = unit,
--- --             IniUnitName = Unit.getName(event.initiator),
--- --             IniGroup = unit:GetGroup(),
--- --             IniGroupName = Group.getName(Unit.getGroup(event.initiator)),
--- -- --            Callsign = Unit.getCallsign(event.initiator),
--- --             IniPlayerName = Unit.getPlayerName(event.initiator)
--- --         }
---             )
---         end
---     end
-
 end
 
-local function registerEventListener( listeners, func, predicateFunc, insertFirst )
+function MissionEvents:AddListener(listeners, func, predicateFunc, insertFirst )
     if insertFirst == nil then
         insertFirst = false
     end
@@ -1350,14 +1374,16 @@ local function registerEventListener( listeners, func, predicateFunc, insertFirs
     world.addEventHandler(_e)
 end
 
-function MissionEvents:OnGroupSpawned( func, insertFirst ) registerEventListener(MissionEvents._groupSpawnedHandlers, func, nil, insertFirst) end
-function MissionEvents:OnUnitSpawned( func, insertFirst ) registerEventListener(MissionEvents._unitSpawnedHandlers, func, nil, insertFirst) end
-function MissionEvents:OnUnitDead( func, insertFirst ) registerEventListener(MissionEvents._unitDeadHandlers, func, nil, insertFirst) end
-function MissionEvents:OnUnitKilled( func, insertFirst ) registerEventListener(MissionEvents._unitKilledHandlers, func, nil, insertFirst) end
-function MissionEvents:OnPlayerEnteredUnit( func, insertFirst ) registerEventListener(MissionEvents._playerEnteredUnitHandlers, func, nil, insertFirst) end
-function MissionEvents:OnEjection( func, insertFirst ) registerEventListener(MissionEvents._ejectionHandlers, func, nil, insertFirst) end
+function MissionEvents:OnGroupSpawned( func, insertFirst ) MissionEvents:AddListener(MissionEvents._groupSpawnedHandlers, func, nil, insertFirst) end
+function MissionEvents:OnUnitSpawned( func, insertFirst ) MissionEvents:AddListener(MissionEvents._unitSpawnedHandlers, func, nil, insertFirst) end
+function MissionEvents:OnUnitDead( func, insertFirst ) MissionEvents:AddListener(MissionEvents._unitDeadHandlers, func, nil, insertFirst) end
+function MissionEvents:OnUnitKilled( func, insertFirst ) MissionEvents:AddListener(MissionEvents._unitKilledHandlers, func, nil, insertFirst) end
+function MissionEvents:OnPlayerEnteredUnit( func, insertFirst ) MissionEvents:AddListener(MissionEvents._playerEnteredUnitHandlers, func, nil, insertFirst) end
+function MissionEvents:OnEjection( func, insertFirst ) MissionEvents:AddListener(MissionEvents._ejectionHandlers, func, nil, insertFirst) end
+
+--- CUSTOM EVENTS
 function MissionEvents:OnPlayerEnteredAirplane( func, insertFirst ) 
-    registerEventListener(MissionEvents._playerEnteredUnitHandlers, 
+    MissionEvents:AddListener(MissionEvents._playerEnteredUnitHandlers, 
         function( event )
             if event.IniUnit:IsAirPlane() then
                 func( event )
@@ -1366,8 +1392,9 @@ function MissionEvents:OnPlayerEnteredAirplane( func, insertFirst )
         nil,
         insertFirst) 
 end
+
 function MissionEvents:OnPlayerEnteredHelicopter( func, insertFirst ) 
-    registerEventListener(MissionEvents._playerEnteredUnitHandlers, 
+    MissionEvents:AddListener(MissionEvents._playerEnteredUnitHandlers, 
         function( event )
             if (event.IniUnit:IsHelicopter()) then
                 func( event )
@@ -1377,6 +1404,21 @@ function MissionEvents:OnPlayerEnteredHelicopter( func, insertFirst )
         insertFirst)
 end
 
+function MissionEvents:OnGroupDiverted( func, insertFirst ) 
+MissionEvents:AddListener(MissionEvents._groupDivertedHandlers, 
+        func,
+        -- function( event ) obsolete
+        --     if event.IniUnit:IsAirPlane() then
+        --         func( event )
+        --     end
+        -- end,
+        nil,
+        insertFirst) 
+end
+
+_onDivertFunc = function( controllable, route ) -- called by Divert()
+    MissionEvents:Invoke(MissionEvents._groupDivertedHandlers, { Controllable = controllable, Route = route })
+end
 
 --------------------------------------------- [[ TRIGGER ZONES ]] ---------------------------------------------
 
@@ -1659,3 +1701,5 @@ function OnGroupLeftTriggerZone( callback, data )
     if (not _triggerZoneUnitHandlers.isMonitoring) then error( "Please start monitoring trigger zones for events first (call MonitorTriggerZones once)" ) end
     table.insert(_triggerZoneUnitHandlers.groupLeft, { handler = callback, data = data })
 end
+
+Trace("DCAF.Core was loaded")
