@@ -59,10 +59,10 @@ AirPolicing = {
         AiDisobeyDivertingInstructionAudioTime = 3,
 
         AiAttackingInstruction = 
-          "The flight doesn't seem to compy and is behaving aggressively. Be cautious and ready for a fight!",
+          "The flight doesn't seem to comply and is behaving aggressively. Be cautious and ready for a fight!",
         AiAttackingInstructionAudio = "AiAttackingInstruction.ogg",
-        AiAttackingInstructionAudioTime = 4,
-
+        AiAttackingInstructionAudioTime = 1,
+ 
         AiLandingInstruction =
           "The flight leaves your formation to land at %s. Good job!",
         AiLandingInstructionAudio = "AiLandingInstruction.ogg",
@@ -228,7 +228,6 @@ end
 
 local function parseReaction( s, next ) -- next = start index in 's'
 
-    --Trace("parseReaction :: s=" .. s)
     next = next or 1
     local sLength = string.len( s )
     local tokenLen = string.len(INTERCEPT_REACTIONS.None) -- all reaction identifiers are same length
@@ -317,30 +316,35 @@ Parameters
 Returns
   A table containing one or more Reactions. First one is primary (may be conditional); the others are fallback reactions
 ]]--
-local function getGroupBehavior( intruderGroup )
+local function getGroupBehavior( intruderGroup, defaultBehavior )
 
     if (not isGroup(intruderGroup)) then
-        error("intruderGroup is of type " .. type(intruderGroup)) 
+        error("intruderGroup is of type " .. type(intruderGroup))
+        return
     end
     local groupName = intruderGroup.GroupName
     local behavior = tryGetRegisteredInterceptedBehavior(groupName)
     if (behavior ~= nil) then
         return behavior 
     end
-    --Trace("getGroupBehavior-".. groupName .." :: reaction not set")
+    if defaultBehavior ~= nil then
+        Trace("getGroupBehavior-".. groupName .." :: reaction not set; resolves to default behavior")
+        return defaultBehavior
+    end
+    Trace("getGroupBehavior-".. groupName .." :: reaction not set")
     return {}
 end
 
 local function resolveIntruderReaction( behavior, intruder, interceptor, intruderSize, intruderMissiles, interceptorSize, interceptorMissiles )
     intruderSize = intruderSize or intruder:CountAliveUnits()
-    interceptorSize = interceptorMissiles or interceptor:CountAliveUnits()
+    interceptorSize = interceptorSize or interceptor:CountAliveUnits()
     
     function getMissiles(g, count)
-        if count then return count end
+        if isNumber(count) then return count end
         local _, _, _, _, msls = g:GetAmmunition()
         return msls
     end
-    intruderMissiles = getMissiles(intruder, intruderMissiles)
+    intruderMissiles = getMissiles( intruder, intruderMissiles)
     interceptorMissiles = getMissiles( interceptor, interceptorMissiles )
 
     function getValidated( reaction )
@@ -364,7 +368,7 @@ local function resolveIntruderReaction( behavior, intruder, interceptor, intrude
             return INTERCEPT_REACTIONS.Attack3
         end
         
-        if (reaction.Name == INTERCEPT_REACTIONS.Attack2 and GetGroupSuperiority(itrGrp, itcGrp) <= 0) then
+        if (reaction.Name == INTERCEPT_REACTIONS.Attack2 and GetGroupSuperiority( intruder, interceptor, intruderSize, intruderMissiles, interceptorSize, interceptorMissiles ) <= 0) then
             -- intruder is/feels superior ...
             Trace("getInterceptedIntruderReaction-"..intruder.GroupName.." :: intruder feels superior or equal to interceptor")
             return INTERCEPT_REACTIONS.Attack3
@@ -399,27 +403,29 @@ end
 local function getIntrudersReactions( intruder, interceptor, escorts, useDefault )
   
     local reactions = {}
-    local totalMissiles = 0
-    local totalSize = 0
+    local intruderMissiles = 0
+    local intruderSize = 0
 
     if not intruder then error("getIntrudersReactions :: intruder was nil") end
     if not interceptor then error("getIntrudersReactions :: interceptor was nil") end
 
-    -- get total size and amount iof missiles ...
+    -- get intruder size (incl. escorts) and amount of missiles ...
     if (#escorts > 0) then
         for _, escortGrp in ipairs(escorts) do
-            totalSize = totalSize + escortGrp:CountAliveUnits()
+            intruderSize = intruderSize + escortGrp:CountAliveUnits()
             local _, _, _, _, missiles = escortGrp:GetAmmunition()
-            totalMissiles = totalMissiles + missiles
+            intruderMissiles = intruderMissiles + missiles
         end
     end
-    if totalSize == 0 then
-        totalSize = intruder:CountAliveUnits()
+    if intruderSize == 0 then
+        intruderSize = intruder:CountAliveUnits()
         local _, _, _, _, missiles = intruder:GetAmmunition()
-        totalMissiles = totalMissiles + missiles
+        intruderMissiles = intruderMissiles + missiles
     end
+    local interceptorSize = interceptor:CountAliveUnits()
+    local _, _, _, _, interceptorMissiles = interceptor:GetAmmunition()
 
-    local function getGroupReaction( g )
+    local function getGroupReaction( g, defaultGroup )
         if not g then
             Trace("getIntrudersReactions.getGroupReaction-? :: cannot resolve intruder group from ".. Dump(intruder).." :: EXITS")
             return getDefaultIntruderReaction( useDefault )
@@ -428,16 +434,21 @@ local function getIntrudersReactions( intruder, interceptor, escorts, useDefault
         local behavior = getGroupBehavior( g )
 
         if #behavior == 0 then
-            Trace("getIntrudersReactions.getGroupReaction-".. g.GroupName .." :: cannot resolve group reaction :: uses default reaction")
-            return getDefaultIntruderReaction( useDefault )
+            if defaultGroup then
+                Trace("getIntrudersReactions.getGroupReaction-".. g.GroupName .." :: cannot resolve group reaction :: tries default group behavior (" .. defaultGroup.GroupName .. ")")
+                behavior = getGroupBehavior( defaultGroup )
+            end
+            if #behavior == 0 then
+                Trace("getIntrudersReactions.getGroupReaction-".. g.GroupName .." :: cannot resolve group reaction :: uses default reaction")
+                return getDefaultIntruderReaction( useDefault )
+            end
         end
-
-        return resolveIntruderReaction(behavior, intruder, interceptor, totalSize, totalMissiles)
+        return resolveIntruderReaction(behavior, intruder, interceptor, intruderSize, intruderMissiles, interceptorSize, interceptorMissiles)
     end
 
     if #escorts > 0 then
         for _, escort in ipairs(escorts) do
-            reactions[escort.GroupName] = getGroupReaction( escort )
+            reactions[escort.GroupName] = getGroupReaction( escort, intruder )
         end
     end
 
@@ -637,13 +648,13 @@ end
 
 OnInterceptedDefaults = {
     interceptedUnitNo = 1,
-    zoneRadius = 120,
+    zoneRadius = 180,
     zoneOffset = {
         -- default intercept zone is 50 m radius, 55 meters in front of intruder aircraft
         relative_to_unit = true,
-        dx = 75,   -- longitudinal offset (positive = in front; negative = to the back)
-        dy = 0,    -- latitudinal offset (positive = right; negative = left)
-        dz = 5     -- vertical offset (positive = up; negative = down)
+        dx = 120,   -- longitudinal offset (positive = in front; negative = to the back)
+        dy = 0,     -- latitudinal offset (positive = right; negative = left)
+        dz = 10     -- vertical offset (positive = up; negative = down)
     },
     coalitions = { "blue" },
     description = nil,
@@ -1356,19 +1367,19 @@ function OnInterception( group, callback, options, pg )
     OnInsideGroupZone( group.GroupName,
         function( closing )
 
-            local establishedAssist = AirPolicing.Assistance.EstablishInstructionSingleton
-            local establishedAssistAudio = AirPolicing.Assistance.EstablishInstructionSingletonAudio
+            local establishAssist = AirPolicing.Assistance.EstablishInstructionSingleton
+            local establishAssistAudio = AirPolicing.Assistance.EstablishInstructionSingletonAudio
             -- if escort was not discovered when selecting the group for intercept, try spotting it again ...
             if ai.escort ~= nil or IsEscorted( ai.intruder ) then
-                establishedAssist = AirPolicing.Assistance.EstablishInstructionEscorted
-                establishedAssistAudio = AirPolicing.Assistance.EstablishInstructionEscortedAudio
+                establishAssist = AirPolicing.Assistance.EstablishInstructionEscorted
+                establishAssistAudio = AirPolicing.Assistance.EstablishInstructionEscortedAudio
             end
 
             if (ai and options.showAssistance) then
-                MessageTo( ai.interceptor, establishedAssist, options.assistanceDuration )
+                MessageTo( ai.interceptor, establishAssist, options.assistanceDuration )
             end
             if (ai and options.audioAssistance) then
-                MessageTo( ai.interceptor, establishedAssistAudio )
+                MessageTo( ai.interceptor, establishAssistAudio )
             end
             -- display intruder description if available ...
             Delay( AirPolicing.Assistance.DescriptionDelay, 
@@ -1640,7 +1651,6 @@ local function onAiWasIntercepted( intercept, ig, pg )
                 elseif gReaction == INTERCEPT_REACTIONS.Attack3 then
                     Trace("onAiWasIntercepted-"..icptorName.." :: " .. g.GroupName .. " attacks interceptor")
                     TaskAttackGroup( g, pg.group )
-                    --ROEAggressive( g )
                     return true
                 elseif reaction == INTERCEPT_REACTIONS.Divert then
                     Trace("onAiWasIntercepted-"..icptorName.." :: " .. g.GroupName .. " diverts")
@@ -1753,6 +1763,9 @@ local function onAiWasIntercepted( intercept, ig, pg )
             end
 
             -- apply escort reactions ...
+
+--Debug("onAiWasIntercepted :: reactions: " .. DumpPretty(reactions))
+
             for escortName, reaction in pairs(reactions) do
                 local eGroup = getGroup(escortName)
                 local eReaction = nil
@@ -1762,7 +1775,8 @@ local function onAiWasIntercepted( intercept, ig, pg )
                                 or INTERCEPT_REACTIONS.None
                     if not applyReactionTo( eGroup, eReaction ) then
                         Trace("Interception-"..icptorName.." :: HUH?! :: Unknown escort reaction: " .. tostring(eReaction))
-                    elseif eReaction ~= intruderReaction and eReaction == INTERCEPT_REACTIONS.Attack3 then
+                    elseif eReaction == INTERCEPT_REACTIONS.Attack3 then
+                        Trace("Interception-"..icptorName.." :: Escort (" .. escortName .. ") attacks!")
                         Delay(audioDelay,
                             function()
                                 if (pg.aiReactionAssist) then
@@ -1855,7 +1869,7 @@ function GetSpottedFlights( source, radius, coalitions )
     local escorts = {
         _count = 0
     }
-        function escorts:isEscorting(g)
+        function escorts:isRegisteredEscort(g)
             for k, _ in pairs(escorts) do
                 if (k == g.GroupName) then return true end
             end
@@ -1864,7 +1878,9 @@ function GetSpottedFlights( source, radius, coalitions )
         function escorts:isClient(g)
             if self._count == 0 then return false end
             for k, info in pairs(self) do
-                if (info.escortingGroup == g.GroupName) then return true, info.group end
+                if isTable(info) then
+                    if (info.escortingGroup == g.GroupName) then return true, info.group end
+                end
             end
             return false, nil
         end
@@ -1884,9 +1900,11 @@ function GetSpottedFlights( source, radius, coalitions )
         function(g)
 
             if (group == g or not g:InAir() or not CanBeIntercepted(g)) then 
-                return end
+                Debug("GetSpottedFlights-" .. group.GroupName .. " :: group ".. g.GroupName .." is source, or filtered out :: IGNORES")
+                return 
+            end
             
-            if (escorts:isEscorting(g)) then
+            if (escorts:isRegisteredEscort(g)) then
                 -- this is an escort group and its client group was already included; ignore ...
                 Debug("GetSpottedFlights-" .. group.GroupName .. " :: group ".. g.GroupName .." is already registered as escort :: IGNORES")
                 return
@@ -1904,12 +1922,15 @@ function GetSpottedFlights( source, radius, coalitions )
             if (verticalDistance >= 0) then
                 -- intruder is level or above interceptor (easier to detect - unfortunately we can't account for clouds) ...
                 if (verticalDistance > radius) then 
+                    Debug("GetSpottedFlights-"..group.GroupName.." :: group "..g.GroupName.." is too high")
                     return 
                 end
             else 
                 -- intruder is below interceptor (harder to detect) TODO account for lighting conditions? ...
                 if (math.abs(verticalDistance) > radius * 0.65 ) then
-                    return end
+                    Debug("GetSpottedFlights-"..group.GroupName.." :: group "..g.GroupName.." is too low")
+                    return 
+                end
             end
 
             local escortName = nil
@@ -1921,9 +1942,10 @@ function GetSpottedFlights( source, radius, coalitions )
                 escorts[escort.GroupName] = nil
             end
 
+            local info = nil
             local rLoc = GetRelativeLocation( group, g )
             local client = GetEscortClientGroup(g)
-            local info = nil
+
             if client then
                 -- this group is escorting another 'client' group; stash it for now and look for client group ...
                 info = { 
@@ -1943,9 +1965,10 @@ function GetSpottedFlights( source, radius, coalitions )
                     reaction = nil,
                     escortingGroup = escortName,
                 } 
+                Debug("GetSpottedFlights-"..group.GroupName.." :: group "..g.GroupName.." is included")
+                flights[g.GroupName] = info
+                countflights = countflights+1
             end
-            flights[g.GroupName] = info
-            countflights = countflights+1
         end)
     
     -- might be that escort was spotted but that its client group was not;
@@ -2324,98 +2347,17 @@ end
 
 -------------- DEBUG -------------
 
-function DebugBeginIntercept( interceptor )
+function DebugGetSpottedFlights( source ) -- nisse Remove when debugged
 
-    DebugAudioMessageToAll = true
-    _isDebuggingWithAiInterceptor = true
+    local deep = DumpPrettyOptions:New():Deep()
+    local count, flights = GetSpottedFlights( source, NauticalMilesToMeters(10) )
 
-    local interceptorGrp = getGroup( interceptor )
-
-    local options = AirPolicingOptions:New()
-        :WithAssistance()
-        :WithAiInterceptBehavior(
-            -- -c = while closing; -e = while establishing; i = when intercepted (TODO, not yet implemented)
-            INTERCEPT_REACTIONS.Follow, -- default reaction
-            {
-                ["_RU_TEST-1"] = "divt",
-                ["_RU_TEST-2"] = "atk3",
-                -- ["_RU_TEST-2"] = "atk2%50 > divt",
-                ["AIR IR C130-1"] = "devt",
-                ["AIR IR C130-2"] = "def1",
-                ["AIR IR Spy-1"] = "atk2%50 > divt",
-                ["AIR IR Fighter Sweep-."] = "atk2%50 > divt",
-                ["AIR IR Patrol"] = "atk2%50 > divt",
-            })
-        :WithGroupDescriptions({
-            -- civilian
-            ["CIV DU CP21-1"] = "UAE private Cessna P21, reg.no. A6-BUG",
-            ["CIV AL B737."] = "Air Algerie B-737, reg.no. 7T-VJS",
-            ["CIV GG Yak"] = "Georgian Yak-40, reg.no 4L-TGG",
-            ["CIV FedEx B727-NE"] = "FedEx 272, reg. no. N166FE",
-
-            -- Iranian air force
-            ["AIR IR Spy-1"] = "Russian A-50 SIGINT plane, reg.no. 17",
-            ["AIR IR Spy-1 escort"] = "Iranian Mig-21Bis, 2xR-3S + 2xR-R",
-            ["AIR IR M8-8x2"] = "Iranian Mi-8, guns + rockets",
-            ["AIR IR C130-1"] = "Iranian C-130, tail.no. 5-8518",
-            ["AIR IR C130-2"] = "Iranian C-130, tail.no. 5-8518",
-            ["AIR IR Fighter Sweep-1"] = "Iranian Mig-21Bis, 2xR-3S + 2xR-R",
-            ["AIR IR Fighter Sweep-2-1"] = "Iranian Mig-21Bis, 2xR-3S + 2xR-R",
-            ["AIR IR Fighter Sweep-2-2"] = "Iranian Mig-21Bis, 4xR-60 + 2xR-R",
-            ["AIR IR Patrol"] = "Iranian Mig-21Bis, 2xR-3S + 2xR3-R",
-
-            -- DCAF
-            -- [usCarrierGroup] = "USS George Washington (carrier)",
-            -- [ukAriadneID] = "HMS Ariadne (frigate)",
-            -- [usSterettID] = "USS Sterett (corvette)",
-            -- [usOrionID] = "Image 1 (Orion anti-sub aircraft)",
-            -- [usAirForce2EscortID] = "Titan-1",
-
-            -- Iranian navy
-            ["NAV IR Patrol-1"] = "Iranian patrol boat, reg.no. P 212",
-            ["NAV IR Patrol-2"] = "Iranian patrol boat, reg.no. P 219",
-
-            -- United Arab Emirate
-            ["AIR UAE Coast Guard-1"] = "UAE Sea Stallion - Coast Guard",
-            ["AIR UA A400"] = "United Arab Emirates A400, tail no. 417",
-
-            -- shipping
-            ["NAV BAR Bulker-1"] = "Barbados bulker, 'Amira Hana'",
-            ["NAV IDO Tanker-1"] = "Indonesian tanker, 'PNS Serena'",
-            
-        })
-        :WithTracing()
-        :WithDebugging()
-        :WithDebuggingToUI()
-        :WithAiInterceptorDebugging()
+    local txt = ""
+    for k, v in pairs(flights) do
+        txt = txt .. k .. "; "
+    end
+    Debug( "no. of nearby flights: " .. tostring(count) .. " :: { " .. txt .. " }")
     
-    local pg = PolicingGroup:New( interceptorGrp, options )
-    local count, flights = GetSpottedFlights( interceptor )
-    if count == 0 then
-Warning("DebugBeginIntercept :: no spotted flights :: EXITS")
-        return
-    end
-    local igInfo = nil
-    for name, info in pairs(flights) do
-        igInfo = info
-        break
-    end
-
-    beginIntercept( pg, igInfo )
 end
-
-
--- function DebugGetSpottedFlights( source ) -- nisse Remove when debugged
-
---     local deep = DumpPrettyOptions:New():Deep()
---     local count, flights = GetSpottedFlights( source, NauticalMilesToMeters(10) )
-
---     local txt = ""
---     for k, v in pairs(flights) do
---         txt = txt .. k .. "; "
---     end
---     Debug( "no. of nearby flights: " .. tostring(count) .. " :: { " .. txt .. " }")
-    
--- end
 
 Trace("DCAF.AirPolicing was loaded")

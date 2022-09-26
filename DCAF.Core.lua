@@ -362,14 +362,15 @@ function GetGroupSuperiority( a, b, aSize, aMissiles, bSize, bMissiles )
     end
     -- todo Would be great to check type of missiles here, depending on groups' distance from each other
     local missileRatio = (aMissiles / aSize) / (bMissiles / bSize)
-Debug("GetGroupSuperiority-"..aGroup.GroupName.." / "..bGroup.GroupName.." :: missileRatio: "..tostring(missileRatio))
+Debug("GetGroupSuperiority-"..aGroup.GroupName.." / "..bGroup.GroupName.." :: " .. string.format("size: %d / %d :: missiles: %d / %d", aSize, bSize, aMissiles, bMissiles)) -- nisse
+Debug("GetGroupSuperiority-"..aGroup.GroupName.." / "..bGroup.GroupName.." :: missileRatio: "..tostring(missileRatio)) -- nisse
     if (aSize < bSize) then 
         if missileRatio > 2 then
-            -- a is smaller than be but a is strongly superior in armament ...
+            -- A is smaller than B but a is strongly superior in armament ...
             return -1
         end
         if (missileRatio > 1.5) then
-            -- a is smaller than be but a is slightly superior in armament ...
+            -- A is smaller than B but a is slightly superior in armament ...
             return 0
         end
         return 1 
@@ -1344,7 +1345,10 @@ function _e:onEvent( event )
 
     if (event.id == world.event.S_EVENT_KILL) then
         if (#MissionEvents._unitKilledHandlers > 0) then
-            MissionEvents:Invoke( MissionEvents._unitKilledHandlers, event)
+            MissionEvents:Invoke( MissionEvents._unitKilledHandlers, {
+                IniUnit = UNIT:Find(event.initiator),
+                TgtUnit = UNIT:Find(event.target)
+            })
         end
         return
     end
