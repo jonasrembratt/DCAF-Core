@@ -64,12 +64,13 @@ function MissionClock( short )
 end
 
 function MissionStartTime()
-    return _missionStartTime
-end
+    return _missionStartTime end
 
 function MissionTime()
-    return UTILS.SecondsOfToday() - _missionStartTime
-end
+    return UTILS.SecondsOfToday() - _missionStartTime end
+
+function SecondsOfToday(missionTime)
+    return _missionStartTime + missionTime or 0 end
 
 function MissionClockTime( short )
     if (short == nil) then
@@ -162,6 +163,62 @@ local function isSubjectivelySameGroup( group1, group2 )
             and isSameCoalition(group1, group2)
             and isSameHeading(group1, group2) 
             and isSameAltitude(group1, group2) 
+end
+
+function IsHeadingFor( source, target, maxDistance, tolerance )
+    if source == nil then 
+        error("IsHeadingFor :: source not specified")
+        return
+    end
+    if target == nil then 
+        error("IsHeadingFor :: target not specified")
+        return
+    end
+    
+    local sourceCoordinate = nil
+    local sourceUnit = getUnit(source)
+    if sourceUnit == nil then 
+        local g = getGroup(source)
+        if g == nil then
+            error("IsHeadingFor :: source unit could not be resolved from " .. Dump(source))
+            return
+        end
+        sourceUnit = g:GetUnit(1)
+    end
+    sourceCoordinate = sourceUnit:GetCoordinate()
+
+    local nisse_targetName = nil
+    local targetCoordinate = nil
+    local targetUnit = getUnit(target)
+    if targetUnit == nil then
+        local g = getGroup(target)
+        if g == nil then
+            error("IsHeadingFor :: target coordinate could not be resolved from " .. Dump(target))
+            return
+        end
+        nisse_targetName = g.GroupName
+        targetCoordinate = g:GetCoordinate()
+    else
+        nisse_targetName = targetUnit:GetName()
+        targetCoordinate = targetUnit:GetCoordinate()
+    end
+
+    if maxDistance ~= nil then
+        local distance = sourceCoordinate:Get2DDistance(targetCoordinate)
+        if distance > maxDistance then
+            return flase end
+    end
+    
+    if not isNumber(tolerance) then tolerance = 1 end
+
+    local dirVec3 = sourceCoordinate:GetDirectionVec3( targetCoordinate )
+    local angleRadians = sourceCoordinate:GetAngleRadians( dirVec3 )
+    local bearing = UTILS.Round( UTILS.ToDegree( angleRadians ), 0 )
+    local minHeading = bearing - tolerance % 360
+    local maxHeading = bearing + tolerance % 360
+    local heading = sourceUnit:GetHeading()
+
+    return heading + tolerance % 360 <= maxHeading and heading - tolerance % 360 >= minHeading
 end
 
 local function isEscortingFromTask( escortGroup, clientGroup )
@@ -646,7 +703,7 @@ function GetAltitudeAsAngelsOrCherubs( coordinate )
     return "cherubs " .. tostring(UTILS.Round( cherubs, 0 ))
 end
 
--- GetRelativeLocation :: Produces information to reopresent the subjective, relative, location between two locations
+-- GetRelativeLocation :: Produces information to represent the subjective, relative, location between two locations
 -- @param sourceCoordinate :: The subject location
 -- @param targetLocation :: The 'other' location
 -- @returns object :: 
@@ -1297,6 +1354,10 @@ MissionEvents = {
     _playerEnteredUnitHandlers = {},
     _ejectionHandlers = {},
     _groupDivertedHandlers = {},
+    _weaponFiredHandlers = {},
+    _shootingStartHandlers = {},
+    _shootingStopHandlers = {},
+    _unitHitHandlers = {},
 }
 
 local isMissionEventsListenerRegistered = false
@@ -1309,12 +1370,9 @@ function MissionEvents:Invoke(handlers, data)
 end
 
 function _e:onEvent( event )
+local deep = DumpPrettyOptions:New():Deep() -- nisse
+--Debug("_e:onEvent-? :: event: " .. DumpPretty(event))
 
-    -- local function invokeHandlers( handlers, data ) obsolete
-    --     for _, handler in ipairs(handlers) do
-    --         handler( data )
-    --     end
-    -- end  
     if (event.id == EVENTS.Birth) then
         if event.IniGroup and #MissionEvents._groupSpawnedHandlers > 0 then
             MissionEvents:Invoke( MissionEvents._groupSpawnedHandlers, event )
@@ -1360,6 +1418,57 @@ function _e:onEvent( event )
         return
     end
 
+
+    if (event.id == world.event.S_EVENT_SHOT) then
+--Debug("_e:onEvent-S_EVENT_SHOT :: event: " .. DumpPretty(event, deep))
+        if (#MissionEvents._weaponFiredHandlers > 0) then
+            event.IniUnit = UNIT:Find(event.initiator)
+            MissionEvents:Invoke( MissionEvents._weaponFiredHandlers, event)
+        end
+        return
+    end
+        
+    if (event.id == world.event.S_EVENT_SHOOTING_START) then
+        if (#MissionEvents._shootingStartHandlers > 0) then
+            event.IniUnit = UNIT:Find(event.initiator)
+            event.IniUnitName = event.IniUnit:GetName()
+            event.IniGroup = event.IniUnit:GetGroup()
+            event.IniGroupName = event.IniGroup.GroupName
+            if event.target then
+                event.TgtUnit = UNIT:Find(event.target)
+                event.TgtUnitName = event.TgtUnit:GetName()
+                event.TgtGroup = event.TgtUnit:GetGroup()
+                event.TgtGroupName = event.TgtGroup.GroupName
+            end
+            MissionEvents:Invoke( MissionEvents._shootingStartHandlers, event)
+        end
+        return
+    end
+
+    if (event.id == world.event.S_EVENT_SHOOTING_END) then
+        if (#MissionEvents._shootingStopHandlers > 0) then
+            event.IniUnit = UNIT:Find(event.initiator)
+            event.IniUnitName = event.IniUnit:GetName()
+            event.IniGroup = event.IniUnit:GetGroup()
+            event.IniGroupName = event.IniGroup.GroupName
+            if event.target then
+                event.TgtUnit = UNIT:Find(event.target)
+                event.TgtUnitName = event.TgtUnit:GetName()
+                event.TgtGroup = event.TgtUnit:GetGroup()
+                event.TgtGroupName = event.TgtGroup.GroupName
+            end
+            MissionEvents:Invoke( MissionEvents._shootingStopHandlers, event)
+        end
+        return
+    end
+        
+    if (event.id == world.event.S_EVENT_HIT) then
+--Debug("_e:onEvent-S_EVENT_HIT :: event: " .. DumpPretty(event, deep))
+        if (#MissionEvents._unitHitHandlers > 0) then
+            MissionEvents:Invoke( MissionEvents._unitHitHandlers, event)
+        end
+        return
+    end
 end
 
 function MissionEvents:AddListener(listeners, func, predicateFunc, insertFirst )
@@ -1378,12 +1487,48 @@ function MissionEvents:AddListener(listeners, func, predicateFunc, insertFirst )
     world.addEventHandler(_e)
 end
 
+function MissionEvents:RemoveListener(listeners, func)
+    local idx = 0
+    for i, f in ipairs(listeners) do
+        if func == f then
+            idx = i
+        end
+    end
+    if idx > 0 then
+        table.remove(listeners, idx)
+    end
+end
+
 function MissionEvents:OnGroupSpawned( func, insertFirst ) MissionEvents:AddListener(MissionEvents._groupSpawnedHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnGroupSpawned( func, insertFirst ) MissionEvents:RemoveListener(MissionEvents._groupSpawnedHandlers, func) end
+
 function MissionEvents:OnUnitSpawned( func, insertFirst ) MissionEvents:AddListener(MissionEvents._unitSpawnedHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnUnitSpawned( func, insertFirst ) MissionEvents:RemoveListener(MissionEvents._unitSpawnedHandlers, func) end
+
 function MissionEvents:OnUnitDead( func, insertFirst ) MissionEvents:AddListener(MissionEvents._unitDeadHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnUnitDead( func, insertFirst ) MissionEvents:RemoveListener(MissionEvents._unitDeadHandlers, func) end
+
 function MissionEvents:OnUnitKilled( func, insertFirst ) MissionEvents:AddListener(MissionEvents._unitKilledHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnUnitKilled( func, insertFirst ) MissionEvents:RemoveListener(MissionEvents._unitKilledHandlers, func) end
+
 function MissionEvents:OnPlayerEnteredUnit( func, insertFirst ) MissionEvents:AddListener(MissionEvents._playerEnteredUnitHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnPlayerEnteredUnit( func, insertFirst ) MissionEvents:RemoveListener(MissionEvents._playerEnteredUnitHandlers, func) end
+
 function MissionEvents:OnEjection( func, insertFirst ) MissionEvents:AddListener(MissionEvents._ejectionHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnEjection( func, insertFirst ) MissionEvents:RemoveListener(MissionEvents._ejectionHandlers, func) end
+
+function MissionEvents:OnWeaponFired( func, insertFirst ) MissionEvents:AddListener(MissionEvents._weaponFiredHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnWeaponFired( func, insertFirst ) MissionEvents:RemoveListener(MissionEvents._weaponFiredHandlers, func) end
+
+function MissionEvents:OnShootingStart( func, insertFirst ) MissionEvents:AddListener(MissionEvents._shootingStartHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnShootingStart( func, insertFirst ) MissionEvents:RemoveListener(MissionEvents._shootingStartHandlers, func) end
+
+function MissionEvents:OnShootingStop( func, insertFirst ) MissionEvents:AddListener(MissionEvents._shootingStopHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnShootingStop( func, insertFirst ) MissionEvents:RemoveListener(MissionEvents._shootingStopHandlers, func) end
+
+function MissionEvents:OnUnitHit( func, insertFirst ) MissionEvents:AddListener(MissionEvents._unitHitHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnUnitHit( func, insertFirst ) MissionEvents:RemoveListener(MissionEvents._unitHitHandlers, func) end
+
 
 --- CUSTOM EVENTS
 function MissionEvents:OnPlayerEnteredAirplane( func, insertFirst ) 
@@ -1396,6 +1541,7 @@ function MissionEvents:OnPlayerEnteredAirplane( func, insertFirst )
         nil,
         insertFirst) 
 end
+function MissionEvents:EndOnPlayerEnteredAirplane( func ) MissionEvents:RemoveListener(MissionEvents._playerEnteredUnitHandlers, func) end
 
 function MissionEvents:OnPlayerEnteredHelicopter( func, insertFirst ) 
     MissionEvents:AddListener(MissionEvents._playerEnteredUnitHandlers, 
@@ -1407,9 +1553,10 @@ function MissionEvents:OnPlayerEnteredHelicopter( func, insertFirst )
         nil,
         insertFirst)
 end
+function MissionEvents:EndOnPlayerEnteredHelicopter( func ) MissionEvents:RemoveListener(MissionEvents._playerEnteredUnitHandlers, func) end
 
 function MissionEvents:OnGroupDiverted( func, insertFirst ) 
-MissionEvents:AddListener(MissionEvents._groupDivertedHandlers, 
+    MissionEvents:AddListener(MissionEvents._groupDivertedHandlers, 
         func,
         -- function( event ) obsolete
         --     if event.IniUnit:IsAirPlane() then
@@ -1419,6 +1566,8 @@ MissionEvents:AddListener(MissionEvents._groupDivertedHandlers,
         nil,
         insertFirst) 
 end
+function MissionEvents:EndOnGroupDiverted( func ) MissionEvents:RemoveListener(MissionEvents._groupDivertedHandlers, func) end
+
 
 _onDivertFunc = function( controllable, route ) -- called by Divert()
     MissionEvents:Invoke(MissionEvents._groupDivertedHandlers, { Controllable = controllable, Route = route })
