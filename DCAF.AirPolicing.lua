@@ -833,11 +833,13 @@ SofDifficulty = { -- experimental concept
 OnShowOfForceDefaults = {
     -- options
     Radius = 300,            -- in meters, max distance between interceptor and intruder for show of force to trigger
-    BuzzMinCount = 1,        -- number of show-of force buzzes needed to trigger
+    MinBuzzCount = 1,        -- number of show-of force buzzes needed to trigger
     MinSpeedKts = 350,       -- minimum speed (knots) for show of force to trigger
     Coalitions = { "blue" }, -- only interceptors from this/these coalitions will be considered
-    MinTimeBetween = 30,     -- time (seconds) betwwen SOF, when minCount > 1
+    MinTimeBetween = 20,     -- time (seconds) betwwen SOF, when minCount > 1
     Interval = 2,            -- 
+    MinTriggerDelay = 2,     -- minimum delay (seconds) before SOF triggers
+    MaxTriggerDelay = 12,    -- maximum delay (seconds) before SOF triggers
     Description = nil,       -- (string) when provided a message is sent to interceptor (describing the intruder)
     Difficulty = SofDifficulty.Soft
 }
@@ -902,71 +904,142 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
     local countIntercepts = 0
     local Timer
     local stopTimerAfter = 0 
-    local coalitions = options.coalitions or GetOtherCoalitions( group )
-    local radius = options.radius or OnShowOfForceDefaults.Radius
-    local minSpeedKts = options.minSpeedKts or OnShowOfForceDefaults.MinSpeedKts
-    local minCount = options.minCount or OnShowOfForceDefaults.BuzzMinCount
-    local minTimeBetween = options.minTimeBetween or OnShowOfForceDefaults.MinTimeBetween
-    local interval = options.interval or OnShowOfForceDefaults.Interval
-    local description = options.description or OnShowOfForceDefaults.Description
+    local coalitions = options.Coalitions or GetOtherCoalitions( group )
+    local radius = options.Radius or OnShowOfForceDefaults.Radius
+    local minSpeedKts = options.MinSpeedKts or OnShowOfForceDefaults.MinSpeedKts
+    local minBuzzCount = options.BuzzMinCount or OnShowOfForceDefaults.MinBuzzCount
+    local minTimeBetween = options.MinTimeBetween or OnShowOfForceDefaults.MinTimeBetween
+    local minTriggerDelay = options.MinTriggerDelay or OnShowOfForceDefaults.MinTriggerDelay
+    local maxTriggerDelay = options.MaxTriggerDelay or OnShowOfForceDefaults.MaxTriggerDelay
+    local interval = options.Interval or OnShowOfForceDefaults.Interval
+    local description = options.Description or OnShowOfForceDefaults.Description 
     local difficulty = options.Difficulty or OnShowOfForceDefaults.Difficulty
 
-    Trace("OnShowOfForce-"..groupName.." :: BEGINS :: "..string.format("radius=%d; minSpeedKts=%d; minCount=%d, minTimeBetween=%d, description=%s, coalitions=%s", radius, minSpeedKts, minCount, minTimeBetween, description or "", Dump(coalitions)))
+    Trace("OnShowOfForce-"..groupName.." :: BEGINS :: "..string.format("radius=%d; minSpeedKts=%d; minCount=%d, minTimeBetween=%d, description=%s, coalitions=%s", radius, minSpeedKts, minBuzzCount, minTimeBetween, description or "", Dump(coalitions)))
 
     local interceptZone = ZONE_GROUP:New(groupName, group, radius)
     local interceptorsInfo = {}
+    local onShootingStartFunc = nil
+    local onUnitHitFunc = nil
 
-    --[[ "InterceptorInfo":
-        {
-            interceptor = "<group name>",  -- group name for interceptor performing SOF
-            BuzzCount = 0,                  -- counts no. of show-of-forces performed for intruder
-            lastTimestamp = <timestamp>    -- used to calculate next SOF when more than one is required
-            Shots = 0,                     -- no of shots fired by interceptor
-            Hits = 0                       -- no of hits on intruder
+    local INTERCEPT_INFO = {
+        interceptor = nil,                         -- group name for interceptor performing SOF
+        BuzzCount = 0,                             -- counts no. of show-of-forces performed for intruder
+        lastTimestamp = nil,                       -- used to calculate next SOF when more than one is required
+        Shots = 0,                                 -- no of shots fired by interceptor
+        Hits = 0,                                  -- no of hits on intruder
+        WasTriggered = false,                      -- set when iterceptor triggerd a SOF reaction (to avoid multiple triggers)
+    }
+
+    function INTERCEPT_INFO:New(interceptorGroup, timestamp, shots, hits)
+        local info = routines.utils.deepCopy(INTERCEPT_INFO)
+        info.interceptor = interceptorGroup.GroupName
+        info.lastTimeStamp = timestamp
+        info.Shots = shots
+        info.Hits = hits
+        interceptorsInfo[interceptorGroup.GroupName] = info
+        return info
+    end
+
+    function INTERCEPT_INFO:IsTriggering()
+        if self.BuzzCount < minBuzzCount then
+            return false end
+
+--Debug("INTERCEPT_INFO:IsTriggering :: " .. string.format("BuzzCount=%d, Shots=%d, Hits=%d", self.BuzzCount, self.Shots, self.Hits))
+
+        if difficulty == SofDifficulty.Soft then
+            Debug("OnShowOfForce :: Soft :: intruder was buzzed "..tostring(self.BuzzCount).." :: triggers ...")
+            return true 
+        end
+
+        if difficulty == SofDifficulty.Defensive and self.Shots > 0 then
+            Debug("OnShowOfForce :: Defensive :: shots were fired :: triggers ...")
+            return true 
+        end
+
+        if difficulty == SofDifficulty.Hard and self.Hits > 0 then
+            Debug("OnShowOfForce :: Hard :: hits were scored :: triggers ...")
+            return true 
+        end
+
+        return false
+    end
+
+    function INTERCEPT_INFO:Trigger()
+        stopTimerAfter = 5 -- seconds
+        self.WasTriggered = true
+        MissionEvents:EndOnShootingStart(onShootingStartFunc)
+        MissionEvents:EndOnUnitHit(onUnitHitFunc)
+        -- call back
+        local result = {
+            intruder = groupName,
+            interceptors = { self.interceptor }
         }
-    ]]--
+        Trace("OnShowOfForce-"..groupName.." :: triggers show of force reaction from interceptor ".. self.interceptor)
+        Delay(math.random(minTriggerDelay, maxTriggerDelay), function() callback( result )  end)
+    end
+
+    function INTERCEPT_INFO:AddBuzz()
+        self.BuzzCount = self.BuzzCount + 1
+        Trace("OnShowOfForce-"..groupName.." :: interceptor: "..self.interceptor.."  :: buzz count="..tostring(self.BuzzCount))
+        if self:IsTriggering() then
+            self:Trigger()
+        end
+        return self
+    end
+
+    function INTERCEPT_INFO:AddShots(count)
+        self.Shots = self.Shots + count
+        if self:IsTriggering() then
+            self:Trigger()
+        end
+        return self
+    end
+
+    function INTERCEPT_INFO:AddHits(count)
+        self.Hits = self.Hits + count
+        if self:IsTriggering() then
+            self:Trigger()
+        end
+        return self
+    end
 
     local function addInterceptorInfo( interceptorGroup, timestamp, shots, hits )
-        interceptorsInfo[interceptorGroup.GroupName] = {
-            interceptor = interceptorGroup.GroupName,  -- group name for interceptor performing SOF
-            BuzzCount = 1,                             -- counts no. of show-of-forces performed for intruder
-            lastTimestamp = timestamp,                 -- used to calculate next SOF when more than one is required
-            Shots = shots,
-            Hits = hits
-        }
         local desc = AirPolicing:GetGroupDescription(group)
-        if desc then
+        if desc then -- todo Support turning off assistance to suppress sending description
             MessageTo( interceptorGroup, desc, AirPolicing.Assistance.Duration )
         end
+        return INTERCEPT_INFO:New(interceptorGroup, timestamp, shots, hits)
     end
 
     -- monitor (warning) shots and hits ...
-    local onShootingStartFunc = function(event)
-        if not IsHeadingFor(event.IniUnit, group, NauticalMilesToMeters(2)) then
+    onShootingStartFunc = function(event)
+
+        if not IsHeadingFor(event.IniUnit, group, NauticalMilesToMeters(2), 5) then
             return end
 
         local interceptorInfo = interceptorsInfo[event.IniGroupName.GroupName]
         if interceptorInfo == nil then
-            addInterceptorInfo(event.IniGroup, SecondsOfToday(event.time), 1, 0)
+            INTERCEPT_INFO:New(event.IniGroup, nil, 1, 0)
         else
-            interceptorInfo.Shots = interceptorInfo.Shots + 1
+            interceptorInfo:AddShots(1)
         end
     end
-    local onUnitHitFunc = function(event)
 
-        if group.GroupName ~= event.IniGroupName then
+    onUnitHitFunc = function(event)
+
+        if group.GroupName ~= event.TgtGroupName then
             return end
 
         local interceptorInfo = interceptorsInfo[event.IniGroupName.GroupName]
         if interceptorInfo == nil then
-            addInterceptorInfo(event.IniGroup, SecondsOfToday(event.time), 1, 1)
+            INTERCEPT_INFO:New(event.IniGroup, nil, 1, 1)
         else
-            interceptorInfo.Hits = interceptorInfo.Hits + 1
+            interceptorInfo:AddHits(1)
         end
     end
     MissionEvents:OnShootingStart(onShootingStartFunc)
     MissionEvents:OnUnitHit(onUnitHitFunc)
-    
 
     local function findAircrafts()
 
@@ -977,14 +1050,17 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
         end
 
         local function getSetGroup()
-            return SET_GROUP:New()
+            local set = SET_GROUP:New()
                 :FilterCategoryAirplane()
-                :FilterCoalitions(coalitions)
-                :FilterZones({interceptZone})
+                :FilterZones({ interceptZone })
                 :FilterActive()
-                :FilterOnce()
+            if coalitions ~= nil then
+                set:FilterCoalitions(coalitions) end
+            return set:FilterOnce()
         end
+
         local ok, interceptors = pcall(getSetGroup)
+
         if (not ok) then
             -- check to see whether the intruder still exists, or is dead ...
             local checkGroup = getGroup( intruder )
@@ -1001,9 +1077,6 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
             return
         end
 
-Debug("OnShowOfForce :: interceptors: " .. DumpPretty(interceptors))
-
-
         local timestamp = UTILS.SecondsOfToday()
 
         -- if the intruder belongs to interceptor(s) coalition it will be included in the `interceptors` set, so needs to be fitered out
@@ -1014,24 +1087,27 @@ Debug("OnShowOfForce :: interceptors: " .. DumpPretty(interceptors))
         local intruderCoord = group:GetCoordinate()
         local foundInterceptor = nil
         
-        --Trace("OnShowOfForce-"..groupName.." :: found interceptors "..tostring(#interceptors).." (timestamp = "..tostring(timestamp)..")")
+        Trace("OnShowOfForce.findAircrafts-"..groupName.." :: found interceptors "..tostring(#interceptors).." (timestamp = "..tostring(timestamp)..")")
 
         interceptors:ForEachGroup(
             function(interceptor)
 
-Debug("OnShowOfForce.ForEachGroup-" .. interceptor.GroupName)
-
-                function isTooEarly(Info)
-                    -- check if enough time have passed since last SOF
-                    local timeSinceLastSof = timestamp - (Info.lastTimeStamp or timestamp)
-                    return timeSinceLastSof > minTimeBetween
-                end
-
                 if (groupName == interceptor.GroupName) then
                     return end
 
+                function isTooEarly(info)
+                    if not info or not info.lastTimeStamp then 
+                        return false end
+
+                    -- check if enough time have passed since last SOF
+                    local timeSinceLastSof = timestamp - (info.lastTimeStamp or timestamp)
+                    info.lastTimeStamp = timestamp
+                    return timeSinceLastSof < minTimeBetween
+
+                end
+                
                 local interceptorInfo = interceptorsInfo[interceptor.GroupName]
-                if (interceptorInfo ~= nil and isTooEarly(interceptorInfo)) then
+                if isTooEarly(interceptorInfo) then
                     Trace("OnShowOfForce-"..groupName.." :: filters out interceptor (SOF is too early)")
                     return 
                 end
@@ -1047,31 +1123,14 @@ Debug("OnShowOfForce.ForEachGroup-" .. interceptor.GroupName)
                     Trace("OnShowOfForce-"..groupName.." :: filters out "..interceptor.GroupName.." (vertically outside radius)")
                     return 
                 end
-                Trace("OnShowOfForce-"..groupName.." :: "..string.format("Interceptor %s", interceptor.GroupName))
                 if (interceptorInfo == nil) then
-                    if (description ~= nil) then
-                        MESSAGE:New(description, delay):ToGroup(interceptor)
-                        Trace("OnIntercepted-"..groupName.." :: description sent to "..interceptor.GroupName.." :: "..description)
-                    end
-                    addInterceptorInfo(interceptor, timestamp, 0, 0)
+                    interceptorInfo = addInterceptorInfo(interceptor, timestamp, 0, 0)
                 end
-                interceptorInfo.BuzzCount = interceptorInfo.BuzzCount+1
-                Trace("OnShowOfForce-"..groupName.." :: Interceptor "..interceptor.GroupName.." SOF count="..tostring(interceptorInfo.BuzzCount))
-                if interceptorInfo.BuzzCount >= minCount then
-                    if difficulty == SofDifficulty.Soft then
-Debug("OnShowOfForce :: Soft :: intruder was buzzed "..tostring(interceptorInfo.BuzzCount).." :: triggers ...")
-                        foundInterceptor = interceptor
-
-                    elseif difficulty == SofDifficulty.Defensive and interceptorInfo.Shots > 1 then
-Debug("OnShowOfForce :: Defensive :: shots were fired :: triggers ...")
-                        foundInterceptor = interceptor
-
-                    elseif difficulty == SofDifficulty.Hard and interceptorInfo.Hits > 1 then
-Debug("OnShowOfForce :: Hard :: hits were scored :: triggers ...")
-                        foundInterceptor = interceptor
-
-                    end
+                if interceptorInfo.WasTriggered then
+                    return 
                 end
+
+                interceptorInfo:AddBuzz()
             end)
 
         if (stopTimerAfter > 0) then
@@ -1083,17 +1142,6 @@ Debug("OnShowOfForce :: Hard :: hits were scored :: triggers ...")
             end
             return
         end
-        if foundInterceptor then
-            -- todo consider allowing callback function to return bool (false) to end monitoring
-            stopTimerAfter = 5 -- seconds
-            local result = {
-                intruder = groupName,
-                interceptors = { foundInterceptor.GroupName }
-            }
-            Trace("OnShowOfForce-"..groupName.." :: triggers show of force reaction from interceptor '"..foundInterceptor.GroupName.."'")
-            Delay(math.random(2, 12), function() callback( result )  end)
-        end
-
     end
 
     -- start timer to monitor buzzes ...
@@ -1689,8 +1737,10 @@ local function onAiWasIntercepted( intercept, ig, pg )
     local function delayAudio( time ) audioDelay = audioDelay + time end
 
     -- delay reaction (random no. of seconds) ...
+    local delay = AirPolicingOptions.GetAiReactionDelay(ig)
+--Debug("onAiWasIntercepted :: delay="..tostring(delay)) -- nisse
     Delay(
-        AirPolicingOptions.GetAiReactionDelay(ig),
+        delay,
         function()
             local escorts = GetEscortingGroups( ig )
             if OnFollowMeDefaults.debugTimeoutTrigger then
@@ -1986,19 +2036,19 @@ function GetSpottedFlights( source, radius, coalitions )
         function(g)
 
             if (group == g or not g:InAir() or not CanBeIntercepted(g)) then 
-                Debug("GetSpottedFlights-" .. group.GroupName .. " :: group ".. g.GroupName .." is source, or filtered out :: IGNORES")
+                Trace("GetSpottedFlights-" .. group.GroupName .. " :: group ".. g.GroupName .." is source, or filtered out :: IGNORES")
                 return 
             end
             
             if (escorts:isRegisteredEscort(g)) then
                 -- this is an escort group and its client group was already included; ignore ...
-                Debug("GetSpottedFlights-" .. group.GroupName .. " :: group ".. g.GroupName .." is already registered as escort :: IGNORES")
+                Trace("GetSpottedFlights-" .. group.GroupName .. " :: group ".. g.GroupName .." is already registered as escort :: IGNORES")
                 return
             end
 
             local intruderCoordinate = g:GetCoordinate()
             if (not sourceCoordinate:IsLOS(intruderCoordinate)) then 
-                Debug("GetSpottedFlights-"..group.GroupName.." :: group "..g.GroupName.." is obscured (no line of sight)")
+                Trace("GetSpottedFlights-"..group.GroupName.." :: group "..g.GroupName.." is obscured (no line of sight)")
                 return 
             end
             
@@ -2008,13 +2058,13 @@ function GetSpottedFlights( source, radius, coalitions )
             if (verticalDistance >= 0) then
                 -- intruder is level or above interceptor (easier to detect - unfortunately we can't account for clouds) ...
                 if (verticalDistance > radius) then 
-                    Debug("GetSpottedFlights-"..group.GroupName.." :: group "..g.GroupName.." is too high")
+                    Trace("GetSpottedFlights-"..group.GroupName.." :: group "..g.GroupName.." is too high")
                     return 
                 end
             else 
                 -- intruder is below interceptor (harder to detect) TODO account for lighting conditions? ...
                 if (math.abs(verticalDistance) > radius * 0.65 ) then
-                    Debug("GetSpottedFlights-"..group.GroupName.." :: group "..g.GroupName.." is too low")
+                    Trace("GetSpottedFlights-"..group.GroupName.." :: group "..g.GroupName.." is too low")
                     return 
                 end
             end
@@ -2023,7 +2073,7 @@ function GetSpottedFlights( source, radius, coalitions )
             local isClient, escort = escorts:isClient(g)
             if (isClient) then
                 -- this group is escorted; merge its escort and remove escort group from list of escorts ...
-                Debug("flightsMenus-"..group.GroupName.." :: group "..g.GroupName.." is escorted by " .. escort.GroupName .. " :: MERGES")
+                Trace("flightsMenus-"..group.GroupName.." :: group "..g.GroupName.." is escorted by " .. escort.GroupName .. " :: MERGES")
                 escortName = escort.GroupName
                 escorts[escort.GroupName] = nil
             end
@@ -2042,7 +2092,7 @@ function GetSpottedFlights( source, radius, coalitions )
                     escortingGroup = client.GroupName
                 } 
                 escorts:add(g, info)
-                Debug("GetSpottedFlights-"..group.GroupName.." :: group "..g.GroupName.." is escorting: ".. client.GroupName .."  :: STASHED")
+                Trace("GetSpottedFlights-"..group.GroupName.." :: group "..g.GroupName.." is escorting: ".. client.GroupName .."  :: STASHED")
             else
                 info = { 
                     text = rLoc.ToString(),
@@ -2051,7 +2101,7 @@ function GetSpottedFlights( source, radius, coalitions )
                     reaction = nil,
                     escortingGroup = escortName,
                 } 
-                Debug("GetSpottedFlights-"..group.GroupName.." :: group "..g.GroupName.." is included")
+                Trace("GetSpottedFlights-"..group.GroupName.." :: group "..g.GroupName.." is included")
                 flights[g.GroupName] = info
                 countflights = countflights+1
             end
@@ -2243,7 +2293,7 @@ AirPolicingOptions = {
     showOfForceAssistAudio = false,
 
     GetAiReactionDelay = function( aiGroup )
-        -- todo consider using different AI reacion delays for different types of AI groups (ships might take longer to react, cocky fighter pilots might be insubordinate)
+        -- todo consider using different AI reaction delays for different types of AI groups (ships might take longer to react, cocky fighter pilots might be insubordinate)
         if (AirPolicingOptions.aiReactionDelayMax == AirPolicingOptions.aiReactionDelayMin) then
             return AirPolicingOptions.aiReactionDelayMin
         end

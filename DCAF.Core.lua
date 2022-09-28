@@ -217,8 +217,7 @@ function IsHeadingFor( source, target, maxDistance, tolerance )
     local minHeading = bearing - tolerance % 360
     local maxHeading = bearing + tolerance % 360
     local heading = sourceUnit:GetHeading()
-
-    return heading + tolerance % 360 <= maxHeading and heading - tolerance % 360 >= minHeading
+    return heading <= maxHeading and heading >= minHeading
 end
 
 local function isEscortingFromTask( escortGroup, clientGroup )
@@ -362,19 +361,29 @@ function getZone( source )
 
 end
 
-function GetOtherCoalitions( controllable )
+function GetOtherCoalitions( controllable, excludeNeutral )
     local group = getGroup( controllable )
     if (group == nil) then
         Warning("GetOtherCoalitions :: group not found: "..Dump(controllable).." :: EXITS")
         return
     end
 
-    local coalition = group:GetCoalition()
-    if (coalition == "red" ) then
+    local c = group:GetCoalition()
+
+    if excludeNeutral == nil then 
+        excludeNeutral = false end
+
+Debug("GetOtherCoalitions :: coalition: " .. tostring(c))
+
+    if c == "red" or c == coalition.side.RED then
+        if excludeNeutral then 
+            return { "blue" } end
         return { "blue", "neutral" }
-    elseif coalition == "blue" then
+    elseif c == "blue" or c == coalition.side.BLUE then
+        if excludeNeutral then 
+            return { "red" } end
         return { "red", "neutral" }
-    elseif coalition == "neutral" then
+    elseif c == "neutral" or c == coalition.side.NEUTRAL then
         return { "red", "blue" }
     end
 end
@@ -1315,12 +1324,29 @@ end
 
 function SetAIOff( ... )
     for _, controllable in ipairs(arg) do
-     local group = getGroup( controllable )
+        local group = getGroup( controllable )
         if (group == nil) then
             Warning("SetAIOff-? :: cannot resolve group "..Dump(controllable) .." :: IGNORES")
         else
             Trace("SetAIOff-"..group.GroupName.." :: sets AI=OFF :: DONE")
             group:SetAIOff()
+        end
+    end
+end
+
+function Stop( ... )
+    for _, controllable in ipairs(arg) do
+        local group = getGroup( controllable )
+        if (group == nil) then
+            Warning("Stop-? :: cannot resolve group "..Dump(controllable) .." :: IGNORES")
+        else
+            if group:IsAir() and group:InAir() then
+                Trace("Stop-"..group.GroupName.." :: lands at nearest aeorodrome :: DONE")
+                LandHere(group)
+            else
+                Trace("Stop-"..group.GroupName.." :: sets AI=OFF :: DONE")
+                group:SetAIOff()
+            end
         end
     end
 end
