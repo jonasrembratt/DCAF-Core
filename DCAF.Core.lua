@@ -1,5 +1,5 @@
 DCAFCore = {
-    Trace = true,
+    Trace = false,
     TraceToUI = false, 
     Debug = false,
     DebugToUI = false, 
@@ -373,7 +373,7 @@ function GetOtherCoalitions( controllable, excludeNeutral )
     if excludeNeutral == nil then 
         excludeNeutral = false end
 
-Debug("GetOtherCoalitions :: coalition: " .. tostring(c))
+--Debug("GetOtherCoalitions :: coalition: " .. tostring(c)) -- nisse
 
     if c == "red" or c == coalition.side.RED then
         if excludeNeutral then 
@@ -1444,46 +1444,52 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
         return
     end
 
+    local function getTarget(event)
+        local dcsTarget = event.target 
+        if not dcsTarget and event.weapon then
+            dcsTarget = event.weapon:getTarget()
+        end
+    end
+
+    local function addInitiatorAndTarget( event )
+        if event.initiator ~= nil then
+            event.IniUnit = UNIT:Find(event.initiator)
+            event.IniUnitName = event.IniUnit:GetName()
+            event.IniGroup = event.IniUnit:GetGroup()
+            event.IniGroupName = event.IniGroup.GroupName
+        end
+        local dcsTarget = event.target or getTarget(event)
+        if dcsTarget ~= nil then
+            event.TgtUnit = UNIT:Find(dcsTarget)
+            event.TgtUnitName = event.TgtUnit:GetName()
+            event.TgtGroup = event.TgtUnit:GetGroup()
+            event.TgtGroupName = event.TgtGroup.GroupName
+        end
+        return event
+    end
 
     if (event.id == world.event.S_EVENT_SHOT) then
 --Debug("_e:onEvent-S_EVENT_SHOT :: event: " .. DumpPretty(event, deep))
         if (#MissionEvents._weaponFiredHandlers > 0) then
-            event.IniUnit = UNIT:Find(event.initiator)
-            MissionEvents:Invoke( MissionEvents._weaponFiredHandlers, event)
+            local dcsTarget = event.target 
+            if not dcsTarget and event.weapon then
+                dcsTarget = event.weapon:getTarget()
+            end
+            MissionEvents:Invoke( MissionEvents._weaponFiredHandlers, addInitiatorAndTarget(event))
         end
         return
     end
         
     if (event.id == world.event.S_EVENT_SHOOTING_START) then
         if (#MissionEvents._shootingStartHandlers > 0) then
-            event.IniUnit = UNIT:Find(event.initiator)
-            event.IniUnitName = event.IniUnit:GetName()
-            event.IniGroup = event.IniUnit:GetGroup()
-            event.IniGroupName = event.IniGroup.GroupName
-            if event.target then
-                event.TgtUnit = UNIT:Find(event.target)
-                event.TgtUnitName = event.TgtUnit:GetName()
-                event.TgtGroup = event.TgtUnit:GetGroup()
-                event.TgtGroupName = event.TgtGroup.GroupName
-            end
-            MissionEvents:Invoke( MissionEvents._shootingStartHandlers, event)
+            MissionEvents:Invoke( MissionEvents._shootingStartHandlers, addInitiatorAndTarget(event))
         end
         return
     end
 
     if (event.id == world.event.S_EVENT_SHOOTING_END) then
         if (#MissionEvents._shootingStopHandlers > 0) then
-            event.IniUnit = UNIT:Find(event.initiator)
-            event.IniUnitName = event.IniUnit:GetName()
-            event.IniGroup = event.IniUnit:GetGroup()
-            event.IniGroupName = event.IniGroup.GroupName
-            if event.target then
-                event.TgtUnit = UNIT:Find(event.target)
-                event.TgtUnitName = event.TgtUnit:GetName()
-                event.TgtGroup = event.TgtUnit:GetGroup()
-                event.TgtGroupName = event.TgtGroup.GroupName
-            end
-            MissionEvents:Invoke( MissionEvents._shootingStopHandlers, event)
+            MissionEvents:Invoke( MissionEvents._shootingStopHandlers, addInitiatorAndTarget(event))
         end
         return
     end

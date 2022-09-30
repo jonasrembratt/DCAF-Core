@@ -79,7 +79,9 @@ AirPolicing = {
         AiEscortAttacksAudioTime = 3,
     },
     LandingIntruders = {},
-    _aiGroupDescriptions = {}
+    _aiGroupDescriptions = {},
+    Trace = false,
+    Debug = false
 }
 
 local InterceptionDefault = {
@@ -410,6 +412,9 @@ local function getIntrudersReactions( intruder, interceptor, escorts, useDefault
     if not interceptor then error("getIntrudersReactions :: interceptor was nil") end
 
     -- get intruder size (incl. escorts) and amount of missiles ...
+
+Debug("getIntrudersReactions :: #escorts= " .. tostring(#escorts))    
+
     if (#escorts > 0) then
         for _, escortGrp in ipairs(escorts) do
             intruderSize = intruderSize + escortGrp:CountAliveUnits()
@@ -1500,7 +1505,6 @@ function OnInterception( group, callback, options, pg )
     end
     OnInsideGroupZone( group.GroupName,
         function( closing )
-
             local establishAssist = AirPolicing.Assistance.EstablishInstructionSingleton
             local establishAssistAudio = AirPolicing.Assistance.EstablishInstructionSingletonAudio
             -- if escort was not discovered when selecting the group for intercept, try spotting it again ...
@@ -1525,7 +1529,6 @@ function OnInterception( group, callback, options, pg )
                 end)
             OnIntercepted( closing.monitoredGroup, 
                 function( intercepted )
-
                     if (ai and options.showAssistance) then
                         MessageTo( ai.interceptor, AirPolicing.Assistance.SignalInstruction, options.assistanceDuration )
                     end
@@ -1601,11 +1604,10 @@ function PolicingGroup:isPolicing(group)
     local coalition = group:GetCoalition()
     local coalitionPolicing = _policingGroups[coalition]
     return coalitionPolicing ~= nil and coalitionPolicing[group.GroupName] ~= nil
-    --return _policingGroups[group.GroupName] ~= nil
 end
 
 function PolicingGroup:register(pg)
-    local coaliton = pg.group:GetCoalition()
+    local coalition = pg.group:GetCoalition()
     local coalitionPolicing = _policingGroups[coalition]
     if (coalitionPolicing == nil) then
         coalitionPolicing = {}
@@ -1617,7 +1619,7 @@ end
 
 function PolicingGroup:interceptInactive()
     self.interceptState = INTERCEPT_STATE.Inactive
-    self.intruder = intruder
+    self.intruder = nil
     return self
 end
 
@@ -1689,7 +1691,7 @@ local function controllingInterceptMenus( pg, ig, ai ) -- ig = intruder group; a
 
     pg.mainMenu:RemoveSubMenus()
 
-    function landHereCommand()
+    local function landHereCommand()
         local airbase = LandHere( ig )
         if (pg.aiReactionAssist) then
             local text = string.format( AirPolicing.Assistance.AiLandingInstruction, airbase.AirbaseName )
@@ -1702,7 +1704,7 @@ local function controllingInterceptMenus( pg, ig, ai ) -- ig = intruder group; a
         makeInactiveMenus( pg )
     end
 
-    function divertCommand()
+    local function divertCommand()
         Divert( ig )
         if (pg.aiReactionAssist) then
             MessageTo( pg.group, AirPolicing.Assistance.AiDivertingInstruction, AirPolicing.Assistance.Duration )
@@ -1754,6 +1756,8 @@ local function onAiWasIntercepted( intercept, ig, pg )
             end
 
             local reactions = getIntrudersReactions( ig, pg.group, escorts, "unknown" )
+
+-- Debug("onAiWasIntercepted :: reactions: " .. DumpPretty(reactions))             -- nisse
             local reaction = reactions[ig.GroupName]
             local defaultEscortReaction = nil
             for groupName, r in pairs(reactions) do
@@ -1933,7 +1937,7 @@ end
 
 _debugTriggerOnAiWasInterceptedFunction = onAiWasIntercepted
 
-local function beginIntercept( pg, igInfo ) -- ig = intruder group
+function beginIntercept( pg, igInfo ) -- ig = intruder group
     
     pg:interceptEstablishing( igInfo.group )
     if (pg.lookAgainMenu ~= nil) then
@@ -2421,41 +2425,8 @@ end
 
 function AirPolicingOptions:WithTracing( value )
     value = value or true
-    if (value and not DCAFCore.Trace) then
-        DCAFCore.Trace = value
-    elseif (not DCAFCore.Trace) then
-        DCAFCore.Trace = false
-    end
-    return self
-end
-
-function AirPolicingOptions:WithTracingToUI( value )
-    value = value or true
-    if (value and not DCAFCore.TraceToUI) then
-        DCAFCore.TraceToUI = value
-    elseif (not DCAFCore.TraceToUI) then
-        DCAFCore.TraceToUI = false
-    end
-    return self
-end
-
-function AirPolicingOptions:WithDebugging( value )
-    value = value or true
-    if (value and not DCAFCore.Debug) then
-        DCAFCore.Debug = value
-    elseif (not DCAFCore.Debug) then
-        DCAFCore.Debug = false
-    end
-    return self
-end
-
-function AirPolicingOptions:WithDebuggingToUI( value )
-    value = value or true
-    if (value and not DCAFCore.DebugToUI) then
-        DCAFCore.DebugToUI = value
-    elseif (not DCAFCore.DebugToUI) then
-        DCAFCore.DebugToUI = false
-    end
+    AirPolicing.Trace = value
+    DCAFCore.Trace = DCAFCore.Trace or value
     return self
 end
 
@@ -2477,9 +2448,174 @@ function EnableAirPolicing( options ) -- todo consider allowing filtering which 
     Trace("AirPolicing was enabled")
 end
 
-function DebugIntercept( intruder )
 
-    Trace("DebugIntercept-"..Dump(intruder).." :: initiated")  
+-------------------------- DEBUGGING ---------------------------
+
+function INTERCEPT_STATE:ToString(value)
+    if value == INTERCEPT_STATE.Inactive then
+        return "Inactive" end
+
+    if value == INTERCEPT_STATE.Ready then
+        return "Ready" end
+    
+    if value == INTERCEPT_STATE.Establishing then
+        return "Establishing" end
+        
+    if value == INTERCEPT_STATE.Controlling then
+        return "Controlling" end
+
+    return "(unknown)"
+end
+
+function AirPolicingOptions:WithDebugging( value )
+    value = value or true
+    AirPolicing.Debug = value
+    DCAFCore.Debug = DCAFCore.Debug or value
+    return self
+end
+
+function AirPolicingOptions:WithDebuggingToUI( value )
+    value = value or true
+    DCAFCore.DebugToUI = value
+    return self
+end
+
+function AirPolicing:AddDebugMenus( policingCoalition, scope )
+
+    local targetCoalition = nil
+    local targetGroup = nil
+
+    if scope then
+        if isNumber(scope) then
+            -- assume coalition ...
+            targetCoalition = scope
+            if scope ~= coalition.side.BLUE and scope ~= coalition.side.RED and scope ~= coalition.side.NEUTRAL then
+                -- nope, wasn't coalition ...
+                targetCoalition = nil
+            else
+                Warning("AirPolicing:AddDebugMenus :: adds debug options for coalition " .. Dump(targetCoalition) .. " ...")
+            end
+        end
+
+        if not targetCoalition then 
+            -- assume group ...
+            targetGroup = getGroup(scope)
+            if not targetGroup then
+                Warning("AirPolicing:AddDebugMenus :: cannot resolve group from " .. Dump(scope) .. " :: EXITS")
+                return
+            end
+            Warning("AirPolicing:AddDebugMenus :: adds debug options for group " .. Dump(targetGroup.GroupName) .. " ...")
+        end
+    end
+
+    local coalition = policingCoalition
+    if not coalition and targetCoalition then
+        coalition = targetCoalition
+    elseif not coalition and targetGroup then
+        coalition = targetGroup:GetCoalition()
+    end
+    if not coalition then
+        Warning("AirPolicing:AddDebugMenus :: cannot resolve coalition from " .. Dump(policingCoalition) .. " :: EXITS")
+        return
+    end
+
+    local pgDebugging = _policingGroups.debugging
+    if not pgDebugging then
+        pgDebugging = {}
+        _policingGroups.debugging = pgDebugging
+    end
+
+    local debugging = pgDebugging[scope]
+    if not debugging then
+        debugging = {
+            timer = nil,
+            mainMenu = nil,
+            -- policing groups debugging
+            isShowingPolicingGroups = true,
+            policingGroupsMenu = nil
+        }
+    end
+    if targetCoalition then
+        debugging.mainMenu = MENU_COALITION:New(targetCoalition, "DEBUG Policing")
+    elseif targetGroup then
+        debugging.mainMenu = MENU_GROUP:New(targetGroup, "DEBUG Policing")
+    else
+        debugging.mainMenu = MENU_MISSION:New("DEBUG Policing")
+    end
+
+    local function showPolicingGroups()
+        local text = "------- POLICING GROUPS -------\n"
+        local policingGroups = _policingGroups[coalition]
+        if policingGroups then
+            local function getPlayers(info)
+                local units = info.group:GetUnits()
+                local s = ""
+                for _, unit in ipairs(units) do
+                    if string.len(s) > 0 then
+                        s = s .. "; "
+                    end
+                    s = s .. "[" .. unit:GetName() .. "] = " .. unit:GetPlayerName()
+                end
+                return s
+            end
+
+            local function getPgInfoText(info)
+                local s = string.format("{\n  interceptState=%s,\n", tostring(INTERCEPT_STATE:ToString(info.interceptState)))
+                       .. string.format("  intcptAssist=%s, intcptAudioAssist=%s,\n", tostring(info.interceptAssist), tostring(info.interceptAssistAudio))
+                if info.intruder then
+                    s = s .. string.format("  intruder=%s,\n", tostring(info.intruder.GroupName))
+                end
+                s = s .. string.format("  sofAssist=%s, sofAudioAssist=%s,\n", tostring(info.sofAssist), tostring(info.sofAudioAssist))
+                      .. string.format("  aiReactionAssist=%s,\n", tostring(info.aiReactionAssist))
+                      .. string.format("  players=%s\n}", getPlayers(info))
+                return s
+            end
+
+            for name, info in pairs(policingGroups) do
+                text = text .. name .. " = " .. getPgInfoText(info) .. "\n"
+            end
+        end
+        if targetCoalition then
+            MESSAGE:New(text, 9):ToCoalition(targetCoalition)
+        elseif targetGroup then
+            MessageTo(targetGroup, text, 9)
+        else
+            MESSAGE:New(text, 9):ToAll()
+        end
+    end
+
+    local togglePolicingGroupsFunc = nil
+    local function togglePolicingGroupsMenu()
+        debugging.isShowingPolicingGroups = not debugging.isShowingPolicingGroups
+        if debugging.policingGroupsMenu then
+            debugging.policingGroupsMenu:Remove()
+        end
+
+        local caption = nil
+        if debugging.isShowingPolicingGroups then
+            caption = "Hide Policing Groups"
+            debugging.timer = TIMER:New(showPolicingGroups):Start(1,10)
+        else
+            caption = "Show Policing Groups"
+            if debugging.timer then
+                debugging.timer:Stop()
+            end
+        end
+        if targetCoalition then
+            debugging.policingGroupsMenu = MENU_COALITION_COMMAND:New(targetCoalition, caption, debugging.mainMenu, togglePolicingGroupsFunc)
+        elseif targetGroup then
+            debugging.policingGroupsMenu = MENU_GROUP_COMMAND:New(targetGroup, caption, debugging.mainMenu, togglePolicingGroupsFunc)
+        else
+            debugging.policingGroupsMenu = MENU_MISSION_COMMAND:New(caption, debugging.mainMenu, togglePolicingGroupsFunc)
+        end
+    end
+    togglePolicingGroupsFunc = togglePolicingGroupsMenu
+    togglePolicingGroupsMenu()
+
+end
+
+function DebugIntercept( intruder )
+    Debug("DebugIntercept-"..Dump(intruder).." :: initiated")
     OnInterception(
         intruder, 
         function( intercept ) 
@@ -2487,9 +2623,6 @@ function DebugIntercept( intruder )
         end)
 
 end
-
-
--------------- DEBUG -------------
 
 function DebugGetSpottedFlights( source ) -- nisse Remove when debugged
 
@@ -2504,4 +2637,11 @@ function DebugGetSpottedFlights( source ) -- nisse Remove when debugged
     
 end
 
+Warning("DCAF.AirPolicing.Debugging was loaded")
+
+----------------------- END -----------------------
+
 Trace("DCAF.AirPolicing was loaded")
+
+
+
