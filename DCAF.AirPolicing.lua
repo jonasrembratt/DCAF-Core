@@ -180,7 +180,7 @@ function AirPolicing:GetGroupDescription( group )
     return nil
 end
 
-_ActiveIntercept = {
+local _ActiveIntercept = {
     intruder = nil,
     escort = nil,
     interceptor = nil,
@@ -1937,7 +1937,7 @@ end
 
 _debugTriggerOnAiWasInterceptedFunction = onAiWasIntercepted
 
-function beginIntercept( pg, igInfo ) -- ig = intruder group
+local function beginIntercept( pg, igInfo ) -- ig = intruder group
     
     pg:interceptEstablishing( igInfo.group )
     if (pg.lookAgainMenu ~= nil) then
@@ -2155,7 +2155,6 @@ local function intrudersMenus( pg )
     
     if (pg:isInterceptInactive()) then
         pg.interceptMenu:Remove()
-        --menuSeparator( pg, pg.mainMenu ) obsolete
         pg.lookAgainMenu = MENU_GROUP_COMMAND:New(pg.group, "SCAN AREA again", pg.mainMenu, intrudersMenus, pg)
     end
     local intruderMenus = {}
@@ -2637,7 +2636,9 @@ function DebugGetSpottedFlights( source ) -- nisse Remove when debugged
     
 end
 
-Warning("DCAF.AirPolicing.Debugging was loaded")
+function DebugInvokeLocal_beginIntercept(pg, igInfo )
+    beginIntercept( pg, igInfo )
+end
 
 ----------------------- END -----------------------
 
@@ -2645,3 +2646,6 @@ Trace("DCAF.AirPolicing was loaded")
 
 
 
+MissionEvents:OnWeaponFired(function(event) -- nisse
+    Debug("nisse - MissionEvents:OnWeaponFired :: event: " .. DumpPretty(event))
+end)

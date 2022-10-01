@@ -1590,11 +1590,6 @@ function MissionEvents:EndOnPlayerEnteredHelicopter( func ) MissionEvents:Remove
 function MissionEvents:OnGroupDiverted( func, insertFirst ) 
     MissionEvents:AddListener(MissionEvents._groupDivertedHandlers, 
         func,
-        -- function( event ) obsolete
-        --     if event.IniUnit:IsAirPlane() then
-        --         func( event )
-        --     end
-        -- end,
         nil,
         insertFirst) 
 end
