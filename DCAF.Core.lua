@@ -453,70 +453,69 @@ DebugAudioMessageToAll = false -- set to true to debug audio messages
 Sends a simple message to groups, clients or lists of groups or clients
 ]]--
 function MessageTo( recipient, message, duration )
-
-  if (recipient == nil) then
-      Warning("MessageTo :: Recipient name not specified :: EXITS")
-      return
-  end
-  if (message == nil) then
-      Warning("MessageTo :: Message was not specified :: EXITS")
-      return
-  end
-  duration = duration or 5
-
-  if (isString(recipient)) then
-      local group = getGroup(recipient)
-      if (group == nil) then
-          Warning("MessageTo-?"..recipient.." :: Group could not be resolved :: EXITS")
-          return
-      end
-      local group = GROUP:FindByName( recipient )
-      if (group ~= nil) then
-          MessageTo( group, message, duration )
-          return
-      end
-    
-      local unit = UNIT:FindByName( recipient )
-      if (unit ~= nil) then
-          MessageTo( unit, message, duration )
-          return
-      end
-  end
-
-  if (type(recipient) == "table") then
-      if (isUnit(recipient)) then
-          -- MOOSE doesn't support sending messages to units; send to group and ignore other units from same group ...
-          recipient = recipient:GetGroup()
-          MessageTo( recipient, message, duration )
+    if (recipient == nil) then
+        Warning("MessageTo :: Recipient name not specified :: EXITS")
+        return
     end
-    if (isGroup(recipient)) then
+    if (message == nil) then
+        Warning("MessageTo :: Message was not specified :: EXITS")
+        return
+    end
+    duration = duration or 5
+
+    if (isString(recipient)) then
+        local unit = getUnit(recipient)
+        if unit ~= nil then
+            MessageTo(unit, message, duration)
+            return
+        end
+        local group = getGroup(recipient)
+        if (group ~= nil) then
+            MessageTo(group, message, duration)
+            return
+        end
+        Warning("MessageTo-?"..recipient.." :: Group could not be resolved :: EXITS")
+        return
+    end
+
+    if isTable(recipient) then
         if (string.match(message, ".\.ogg") or string.match(message, ".\.wav")) then
             local audio = USERSOUND:New(message)
             if DebugAudioMessageToAll then
                 audio:ToAll()
-            else
+            elseif isGroup(recipient) then
+                Trace("MessageTo (audio) :: group " .. recipient.GroupName .. " :: '" .. message .. "'")
                 audio:ToGroup(recipient)
+            elseif isUnit(recipient) then
+                Trace("MessageTo (audio) :: unit " .. recipient:GetName() .." :: '" .. message .. "'")
+                audio:ToUnit(recipient)
             end
-            Trace("MessageTo (audio) :: Group "..recipient.GroupName.." :: '"..message.."'")
             return
         end
-        MESSAGE:New(message, duration):ToGroup(recipient)
-        Trace("MessageTo :: Group "..recipient.GroupName.." :: '"..message.."'")
-        return
-    end
-    if (recipient.ClassName == "CLIENT") then
-        if (string.match(message, ".\.ogg") or string.match(message, ".\.wav")) then
-            USERSOUND:New(message):ToGroup(recipient)
-            Trace("MessageTo (sound) :: Group "..recipient.GroupName.." :: '"..message.."'")
+        
+        local msg = MESSAGE:New(message, duration)
+        if isGroup(recipient) then
+            Trace("MessageTo :: group " .. recipient.GroupName .. " :: '" .. message .."'")
+            msg:ToGroup(recipient)
+            return
+        elseif isUnit(recipient) then
+            Trace("MessageTo :: unit " .. recipient:GetName() .. " :: '" .. message .. "'")
+            msg:ToUnit(recipient)
             return
         end
-        MESSAGE:New(message, duration):ToClient(recipient)
-        Trace("MessageTo :: Client "..recipient:GetName().." :: "..message.."'")
-        return
-    end
-    for k, v in pairs(recipient) do
-        MessageTo( v, message, duration )
-    end
+        -- if (recipient.ClassName == "CLIENT") then obsolete?
+        --     if (string.match(message, ".\.ogg") or string.match(message, ".\.wav")) then
+        --         USERSOUND:New(message):ToGroup(recipient)
+        --         Trace("MessageTo (sound) :: Group "..recipient.GroupName.." :: '"..message.."'")
+        --         return
+        --     end
+        --     MESSAGE:New(message, duration):ToClient(recipient)
+        --     Trace("MessageTo :: Client "..recipient:GetName().." :: "..message.."'")
+        --     return
+        -- end
+        for k, v in pairs(recipient) do
+            MessageTo( v, message, duration )
+        end
     return
   end
 
@@ -529,7 +528,9 @@ function MessageTo( recipient, message, duration )
       end
   end
 
-  if (pcall(SendMessageToClient(recipient))) then return end
+  if (pcall(SendMessageToClient(recipient))) then 
+    return end
+
   Warning("MessageTo-"..recipient.." :: Recipient not found")
 end
 
@@ -1377,7 +1378,10 @@ MissionEvents = {
     _unitSpawnedHandlers = {},
     _unitDeadHandlers = {},
     _unitKilledHandlers = {},
+    _unitCrashedHandlers = {},
+    _ejectedHandlers = {},
     _playerEnteredUnitHandlers = {},
+    _playerLeftUnitHandlers = {},
     _ejectionHandlers = {},
     _groupDivertedHandlers = {},
     _weaponFiredHandlers = {},
@@ -1399,6 +1403,30 @@ function _e:onEvent( event )
 local deep = DumpPrettyOptions:New():Deep() -- nisse
 --Debug("_e:onEvent-? :: event: " .. DumpPretty(event))
 
+    local function getTarget(event)
+        local dcsTarget = event.target 
+        if not dcsTarget and event.weapon then
+            dcsTarget = event.weapon:getTarget()
+        end
+    end
+
+    local function addInitiatorAndTarget( event )
+        if event.initiator ~= nil and event.IniUnit == nil then
+            event.IniUnit = UNIT:Find(event.initiator)
+            event.IniUnitName = event.IniUnit:GetName()
+            event.IniGroup = event.IniUnit:GetGroup()
+            event.IniGroupName = event.IniGroup.GroupName
+        end
+        local dcsTarget = event.target or getTarget(event)
+        if event.TgtUnit == nil and dcsTarget ~= nil then
+            event.TgtUnit = UNIT:Find(dcsTarget)
+            event.TgtUnitName = event.TgtUnit:GetName()
+            event.TgtGroup = event.TgtUnit:GetGroup()
+            event.TgtGroupName = event.TgtGroup.GroupName
+        end
+        return event
+    end
+
     if (event.id == EVENTS.Birth) then
         if event.IniGroup and #MissionEvents._groupSpawnedHandlers > 0 then
             MissionEvents:Invoke( MissionEvents._groupSpawnedHandlers, event )
@@ -1414,62 +1442,81 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
         return
     end
 
-    if (event.id == world.event.S_EVENT_DEAD) then
-        
-        if (event.IniUnit and #MissionEvents._unitDeadHandlers > 0) then
+    --[[
+        note I can't figure out how to get to the player with this event: {
+            ["id"] = 20,
+            ["time"] = 0,
+            ["initiator"] = { 
+                ["id_"] = 16812544, 
+            },
+        })
+    -- if event.id == world.event.S_EVENT_PLAYER_ENTER_UNIT then --  event
+    --     Debug("nisse - world.event.S_EVENT_PLAYER_ENTER_UNIT :: event: " .. DumpPretty(event, deep))
+    -- end
+    ]]--
+
+    if event.id == world.event.S_EVENT_PLAYER_LEAVE_UNIT then
+--        Debug("nisse - world.event.S_EVENT_PLAYER_LEAVE_UNIT :: event: " .. DumpPretty(event, deep))
+        MissionEvents:Invoke( MissionEvents._playerLeftUnitHandlers, event )
+    end
+
+    if event.id == world.event.S_EVENT_DEAD then
+        if event.IniUnit and #MissionEvents._unitDeadHandlers > 0 then
             MissionEvents:Invoke( MissionEvents._unitDeadHandlers, {
                 IniUnit = event.IniUnit,
                 IniUnitName = event.IniUnit.UnitName,
                 IniGroup = event.IniGroup,
-                IniGroupName=event.IniUnit.GroupName
+                IniGroupName = event.IniUnit.GroupName,
+                IniPlayerName = event.IniUnit:GetPlayerName()
             })
         end
         return
     end
 
-    if (event.id == world.event.S_EVENT_KILL) then
-        if (#MissionEvents._unitKilledHandlers > 0) then
+    if event.id == world.event.S_EVENT_KILL then
+        if #MissionEvents._unitKilledHandlers > 0 then
             MissionEvents:Invoke( MissionEvents._unitKilledHandlers, {
                 IniUnit = UNIT:Find(event.initiator),
                 TgtUnit = UNIT:Find(event.target)
             })
         end
+        if #MissionEvents._unitDeadHandlers > 0 then
+            local unit = UNIT:Find(event.target)
+            local group = unit:GetGroup()
+            _e:onEvent({
+                id = world.event.S_EVENT_DEAD,
+                IniUnit = unit,
+                IniUnitName = unit:GetName(),
+                IniGroup = group,
+                IniGroupName = group.GroupName,
+                IniPlayerName = unit:GetPlayerName()
+            })
+        end
         return
     end
 
-    if (event.id == world.event.S_EVENT_EJECTION) then
-        if (#MissionEvents._ejectionHandlers > 0) then
+    if event.id == world.event.S_EVENT_EJECTION then
+        if #MissionEvents._ejectionHandlers > 0 then
             MissionEvents:Invoke( MissionEvents._ejectionHandlers, event)
         end
         return
     end
 
-    local function getTarget(event)
-        local dcsTarget = event.target 
-        if not dcsTarget and event.weapon then
-            dcsTarget = event.weapon:getTarget()
+    if event.id == world.event.S_EVENT_CRASH then
+        if #MissionEvents._unitCrashedHandlers > 0 then
+            MissionEvents:Invoke( MissionEvents._unitCrashedHandlers, event)
         end
+--         if #MissionEvents._unitDeadHandlers > 0 then
+--             event.id = world.event.S_EVENT_DEAD
+--             event.IniUnit = UNIT:Find(event.initiator)
+--             event.IniPlayerName = event.IniUnit:GetPlayerName()
+-- Debug("nisse - S_EVENT_CRASH >> S_EVENT_DEAD :: event: " .. DumpPretty(event))
+--             _e:onEvent(event)
+--         end
+        return
     end
 
-    local function addInitiatorAndTarget( event )
-        if event.initiator ~= nil then
-            event.IniUnit = UNIT:Find(event.initiator)
-            event.IniUnitName = event.IniUnit:GetName()
-            event.IniGroup = event.IniUnit:GetGroup()
-            event.IniGroupName = event.IniGroup.GroupName
-        end
-        local dcsTarget = event.target or getTarget(event)
-        if dcsTarget ~= nil then
-            event.TgtUnit = UNIT:Find(dcsTarget)
-            event.TgtUnitName = event.TgtUnit:GetName()
-            event.TgtGroup = event.TgtUnit:GetGroup()
-            event.TgtGroupName = event.TgtGroup.GroupName
-        end
-        return event
-    end
-
-    if (event.id == world.event.S_EVENT_SHOT) then
---Debug("_e:onEvent-S_EVENT_SHOT :: event: " .. DumpPretty(event, deep))
+    if event.id == world.event.S_EVENT_SHOT then
         if (#MissionEvents._weaponFiredHandlers > 0) then
             local dcsTarget = event.target 
             if not dcsTarget and event.weapon then
@@ -1532,34 +1579,40 @@ function MissionEvents:RemoveListener(listeners, func)
 end
 
 function MissionEvents:OnGroupSpawned( func, insertFirst ) MissionEvents:AddListener(MissionEvents._groupSpawnedHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnGroupSpawned( func, insertFirst ) MissionEvents:RemoveListener(MissionEvents._groupSpawnedHandlers, func) end
+function MissionEvents:EndOnGroupSpawned( func ) MissionEvents:RemoveListener(MissionEvents._groupSpawnedHandlers, func) end
 
 function MissionEvents:OnUnitSpawned( func, insertFirst ) MissionEvents:AddListener(MissionEvents._unitSpawnedHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnUnitSpawned( func, insertFirst ) MissionEvents:RemoveListener(MissionEvents._unitSpawnedHandlers, func) end
+function MissionEvents:EndOnUnitSpawned( func ) MissionEvents:RemoveListener(MissionEvents._unitSpawnedHandlers, func) end
 
 function MissionEvents:OnUnitDead( func, insertFirst ) MissionEvents:AddListener(MissionEvents._unitDeadHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnUnitDead( func, insertFirst ) MissionEvents:RemoveListener(MissionEvents._unitDeadHandlers, func) end
+function MissionEvents:EndOnUnitDead( func ) MissionEvents:RemoveListener(MissionEvents._unitDeadHandlers, func) end
 
 function MissionEvents:OnUnitKilled( func, insertFirst ) MissionEvents:AddListener(MissionEvents._unitKilledHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnUnitKilled( func, insertFirst ) MissionEvents:RemoveListener(MissionEvents._unitKilledHandlers, func) end
+function MissionEvents:EndOnUnitKilled( func ) MissionEvents:RemoveListener(MissionEvents._unitKilledHandlers, func) end
+
+function MissionEvents:OnUnitCrashed( func, insertFirst ) MissionEvents:AddListener(MissionEvents._unitCrashedHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnUnitCrashed( func ) MissionEvents:RemoveListener(MissionEvents._unitCrashedHandlers, func) end
 
 function MissionEvents:OnPlayerEnteredUnit( func, insertFirst ) MissionEvents:AddListener(MissionEvents._playerEnteredUnitHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnPlayerEnteredUnit( func, insertFirst ) MissionEvents:RemoveListener(MissionEvents._playerEnteredUnitHandlers, func) end
+function MissionEvents:EndOnPlayerEnteredUnit( func ) MissionEvents:RemoveListener(MissionEvents._playerEnteredUnitHandlers, func) end
+
+function MissionEvents:OnPlayerLeftUnit( func, insertFirst ) MissionEvents:AddListener(MissionEvents._playerLeftUnitHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnPlayerLeftUnit( func ) MissionEvents:RemoveListener(MissionEvents._playerLeftUnitHandlers, func) end
 
 function MissionEvents:OnEjection( func, insertFirst ) MissionEvents:AddListener(MissionEvents._ejectionHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnEjection( func, insertFirst ) MissionEvents:RemoveListener(MissionEvents._ejectionHandlers, func) end
+function MissionEvents:EndOnEjection( func ) MissionEvents:RemoveListener(MissionEvents._ejectionHandlers, func) end
 
 function MissionEvents:OnWeaponFired( func, insertFirst ) MissionEvents:AddListener(MissionEvents._weaponFiredHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnWeaponFired( func, insertFirst ) MissionEvents:RemoveListener(MissionEvents._weaponFiredHandlers, func) end
+function MissionEvents:EndOnWeaponFired( func ) MissionEvents:RemoveListener(MissionEvents._weaponFiredHandlers, func) end
 
 function MissionEvents:OnShootingStart( func, insertFirst ) MissionEvents:AddListener(MissionEvents._shootingStartHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnShootingStart( func, insertFirst ) MissionEvents:RemoveListener(MissionEvents._shootingStartHandlers, func) end
+function MissionEvents:EndOnShootingStart( func ) MissionEvents:RemoveListener(MissionEvents._shootingStartHandlers, func) end
 
 function MissionEvents:OnShootingStop( func, insertFirst ) MissionEvents:AddListener(MissionEvents._shootingStopHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnShootingStop( func, insertFirst ) MissionEvents:RemoveListener(MissionEvents._shootingStopHandlers, func) end
+function MissionEvents:EndOnShootingStop( func ) MissionEvents:RemoveListener(MissionEvents._shootingStopHandlers, func) end
 
 function MissionEvents:OnUnitHit( func, insertFirst ) MissionEvents:AddListener(MissionEvents._unitHitHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnUnitHit( func, insertFirst ) MissionEvents:RemoveListener(MissionEvents._unitHitHandlers, func) end
+function MissionEvents:EndOnUnitHit( func ) MissionEvents:RemoveListener(MissionEvents._unitHitHandlers, func) end
 
 
 --- CUSTOM EVENTS
@@ -1575,6 +1628,18 @@ function MissionEvents:OnPlayerEnteredAirplane( func, insertFirst )
 end
 function MissionEvents:EndOnPlayerEnteredAirplane( func ) MissionEvents:RemoveListener(MissionEvents._playerEnteredUnitHandlers, func) end
 
+function MissionEvents:OnPlayerLeftAirplane( func, insertFirst )
+    MissionEvents:AddListener(MissionEvents._playerLeftUnitHandlers, 
+        function( event )
+            if event.IniUnit:IsAirPlane() then
+                func( event )
+            end
+        end,
+        nil,
+        insertFirst) 
+end
+function MissionEvents:EndOnPlayerLeftAirplane( func ) MissionEvents:RemoveListener(MissionEvents._playerLeftUnitHandlers, func) end
+
 function MissionEvents:OnPlayerEnteredHelicopter( func, insertFirst ) 
     MissionEvents:AddListener(MissionEvents._playerEnteredUnitHandlers, 
         function( event )
@@ -1586,6 +1651,18 @@ function MissionEvents:OnPlayerEnteredHelicopter( func, insertFirst )
         insertFirst)
 end
 function MissionEvents:EndOnPlayerEnteredHelicopter( func ) MissionEvents:RemoveListener(MissionEvents._playerEnteredUnitHandlers, func) end
+
+function MissionEvents:OnPlayerLeftHelicopter( func, insertFirst ) 
+    MissionEvents:AddListener(MissionEvents._playerLeftUnitHandlers, 
+        function( event )
+            if (event.IniUnit:IsHelicopter()) then
+                func( event )
+            end
+        end,
+        nil,
+        insertFirst)
+end
+function MissionEvents:EndOnPlayerLeftHelicopter( func ) MissionEvents:RemoveListener(MissionEvents._playerLeftUnitHandlers, func) end
 
 function MissionEvents:OnGroupDiverted( func, insertFirst ) 
     MissionEvents:AddListener(MissionEvents._groupDivertedHandlers, 

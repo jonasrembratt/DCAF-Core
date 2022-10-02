@@ -80,7 +80,7 @@ AirPolicing = {
     },
     LandingIntruders = {},
     _aiGroupDescriptions = {},
-    Trace = false,
+    policeUnitState = false, -- when set each unit in group will have own "Policing" menu 
     Debug = false
 }
 
@@ -403,6 +403,7 @@ end
 -- @param interceptor :: the group intercepting
 -- @returns table :: { [<group name>] = <reaction> }
 local function getIntrudersReactions( intruder, interceptor, escorts, useDefault )
+    -- todo interceptor is currently group; change to unit and take other groups units into account only when nearby
   
     local reactions = {}
     local intruderMissiles = 0
@@ -1237,13 +1238,11 @@ function OnFollowMe( unitName, escortedGroupName, callback, options )
         local timestamp = UTILS.SecondsOfToday()
         totalTime = timestamp - startTime
         local bankAngle = unit:GetRoll()
-        --    Trace("OnFollowMe :: '"..unitName.." :: "..string.format("bankAngle=%d; lastMaxBankAngle=%d", bankAngle, lastMaxBankAngle or 0))
         local absBankAngle = math.abs(bankAngle)
 
         function getIsWingRockComplete() 
             table.insert(bankEvents, 1, timestamp)
             countEvents = countEvents+1
-            --Trace("OnFollowMe :: '"..unitName.." :: count="..tostring(countEvents).."/"..tostring(minCount))
             if (countEvents < minCount) then return false end
             local prevTimestamp = bankEvents[minCount]
             local timeSpent = timestamp - prevTimestamp
@@ -1483,7 +1482,7 @@ Remarks
 See also
   `Follow` (function)
 ]]--
-function OnInterception( group, callback, options, pg )
+function OnInterception( group, callback, options, pu )
 
     group = getGroup( group )
     if (group == nil) then
@@ -1574,8 +1573,11 @@ local REF_TYPE = {
     Bulls = "Bullseye"
 }
 
-local PolicingGroup = {
+local policeUnit = {
+    unit = nil,
+    playerName = nil,
     group = nil,
+    pg = nil,
 
     -- menus
     mainMenu = nil,
@@ -1598,15 +1600,38 @@ local PolicingGroup = {
     aiReactionAssistAudio = false,
 }
 
+
+local policeGroup = {
+    group = nil,
+    units = {}, -- list of policeUnit
+    -- internals
+    unitIndex = {} -- key = unit name, value = policeGroup
+}
+
 local makeInactiveMenus = nil
 
-function PolicingGroup:isPolicing(group)
+function policeGroup:isPolicing(group)
     local coalition = group:GetCoalition()
     local coalitionPolicing = _policingGroups[coalition]
-    return coalitionPolicing ~= nil and coalitionPolicing[group.GroupName] ~= nil
+    if coalitionPolicing == nil then
+        return false end
+
+    local pg = coalitionPolicing[group.GroupName]
+    return pg ~= nil, pg
 end
 
-function PolicingGroup:register(pg)
+function policeGroup:isPoliceUnit(unit)
+    local group = unit:GetGroup()
+    local isPoliceGroup, pg = policeGroup:isPolicing(group)
+    if not isPoliceGroup then
+        return false end
+
+    local playerName = unit:GetPlayerName()
+    local pu = pg.units[playerName]
+    return pu ~= nil, pu
+end
+
+function policeGroup:register(pg)
     local coalition = pg.group:GetCoalition()
     local coalitionPolicing = _policingGroups[coalition]
     if (coalitionPolicing == nil) then
@@ -1617,372 +1642,389 @@ function PolicingGroup:register(pg)
     return pg
 end
 
-function PolicingGroup:interceptInactive()
+function policeUnit:interceptInactive()
     self.interceptState = INTERCEPT_STATE.Inactive
     self.intruder = nil
     return self
 end
 
-function PolicingGroup:interceptReady( intruderMenus )
+function policeUnit:interceptReady( intruderMenus )
     self.interceptState = INTERCEPT_STATE.Ready
     self.intruderMenus = intruderMenus
     return self
 end
 
-function PolicingGroup:interceptEstablishing( intruder )
+function policeUnit:interceptEstablishing( intruder )
     self.interceptState = INTERCEPT_STATE.Establishing
     self.intruder = intruder
     return self
 end
 
-function PolicingGroup:isInterceptInactive()
+function policeUnit:isInterceptInactive()
     return self.interceptState == INTERCEPT_STATE.Inactive
 end
 
-function PolicingGroup:isInterceptReady( intruderMenus )
+function policeUnit:isInterceptReady( intruderMenus )
     return self.interceptState == INTERCEPT_STATE.Ready
 end
 
-function PolicingGroup:interceptControlling()
+function policeUnit:interceptControlling()
     self.interceptState = INTERCEPT_STATE.Controlling
     return self
 end
 
-function PolicingGroup:RemoveLookAgainMenu()
-    local pg = self
-    if (pg.lookAgainMenu > 0) then
-        pg.lookAgainMenu:Remove()
+function policeUnit:RemoveLookAgainMenu()
+    if self.lookAgainMenu ~= nil then
+        self.lookAgainMenu:Remove()
     end
 end
  
-function PolicingGroup:RemoveIntruderMenus()
-    local pg = self
-    if (#pg.intruderMenus > 0) then
-        for k, v in pairs(pg.intruderMenus) do
+function policeUnit:RemoveIntruderMenus()
+    if (#self.intruderMenus > 0) then
+        for _, menu in ipairs(self.intruderMenus) do
             menu:Remove()
         end
     end
 end
 
+function policeUnit:RemovePolicingMenu()
+    if self.mainMenu ~= nil then
+        self.mainMenu:Remove()
+        self.mainMenu = nil
+        Trace("policeUnit:RemovePolicingMenu :: unit: " .. self.unit:GetName() .. " :: player: " .. self.playerName .. " :: MENUS REMOVED")
+        return true
+    end
+    Trace("policeUnit:RemovePolicingMenu :: unit: " .. self.unit:GetName() .. " :: player: " .. self.playerName .. " :: NO MENU FOUND")
+    return false
+end
+
 local _debugTriggerOnAiWasInterceptedFunction = nil
 local makeOptionsMenus = nil
 
-local function establishInterceptMenus( pg, ig, ai ) -- ig = intruder group; ai = _ActiveIntercept
-
-    pg.mainMenu:RemoveSubMenus()
+local function establishInterceptMenus( pu, ig, ai ) -- pu = police unit, ig = intruder group; ai = _ActiveIntercept
+    pu.mainMenu:RemoveSubMenus()
+    pu.optionsMenu = nil
     local function cancel()
         ai:Cancel()
-        makeInactiveMenus( pg )
-        if (pg.interceptAssist) then
-            MessageTo( pg.group, AirPolicing.Assistance.CancelledInstruction, AirPolicing.Assistance.Duration )
+        makeInactiveMenus( pu )
+        if pu.interceptAssist then
+            MessageTo( pu.unit, AirPolicing.Assistance.CancelledInstruction, AirPolicing.Assistance.Duration )
         end
-        if (pg.interceptAssistAudio) then
-            MessageTo( pg.group, AirPolicing.Assistance.CancelledInstructionAudio )
+        if pu.interceptAssistAudio then
+            MessageTo( pu.unit, AirPolicing.Assistance.CancelledInstructionAudio )
         end
     end
-    makeOptionsMenus( pg )
-    MENU_GROUP_COMMAND:New(pg.group, "--CANCEL Interception--", pg.mainMenu, cancel, ig)
+    makeOptionsMenus( pu )
+    MENU_GROUP_COMMAND:New(pu.group, "--CANCEL Interception--", pu.mainMenu, cancel, ig)
     if (DCAFCore.Debug) then
-        MENU_GROUP_COMMAND:New(pg.group, ">> DEBUG: Trigger intercept", pg.mainMenu, _debugTriggerOnAiWasInterceptedFunction, ai, ig, pg)
+        MENU_GROUP_COMMAND:New(pu.group, ">> DEBUG: Trigger intercept", pu.mainMenu, _debugTriggerOnAiWasInterceptedFunction, ai, ig, pu)
     end
 end
 
-local function controllingInterceptMenus( pg, ig, ai ) -- ig = intruder group; ai = _ActiveIntercept
+local function controllingInterceptMenus( pu, ig, ai ) -- ig = intruder group; ai = _ActiveIntercept
 
-    pg.mainMenu:RemoveSubMenus()
+    pu.mainMenu:RemoveSubMenus()
 
     local function landHereCommand()
         local airbase = LandHere( ig )
-        if (pg.aiReactionAssist) then
+        if (pu.aiReactionAssist) then
             local text = string.format( AirPolicing.Assistance.AiLandingInstruction, airbase.AirbaseName )
-            MessageTo( pg.group, text, AirPolicing.Assistance.Duration )
+            MessageTo( pu.group, text, AirPolicing.Assistance.Duration )
         end
-        if (pg.aiReactionAssistAudio) then
-            MessageTo( pg.group, AirPolicing.Assistance.AiLandingInstructionAudio )
+        if (pu.aiReactionAssistAudio) then
+            MessageTo( pu.group, AirPolicing.Assistance.AiLandingInstructionAudio )
         end
-        pg:interceptInactive()
-        makeInactiveMenus( pg )
+        pu:interceptInactive()
+        makeInactiveMenus( pu )
     end
 
     local function divertCommand()
         Divert( ig )
-        if (pg.aiReactionAssist) then
-            MessageTo( pg.group, AirPolicing.Assistance.AiDivertingInstruction, AirPolicing.Assistance.Duration )
+        if (pu.aiReactionAssist) then
+            MessageTo( pu.group, AirPolicing.Assistance.AiDivertingInstruction, AirPolicing.Assistance.Duration )
         end
-        if (pg.aiReactionAssistAudio) then
-            MessageTo( pg.group, AirPolicing.Assistance.AiDivertingInstructionAudio )
+        if (pu.aiReactionAssistAudio) then
+            MessageTo( pu.group, AirPolicing.Assistance.AiDivertingInstructionAudio )
         end
-        pg:interceptInactive()
-        makeInactiveMenus( pg )
+        pu:interceptInactive()
+        makeInactiveMenus( pu )
     end
 
-    MENU_GROUP_COMMAND:New(pg.group, "Order: Land here!", pg.mainMenu, landHereCommand)
+    MENU_GROUP_COMMAND:New(pu.group, "Order: Land here!", pu.mainMenu, landHereCommand)
     if (CanDivert( ig )) then 
-        MENU_GROUP_COMMAND:New(pg.group, "Order: Divert from here", pg.mainMenu, divertCommand)
+        MENU_GROUP_COMMAND:New(pu.group, "Order: Divert from here", pu.mainMenu, divertCommand)
     end
 
     local function cancel()
         ai:Cancel()
-        makeInactiveMenus( pg )
-        if (pg.interceptAssist) then
-            MessageTo( pg.group, AirPolicing.Assistance.CancelledInstruction, AirPolicing.Assistance.Duration )
+        makeInactiveMenus( pu )
+        if (pu.interceptAssist) then
+            MessageTo( pu.group, AirPolicing.Assistance.CancelledInstruction, AirPolicing.Assistance.Duration )
         end
-        if (pg.interceptAssistAudio) then
-            MessageTo( pg.group, AirPolicing.Assistance.CancelledInstructionAudio )
+        if (pu.interceptAssistAudio) then
+            MessageTo( pu.group, AirPolicing.Assistance.CancelledInstructionAudio )
         end
     end
 end
 
-local function onAiWasIntercepted( intercept, ig, pg )
-
+local function onAiWasIntercepted( intercept, ig, pu )
+-- _ todo 'pu' might be nil when invoked from debug code - this is not taken into consideration everywhere in this function
     local audioDelay = 0
     local function delayAudio( time ) audioDelay = audioDelay + time end
 
     -- delay reaction (random no. of seconds) ...
     local delay = AirPolicingOptions.GetAiReactionDelay(ig)
---Debug("onAiWasIntercepted :: delay="..tostring(delay)) -- nisse
-    Delay(
-        delay,
-        function()
-            local escorts = GetEscortingGroups( ig )
-            if OnFollowMeDefaults.debugTimeoutTrigger then
-                -- note: For debugging purposes the interceptor might also be an escort; remove it if that's the case ...
-                for i, escort in ipairs(escorts) do
-                    if escort == pg.group then
-                        table.remove(escorts, i)
-                        break
-                    end
+    Delay(delay, function()
+        local escorts = GetEscortingGroups( ig )
+        if OnFollowMeDefaults.debugTimeoutTrigger then
+            -- note: For debugging purposes the interceptor might also be an escort; remove it if that's the case ...
+            for i, escort in ipairs(escorts) do
+                if escort == pu.group then
+                    table.remove(escorts, i)
+                    break
                 end
             end
+        end
 
-            local reactions = getIntrudersReactions( ig, pg.group, escorts, "unknown" )
+        local reactions = getIntrudersReactions( ig, pu.group, escorts, "unknown" )
 
 -- Debug("onAiWasIntercepted :: reactions: " .. DumpPretty(reactions))             -- nisse
-            local reaction = reactions[ig.GroupName]
-            local defaultEscortReaction = nil
-            for groupName, r in pairs(reactions) do
-                defaultEscortReaction = r
-                break
+        local reaction = reactions[ig.GroupName]
+        local defaultEscortReaction = nil
+        for groupName, r in pairs(reactions) do
+            defaultEscortReaction = r
+            break
+        end
+        if (reaction == nil or reaction == "unknown") then
+            -- there's no explicit reaction for escorted group; fall back to escorting group reaction (if any) ...
+            reaction = defaultEscortReaction
+            if reaction == nil or reaction == "unknown" then
+                local intruderSize = ig:CountAliveUnits()
+                local _, _, _, _, intruderMissiles = ig:GetAmmunition()
+                reaction = getDefaultIntruderReaction( nil, ig, pu.group, intruderSize, intruderMissiles )
             end
-            if (reaction == nil or reaction == "unknown") then
-                -- there's no explicit reaction for escorted group; fall back to escorting group reaction (if any) ...
-                reaction = defaultEscortReaction
-                if reaction == nil or reaction == "unknown" then
-                    local intruderSize = ig:CountAliveUnits()
-                    local _, _, _, _, intruderMissiles = ig:GetAmmunition()
-                    reaction = getDefaultIntruderReaction( nil, ig, pg.group, intruderSize, intruderMissiles )
-                end
-            end
-            local intruderReaction = reaction
-            reactions[ig.GroupName] = nil
-            local icptorName = nil
-            if (pg == nil) then
-                icptorName = UNIT:FindByName(intercept.interceptor):GetGroup().GroupName
-            else
-                icptorName = pg.group.GroupName
-            end
+        end
+        local intruderReaction = reaction
+        reactions[ig.GroupName] = nil
+        local icptorName = nil
+        if (pu == nil) then
+            icptorName = UNIT:FindByName(intercept.interceptor):GetGroup().GroupName
+        else
+            icptorName = pu.group.GroupName
+        end
 
-            function applyReactionTo( g, gReaction )
-                if gReaction == INTERCEPT_REACTIONS.Defensive1 then
-                    -- intruder goes into defensive (1) state ...
-                    Trace("onAiWasIntercepted-"..icptorName.." :: " .. g.GroupName .. " goes defensive")
-                    ROEDefensive( g )
-                    return true
-                elseif gReaction == INTERCEPT_REACTIONS.Attack3 then
-                    Trace("onAiWasIntercepted-"..icptorName.." :: " .. g.GroupName .. " attacks interceptor")
-                    TaskAttackGroup( g, pg.group )
-                    return true
-                elseif reaction == INTERCEPT_REACTIONS.Divert then
-                    Trace("onAiWasIntercepted-"..icptorName.." :: " .. g.GroupName .. " diverts")
-                    Divert( intercept.intruder )
-                    return true
-                elseif reaction == INTERCEPT_REACTIONS.Stop then
-                    Trace("onAiWasIntercepted-"..icptorName.." :: " .. g.GroupName .. " lands")
-                    LandHere( intercept.intruder )
-                    return true
-                elseif reaction == INTERCEPT_REACTIONS.Follow then
-                    Trace("onAiWasIntercepted-"..icptorName.." :: "..ig.GroupName.." follows interceptor")
-                    TaskFollow( intercept.intruder, intercept.interceptor, FollowOffsetLimits:New()) -- todo consider setting offset limit as configurable
-                    return true
-                end
-                Warning("onAiWasIntercepted-" .. icptorName .. " :: unresolved reaction: " .. tostring(gReaction))
-                return false
-            end
-
-            if (reaction == INTERCEPT_REACTIONS.None) then
-                -- intruder ignores order ...
-                Trace("Interception-"..icptorName.." :: "..ig.GroupName.." ignores interceptor")
-                if (pg ~= nil) then
-                    pg:interceptInactive()
-                    inactiveMenus( pg )
-                    if (pg.aiReactionAssist) then
-                        MessageTo( intercept.interceptor, AirPolicing.Assistance.AiDisobeyingInstruction, AirPolicing.Assistance.Duration )
-                    end
-                    if (pg.aiReactionAssistAudio) then
-                        MessageTo( intercept.interceptor, AirPolicing.Assistance.AiDisobeyingInstructionAudio )
-                        delayAudio(AirPolicing.Assistance.AiDisobeyingInstructionAudioTime)
-                    end
-                end
-                return
-            end
-
-            if (reaction == INTERCEPT_REACTIONS.Defensive1) then
+        function applyReactionTo( g, gReaction )
+            if gReaction == INTERCEPT_REACTIONS.Defensive1 then
                 -- intruder goes into defensive (1) state ...
-                if (pg ~= nil) then
-                    pg:interceptInactive()
-                    inactiveMenus( pg )
-                    if (pg.aiReactionAssist) then
-                        MessageTo( intercept.interceptor, AirPolicing.Assistance.AiDisobeyingInstruction, AirPolicing.Assistance.Duration )
-                    end
-                    if (pg.aiReactionAssistAudio) then
-                        MessageTo( intercept.interceptor, AirPolicing.Assistance.AiDisobeyingInstructionAudio )
-                        delayAudio(AirPolicing.Assistance.AiDisobeyingInstructionAudioTime)
-                    end
-                end
-            elseif reaction == INTERCEPT_REACTIONS.Attack3 then
-                -- intruder gets aggressive ...
-                if (pg ~= nil) then
-                    pg:interceptInactive()
-                    inactiveMenus( pg )
-                    if (pg.aiReactionAssist) then
-                        MessageTo( intercept.interceptor, AirPolicing.Assistance.AiAttackingInstruction, AirPolicing.Assistance.Duration )
-                    end
-                    if (pg.aiReactionAssistAudio) then
-                        MessageTo( intercept.interceptor, AirPolicing.Assistance.AiAttackingInstructionAudio )
-                        delayAudio(AirPolicing.Assistance.AiAttackingInstructionAudioTime)
-                    end
-                end
-                applyReactionTo( ig, reaction )
+                Trace("onAiWasIntercepted-"..icptorName.." :: " .. g.GroupName .. " goes defensive")
+                ROEDefensive( g )
+                return true
+            elseif gReaction == INTERCEPT_REACTIONS.Attack3 then
+                Trace("onAiWasIntercepted-"..icptorName.." :: " .. g.GroupName .. " attacks interceptor")
+                TaskAttackGroup( g, pu.group )
+                return true
             elseif reaction == INTERCEPT_REACTIONS.Divert then
-                -- intruder disobeys, but diverts ...
-                if (pg ~= nil) then
-                    pg:interceptInactive()
-                    inactiveMenus( pg )
-                    delayAudio(AirPolicing.Assistance.AiDisobeyDivertingInstructionAudioTime + 2)
-                    Delay(1, 
-                        function()
-                            if (pg.aiReactionAssist) then
-                                MessageTo( intercept.interceptor, AirPolicing.Assistance.AiDisobeyDivertingInstruction, AirPolicing.Assistance.Duration )
-                            end
-                            if (pg.aiReactionAssistAudio) then
-                                MessageTo( intercept.interceptor, AirPolicing.Assistance.AiDisobeyDivertingInstructionAudio )
-                            end
-                        end)
-                end
+                Trace("onAiWasIntercepted-"..icptorName.." :: " .. g.GroupName .. " diverts")
+                Divert( intercept.intruder )
+                return true
             elseif reaction == INTERCEPT_REACTIONS.Stop then
-                -- intruder lands ...
-                if (pg ~= nil) then
-                    pg:interceptInactive()
-                    inactiveMenus( pg )
-                    if (pg.aiReactionAssist) then
-                        MessageTo( intercept.interceptor, AirPolicing.Assistance.AiLandingInstruction, AirPolicing.Assistance.Duration )
-                    end
-                    if (pg.aiReactionAssistAudio) then
-                        MessageTo( intercept.interceptor, AirPolicing.Assistance.AiLandingInstructionAudio )
-                        delayAudio(AirPolicing.Assistance.AiLandingInstructionAudioTime)
-                    end
-                end
+                Trace("onAiWasIntercepted-"..icptorName.." :: " .. g.GroupName .. " lands")
+                LandHere( intercept.intruder )
+                return true
             elseif reaction == INTERCEPT_REACTIONS.Follow then
-                -- intruder complies and follows interceptor ...
-                if (pg ~= nil) then
-                    pg:interceptControlling()
-                    controllingInterceptMenus( pg, ig, ai )
-                    if (pg.aiReactionAssist) then
-                        MessageTo( intercept.interceptor, AirPolicing.Assistance.AiComplyingInstruction, AirPolicing.Assistance.Duration )
-                    end
-                    if (pg.aiReactionAssistAudio) then
-                        MessageTo( intercept.interceptor, AirPolicing.Assistance.AiComplyingInstructionAudio )
-                        delayAudio(AirPolicing.Assistance.AiComplyingInstructionAudioTime)
-                    end
+                Trace("onAiWasIntercepted-"..icptorName.." :: "..ig.GroupName.." follows interceptor")
+                TaskFollow( intercept.intruder, intercept.interceptor, FollowOffsetLimits:New()) -- todo consider setting offset limit as configurable
+                return true
+            end
+            Warning("onAiWasIntercepted-" .. icptorName .. " :: unresolved reaction: " .. tostring(gReaction))
+            return false
+        end
+
+        if (reaction == INTERCEPT_REACTIONS.None) then
+            -- intruder ignores order ...
+            Trace("Interception-"..icptorName.." :: "..ig.GroupName.." ignores interceptor")
+            if (pu ~= nil) then
+                pu:interceptInactive()
+                inactiveMenus( pu )
+                if (pu.aiReactionAssist) then
+                    MessageTo( intercept.interceptor, AirPolicing.Assistance.AiDisobeyingInstruction, AirPolicing.Assistance.Duration )
+                end
+                if (pu.aiReactionAssistAudio) then
+                    MessageTo( intercept.interceptor, AirPolicing.Assistance.AiDisobeyingInstructionAudio )
+                    delayAudio(AirPolicing.Assistance.AiDisobeyingInstructionAudioTime)
                 end
             end
+            return
+        end
 
-            if not applyReactionTo( ig, reaction) then
-                -- NOTE we should not reach this line!
-                Trace("Interception-"..icptorName.." :: HUH?! :: Unknown reaction: " .. tostring(reaction))
+        if (reaction == INTERCEPT_REACTIONS.Defensive1) then
+            -- intruder goes into defensive (1) state ...
+            if (pu ~= nil) then
+                pu:interceptInactive()
+                inactiveMenus( pu )
+                if (pu.aiReactionAssist) then
+                    MessageTo( intercept.interceptor, AirPolicing.Assistance.AiDisobeyingInstruction, AirPolicing.Assistance.Duration )
+                end
+                if (pu.aiReactionAssistAudio) then
+                    MessageTo( intercept.interceptor, AirPolicing.Assistance.AiDisobeyingInstructionAudio )
+                    delayAudio(AirPolicing.Assistance.AiDisobeyingInstructionAudioTime)
+                end
             end
+        elseif reaction == INTERCEPT_REACTIONS.Attack3 then
+            -- intruder gets aggressive ...
+            if (pu ~= nil) then
+                pu:interceptInactive()
+                inactiveMenus( pu )
+                if (pu.aiReactionAssist) then
+                    MessageTo( intercept.interceptor, AirPolicing.Assistance.AiAttackingInstruction, AirPolicing.Assistance.Duration )
+                end
+                if (pu.aiReactionAssistAudio) then
+                    MessageTo( intercept.interceptor, AirPolicing.Assistance.AiAttackingInstructionAudio )
+                    delayAudio(AirPolicing.Assistance.AiAttackingInstructionAudioTime)
+                end
+            end
+            applyReactionTo( ig, reaction )
+        elseif reaction == INTERCEPT_REACTIONS.Divert then
+            -- intruder disobeys, but diverts ...
+            if (pu ~= nil) then
+                pu:interceptInactive()
+                inactiveMenus( pu )
+                delayAudio(AirPolicing.Assistance.AiDisobeyDivertingInstructionAudioTime + 2)
+                Delay(1, 
+                    function()
+                        if (pu.aiReactionAssist) then
+                            MessageTo( intercept.interceptor, AirPolicing.Assistance.AiDisobeyDivertingInstruction, AirPolicing.Assistance.Duration )
+                        end
+                        if (pu.aiReactionAssistAudio) then
+                            MessageTo( intercept.interceptor, AirPolicing.Assistance.AiDisobeyDivertingInstructionAudio )
+                        end
+                    end)
+            end
+        elseif reaction == INTERCEPT_REACTIONS.Stop then
+            -- intruder lands ...
+            if (pu ~= nil) then
+                pu:interceptInactive()
+                inactiveMenus( pu )
+                if (pu.aiReactionAssist) then
+                    MessageTo( intercept.interceptor, AirPolicing.Assistance.AiLandingInstruction, AirPolicing.Assistance.Duration )
+                end
+                if (pu.aiReactionAssistAudio) then
+                    MessageTo( intercept.interceptor, AirPolicing.Assistance.AiLandingInstructionAudio )
+                    delayAudio(AirPolicing.Assistance.AiLandingInstructionAudioTime)
+                end
+            end
+        elseif reaction == INTERCEPT_REACTIONS.Follow then
+            -- intruder complies and follows interceptor ...
+            if (pu ~= nil) then
+                pu:interceptControlling()
+                controllingInterceptMenus( pu, ig, intercept )
+                if (pu.aiReactionAssist) then
+                    MessageTo( intercept.interceptor, AirPolicing.Assistance.AiComplyingInstruction, AirPolicing.Assistance.Duration )
+                end
+                if (pu.aiReactionAssistAudio) then
+                    MessageTo( intercept.interceptor, AirPolicing.Assistance.AiComplyingInstructionAudio )
+                    delayAudio(AirPolicing.Assistance.AiComplyingInstructionAudioTime)
+                end
+            end
+        end
 
-            -- apply escort reactions ...
+        if not applyReactionTo( ig, reaction) then
+            -- NOTE we should not reach this line!
+            Trace("Interception-"..icptorName.." :: HUH?! :: Unknown reaction: " .. tostring(reaction))
+        end
+
+        -- apply escort reactions ...
 
 --Debug("onAiWasIntercepted :: reactions: " .. DumpPretty(reactions))
 
-            for escortName, reaction in pairs(reactions) do
-                local eGroup = getGroup(escortName)
-                local eReaction = nil
-                if eGroup then
-                    eReaction = reactions[escortName]
-                                or intruderReaction 
-                                or INTERCEPT_REACTIONS.None
-                    if not applyReactionTo( eGroup, eReaction ) then
-                        Trace("Interception-"..icptorName.." :: HUH?! :: Unknown escort reaction: " .. tostring(eReaction))
-                    elseif eReaction == INTERCEPT_REACTIONS.Attack3 then
-                        Trace("Interception-"..icptorName.." :: Escort (" .. escortName .. ") attacks!")
-                        Delay(audioDelay,
-                            function()
-                                if (pg.aiReactionAssist) then
-                                    MessageTo( intercept.interceptor, AirPolicing.Assistance.AiEscortAttacks, AirPolicing.Assistance.Duration )
-                                end
-                                if (pg.aiReactionAssistAudio) then
-                                    MessageTo( intercept.interceptor, AirPolicing.Assistance.AiEscortAttacksAudio )
-                                    delayAudio(AirPolicing.Assistance.AiEscortAttacksAudioTime)
-                                end
-                            end)
-                    end
+        for escortName, reaction in pairs(reactions) do
+            local eGroup = getGroup(escortName)
+            local eReaction = nil
+            if eGroup then
+                eReaction = reactions[escortName]
+                            or intruderReaction 
+                            or INTERCEPT_REACTIONS.None
+                if not applyReactionTo( eGroup, eReaction ) then
+                    Trace("Interception-"..icptorName.." :: HUH?! :: Unknown escort reaction: " .. tostring(eReaction))
+                elseif eReaction == INTERCEPT_REACTIONS.Attack3 then
+                    Trace("Interception-"..icptorName.." :: Escort (" .. escortName .. ") attacks!")
+                    Delay(audioDelay,
+                        function()
+                            if (pu.aiReactionAssist) then
+                                MessageTo( intercept.interceptor, AirPolicing.Assistance.AiEscortAttacks, AirPolicing.Assistance.Duration )
+                            end
+                            if (pu.aiReactionAssistAudio) then
+                                MessageTo( intercept.interceptor, AirPolicing.Assistance.AiEscortAttacksAudio )
+                                delayAudio(AirPolicing.Assistance.AiEscortAttacksAudioTime)
+                            end
+                        end)
                 end
             end
+        end
 
-        end)
+    end)
   
 end
 
 _debugTriggerOnAiWasInterceptedFunction = onAiWasIntercepted
 
-local function beginIntercept( pg, igInfo ) -- ig = intruder group
+local function beginIntercept( pu, igInfo ) -- ig = intruder group
     
-    pg:interceptEstablishing( igInfo.group )
-    if (pg.lookAgainMenu ~= nil) then
-        pg.lookAgainMenu:Remove()
+    pu:interceptEstablishing( igInfo.group )
+    if (pu.lookAgainMenu ~= nil) then
+        pu.lookAgainMenu:Remove()
     end
 
     local options = InterceptionOptions:New()
-        :WithAssistance( pg.interceptAssist )
-        :WithAudioAssistance( pg.interceptAssistAudio )
-        :WithAiReactionAssistance( pg.aiReactionAssistance )
-        :WithAiReactionAudioAssistance( pg.aiReactionAssistAudio )
+        :WithAssistance( pu.interceptAssist )
+        :WithAudioAssistance( pu.interceptAssistAudio )
+        :WithAiReactionAssistance( pu.aiReactionAssistance )
+        :WithAiReactionAudioAssistance( pu.aiReactionAssistAudio )
 
     if (options.OnFollowMe.debugTimeoutTrigger ~= nil) then
-      Trace("beginIntercept :: uses AI intercept debugging ...")
+        Trace("beginIntercept :: uses AI intercept debugging ...")
     end
-    local ai = _ActiveIntercept:New( igInfo.group, pg.group )
+    local ai = _ActiveIntercept:New( igInfo.group, pu.unit )
     OnInterception(
         igInfo.group,
         function( intercept ) 
-            onAiWasIntercepted( intercept, igInfo.group, pg )
+            onAiWasIntercepted( intercept, igInfo.group, pu )
         end, 
         options:WithActiveIntercept( ai ))
 
-    establishInterceptMenus( pg, igInfo.group, ai )
+    establishInterceptMenus( pu, igInfo.group, ai )
 
 end
 
-local function menuSeparator( pg, parentMenu )
+local function menuSeparator( pu, parentMenu )
     function ignore() end
-    MENU_GROUP_COMMAND:New(pg.group, "-----", parentMenu, ignore)
+    MENU_GROUP_COMMAND:New(pu.group, "-----", parentMenu, ignore)
 end
 
 function GetSpottedFlights( source, radius, coalitions )
 
-    local group = getGroup(source)
-    if not group then
-        Warning("GetSpottedFlights :: cannot resolve group from " .. Dump(source) .. " :: EXITS")
-        return 0, {}
+    local group = nil
+    local unit = getUnit(source)
+    if not unit then
+        group = getGroup(source)
+        if not group then
+            Warning("GetSpottedFlights :: cannot resolve group from " .. Dump(source) .. " :: EXITS")
+            return 0, {}
+        end
     end
 
     if radius == nil then
         radius = AirPolicingOptions.scanRadius
     end
-    local zone = ZONE_UNIT:New(group.GroupName.."-scan", group, radius)
-    local sourceCoordinate =  group:GetCoordinate()
+    local zone = nil
+    local sourceCoordinate = nil
+    if unit then
+        zone = ZONE_UNIT:New(unit:GetName().."-scan", unit, radius)
+        sourceCoordinate = unit:GetCoordinate()
+    else
+        zone = ZONE_GROUP:New(group.GroupName.."-scan", group, radius)
+        sourceCoordinate =  group:GetCoordinate()
+    end
 
     local groups = SET_GROUP:New()
     if coalitions then
@@ -2033,26 +2075,32 @@ function GetSpottedFlights( source, radius, coalitions )
     local countflights = 0
 
     -- ensure plane spotting is OFF until player takes off ...
-    if not group:InAir() then
+    if (unit and not unit:InAir()) or (group and not group:InAir()) then
         return countflights, flights end
 
     groups:ForEachGroupAlive(
         function(g)
 
+            local traceName = nil
+            if unit then 
+                traceName = unit:GetName() 
+            else
+                traceName = group.GroupName
+            end
             if (group == g or not g:InAir() or not CanBeIntercepted(g)) then 
-                Trace("GetSpottedFlights-" .. group.GroupName .. " :: group ".. g.GroupName .." is source, or filtered out :: IGNORES")
+                Trace("GetSpottedFlights-" .. traceName .. " :: group ".. g.GroupName .." is source, or filtered out :: IGNORES")
                 return 
             end
             
             if (escorts:isRegisteredEscort(g)) then
                 -- this is an escort group and its client group was already included; ignore ...
-                Trace("GetSpottedFlights-" .. group.GroupName .. " :: group ".. g.GroupName .." is already registered as escort :: IGNORES")
+                Trace("GetSpottedFlights-" .. traceName .. " :: group ".. g.GroupName .." is already registered as escort :: IGNORES")
                 return
             end
 
             local intruderCoordinate = g:GetCoordinate()
             if (not sourceCoordinate:IsLOS(intruderCoordinate)) then 
-                Trace("GetSpottedFlights-"..group.GroupName.." :: group "..g.GroupName.." is obscured (no line of sight)")
+                Trace("GetSpottedFlights-" .. traceName .. " :: group "..g.GroupName.." is obscured (no line of sight)")
                 return 
             end
             
@@ -2062,13 +2110,13 @@ function GetSpottedFlights( source, radius, coalitions )
             if (verticalDistance >= 0) then
                 -- intruder is level or above interceptor (easier to detect - unfortunately we can't account for clouds) ...
                 if (verticalDistance > radius) then 
-                    Trace("GetSpottedFlights-"..group.GroupName.." :: group "..g.GroupName.." is too high")
+                    Trace("GetSpottedFlights-" .. traceName .. " :: group "..g.GroupName.." is too high")
                     return 
                 end
             else 
                 -- intruder is below interceptor (harder to detect) TODO account for lighting conditions? ...
                 if (math.abs(verticalDistance) > radius * 0.65 ) then
-                    Trace("GetSpottedFlights-"..group.GroupName.." :: group "..g.GroupName.." is too low")
+                    Trace("GetSpottedFlights-" .. traceName .. " :: group "..g.GroupName.." is too low")
                     return 
                 end
             end
@@ -2077,14 +2125,14 @@ function GetSpottedFlights( source, radius, coalitions )
             local isClient, escort = escorts:isClient(g)
             if (isClient) then
                 -- this group is escorted; merge its escort and remove escort group from list of escorts ...
-                Trace("flightsMenus-"..group.GroupName.." :: group "..g.GroupName.." is escorted by " .. escort.GroupName .. " :: MERGES")
+                Trace("flightsMenus-" .. traceName .. " :: group "..g.GroupName.." is escorted by " .. escort.GroupName .. " :: MERGES")
                 escortName = escort.GroupName
                 escorts[escort.GroupName] = nil
             end
 
             local info = nil
-            local rLoc = GetRelativeLocation( group, g )
-            local client = GetEscortClientGroup(g)
+            local rLoc = GetRelativeLocation( unit or group, g )
+            local client = GetEscortClientGroup( g )
 
             if client then
                 -- this group is escorting another 'client' group; stash it for now and look for client group ...
@@ -2096,7 +2144,7 @@ function GetSpottedFlights( source, radius, coalitions )
                     escortingGroup = client.GroupName
                 } 
                 escorts:add(g, info)
-                Trace("GetSpottedFlights-"..group.GroupName.." :: group "..g.GroupName.." is escorting: ".. client.GroupName .."  :: STASHED")
+                Trace("GetSpottedFlights-" .. traceName .. " :: group "..g.GroupName.." is escorting: ".. client.GroupName .."  :: STASHED")
             else
                 info = { 
                     text = rLoc.ToString(),
@@ -2105,7 +2153,7 @@ function GetSpottedFlights( source, radius, coalitions )
                     reaction = nil,
                     escortingGroup = escortName,
                 } 
-                Trace("GetSpottedFlights-"..group.GroupName.." :: group "..g.GroupName.." is included")
+                Trace("GetSpottedFlights-" .. traceName .. " :: group "..g.GroupName.." is included")
                 flights[g.GroupName] = info
                 countflights = countflights+1
             end
@@ -2117,7 +2165,7 @@ function GetSpottedFlights( source, radius, coalitions )
         for escortName, info in pairs(escorts) do
             local g = GROUP:FindByName(escortName)
             if g then
-                local rLoc = GetRelativeLocation( group, g )
+                local rLoc = GetRelativeLocation( unit or group, g )
                 local info = { 
                     text = rLoc.ToString(), 
                     group = g,
@@ -2136,114 +2184,116 @@ function GetSpottedFlights( source, radius, coalitions )
 
 end
 
-local function intrudersMenus( pg )
+local function intrudersMenus( pu )
 
-    local countIntruders, intruders = GetSpottedFlights( pg.group )
+    local countIntruders, intruders = GetSpottedFlights( pu.unit )
 
     -- remove existing intruder menus and build new ones ...
-    if (#pg.intruderMenus > 0) then
-        for k,v in pairs(pg.intruderMenus) do
+    if (#pu.intruderMenus > 0) then
+        for k,v in pairs(pu.intruderMenus) do
             v:Remove()
         end
     end
     if (countIntruders == 0) then
-        if (pg.interceptAssist) then
-            MessageTo(pg.group, "no nearby flights found", 4)
+        if (pu.interceptAssist) then
+            MessageTo(pu.unit, "no nearby flights found", 4)
         end
         return
     end
     
-    if (pg:isInterceptInactive()) then
-        pg.interceptMenu:Remove()
-        pg.lookAgainMenu = MENU_GROUP_COMMAND:New(pg.group, "SCAN AREA again", pg.mainMenu, intrudersMenus, pg)
+    if (pu:isInterceptInactive()) then
+        pu.interceptMenu:Remove()
+        pu.lookAgainMenu = MENU_GROUP_COMMAND:New(pu.group, "SCAN AREA again", pu.mainMenu, intrudersMenus, pu)
     end
     local intruderMenus = {}
     for k, info in pairs(intruders) do 
         if isTable(info) then
-            table.insert(intruderMenus, MENU_GROUP_COMMAND:New(pg.group, info.text, pg.mainMenu, beginIntercept, pg, info))
+            table.insert(intruderMenus, MENU_GROUP_COMMAND:New(pu.group, info.text, pu.mainMenu, beginIntercept, pu, info))
         end
     end
-    pg:interceptReady(intruderMenus)
-    if (pg.interceptAssist) then
-        MessageTo(pg.group, string.format( AirPolicing.Assistance.GroupsSpottedInstruction, countIntruders))
+    pu:interceptReady(intruderMenus)
+    if (pu.interceptAssist) then
+        MessageTo(pu.unit, string.format( AirPolicing.Assistance.GroupsSpottedInstruction, countIntruders))
     end
-    if (pg.interceptAssistAudio) then
-        MessageTo(pg.group, AirPolicing.Assistance.GroupsSpottedInstructionAudio)
+    if (pu.interceptAssistAudio) then
+        MessageTo(pu.unit, AirPolicing.Assistance.GroupsSpottedInstructionAudio)
     end
 end
 
-local function buildSOFMenus( pg )
+local function buildSOFMenus( pu )
     -- todo (add ground groups)
 end
 
-function optionsMenus( pg )
+local function optionsMenus( pu )
 
-    local optionsMenu = nil
-    if (AirPolicing.Assistance.IsAllowed) then -- currently the OPTIONS menu only contains assistance options 
-        optionsMenu = MENU_GROUP:New(pg.group, "OPTIONS", pg.mainMenu)
+    if not AirPolicing.Assistance.IsAllowed then -- currently the OPTIONS menu only contains assistance options 
+        return end
+
+    if pu.optionsMenu == nil then 
+        pu.optionsMenu = MENU_GROUP:New(pu.group, "OPTIONS", pu.mainMenu)
     end
 
     local function toggleInterceptAssist()
-        pg.interceptAssist = not pg.interceptAssist
+        pu.interceptAssist = not pu.interceptAssist
         updateOptionsMenu()
     end
 
     local function toggleInterceptAssistAudio()
-        pg.interceptAssistAudio = not pg.interceptAssistAudio
+        pu.interceptAssistAudio = not pu.interceptAssistAudio
         updateOptionsMenu()
     end
 
     local function toggleSofAssist()
-        pg.sofAssist = not pg.sofAssist
+        pu.sofAssist = not pu.sofAssist
         updateOptionsMenu()
     end
 
     local function toggleSofAssistAudio()
-        pg.sofAssistAudio = not pg.sofAssistAudio
+        pu.sofAssistAudio = not pu.sofAssistAudio
         updateOptionsMenu()
     end
 
     local function toggleAiReaactionAssist()
-        pg.aiReactionAssist = not pg.aiReactionAssist
+        pu.aiReactionAssist = not pu.aiReactionAssist
         updateOptionsMenu()
     end
 
     local function addOptionsMenus()
-        Trace("updateOptionsMenus :: Updates options menu (interceptAssist="..tostring(pg.interceptAssist).."; sofAssist="..tostring(pg.sofAssist)..")")
-        optionsMenu:RemoveSubMenus()
+        Trace("updateOptionsMenus :: Updates options menu (interceptAssist="..tostring(pu.interceptAssist).."; sofAssist="..tostring(pu.sofAssist)..")")
+        pu.optionsMenu:RemoveSubMenus()
 
         if (not AirPolicing.Assistance.IsAllowed) then
             return end
 
-        if (pg.interceptAssist) then
-            MENU_GROUP_COMMAND:New(pg.group, "Turn OFF intercept assistance", optionsMenu, toggleInterceptAssist)
+        if (pu.interceptAssist) then
+            MENU_GROUP_COMMAND:New(pu.group, "Turn OFF intercept assistance", pu.optionsMenu, toggleInterceptAssist)
         else
-            MENU_GROUP_COMMAND:New(pg.group, "ACTIVATE intercept assistance", optionsMenu, toggleInterceptAssist)
+            MENU_GROUP_COMMAND:New(pu.group, "ACTIVATE intercept assistance", pu.optionsMenu, toggleInterceptAssist)
         end
 
-        if (pg.aiReactionAssist) then
-            MENU_GROUP_COMMAND:New(pg.group, "Turn OFF AI reaction assistance", optionsMenu, toggleAiReaactionAssist)
+        if (pu.aiReactionAssist) then
+            MENU_GROUP_COMMAND:New(pu.group, "Turn OFF AI reaction assistance", pu.optionsMenu, toggleAiReaactionAssist)
         else
-            MENU_GROUP_COMMAND:New(pg.group, "ACTIVATE AI reaction assistance", optionsMenu, toggleAiReaactionAssist)
+            MENU_GROUP_COMMAND:New(pu.group, "ACTIVATE AI reaction assistance", pu.optionsMenu, toggleAiReaactionAssist)
         end
 
-        if (pg.interceptAssistAudio) then
-            MENU_GROUP_COMMAND:New(pg.group, "Turn OFF verbal assistance", optionsMenu, toggleInterceptAssistAudio)
+        if (pu.interceptAssistAudio) then
+            MENU_GROUP_COMMAND:New(pu.group, "Turn OFF verbal assistance", pu.optionsMenu, toggleInterceptAssistAudio)
         else
-            MENU_GROUP_COMMAND:New(pg.group, "ACTIVATE verbal assistance", optionsMenu, toggleInterceptAssistAudio)
+            MENU_GROUP_COMMAND:New(pu.group, "ACTIVATE verbal assistance", pu.optionsMenu, toggleInterceptAssistAudio)
         end
 --[[
     TODO add SoF assist options menu
-        if (pg.sofAssist) then
-            MENU_GROUP_COMMAND:New(pg.group, "Turn OFF Show-of-Force assistance", optionsMenu, toggleSofAssist, false)
+        if (pu.sofAssist) then
+            MENU_GROUP_COMMAND:New(pu.group, "Turn OFF Show-of-Force assistance", optionsMenu, toggleSofAssist, false)
         else
-            MENU_GROUP_COMMAND:New(pg.group, "ACTIVATE Show-of-Force assistance", optionsMenu, toggleSofAssist, true)
+            MENU_GROUP_COMMAND:New(pu.group, "ACTIVATE Show-of-Force assistance", optionsMenu, toggleSofAssist, true)
         end
 
-        if (pg.sofAssist) then
-            MENU_GROUP_COMMAND:New(pg.group, "Turn OFF Show-of-Force assistance", optionsMenu, toggleSofAssist, false)
+        if (pu.sofAssist) then
+            MENU_GROUP_COMMAND:New(pu.group, "Turn OFF Show-of-Force assistance", optionsMenu, toggleSofAssist, false)
         else
-            MENU_GROUP_COMMAND:New(pg.group, "ACTIVATE Show-of-Force assistance", optionsMenu, toggleSofAssist, true)
+            MENU_GROUP_COMMAND:New(pu.group, "ACTIVATE Show-of-Force assistance", optionsMenu, toggleSofAssist, true)
         end
 ]]--
     end
@@ -2256,32 +2306,104 @@ end
 
 makeOptionsMenus = optionsMenus
 
-function inactiveMenus( pg )
-
-    pg:interceptInactive()
-    pg.mainMenu:RemoveSubMenus()
-    makeOptionsMenus( pg )
-    pg.interceptMenu = MENU_GROUP_COMMAND:New(pg.group, "SCAN AREA for nearby flights", pg.mainMenu, intrudersMenus, pg)
+local function inactiveMenus( pu )
+    pu:interceptInactive()
+    pu.mainMenu:RemoveSubMenus()
+    makeOptionsMenus( pu )
+    pu.interceptMenu = MENU_GROUP_COMMAND:New(pu.group, "SCAN AREA for nearby flights", pu.mainMenu, intrudersMenus, pu)
 end
 
 makeInactiveMenus = inactiveMenus
 
-function PolicingGroup:New( group, options )
+function policeUnit:New(unit, options)
+    local pu = routines.utils.deepCopy(policeUnit)
+    pu.unit = unit
+    pu.playerName = unit:GetPlayerName()
+    pu.interceptAssist = options.interceptAssist
+    pu.interceptAssistAudio = options.interceptAssistAudio
+    pu.aiReactionAssist = options.aiReactionAssist
+    pu.aiReactionAssistAudio = options.aiReactionAssistAudio
+    pu.sofAssist = options.showOfForceAssist
+    pu.sofAssistAudio = options.showOfForceAssistAudio
 
-    if (PolicingGroup:isPolicing(group)) then error("Cannot register same policing group twice: '"..group.GroupName.."'") end
-    local pg = routines.utils.deepCopy(PolicingGroup)
+    -- main menu
+    local group = unit:GetGroup()
+    local playerName = unit:GetPlayerName()
+    pu.mainMenu = MENU_GROUP:New(group, playerName .. " - Policing")
+    return pu
+end
+
+local function addPoliceUnit(pg, unit, options)
+    local playerName = unit:GetPlayerName()
+    if not playerName then
+        return false end
+
+    if pg:isPoliceUnit(unit) then 
+        Trace("addPoliceUnit :: attempt to register same police unit/player twice :: EXITS")
+        return false
+    end
+    local pu = policeUnit:New(unit, options)
+    pu.pg = pg
+    pu.group = pg.group
+    pg.units[playerName] = pu
+    policeGroup.unitIndex[unit:GetName()] = pg
+    inactiveMenus( pu )
+    return true, pu
+end
+
+function policeGroup:getUnitPoliceGroup(unit)
+    return policeGroup.unitIndex[unit:GetName()]
+end
+
+local function removePoliceUnit(pu)
+    if pu.pg.units[pu.playerName] == nil then
+        return false end
+
+    pu.pg.units[pu.playerName] = nil
+    Trace("removePoliceUnit :: unit: " .. pu.unit:GetName() .. " :: player: " .. pu.playerName .. " :: PLAYER UNIT REMOVED")
+    pu:RemovePolicingMenu()
+    return true, pu
+end
+
+function policeGroup:New( group, options )
+    if policeGroup:isPolicing(group) then error("Cannot register same policing group twice: '"..group.GroupName.."'") end
+    local pg = routines.utils.deepCopy(policeGroup)
     pg.group = group
-    pg.mainMenu = MENU_GROUP:New(group, "Policing")
-    pg.interceptAssist = options.interceptAssist
-    pg.interceptAssistAudio = options.interceptAssistAudio
-    pg.aiReactionAssist = options.aiReactionAssist
-    pg.aiReactionAssistAudio = options.aiReactionAssistAudio
-    pg.sofAssist = options.showOfForceAssist
-    pg.sofAssistAudio = options.showOfForceAssistAudio
-    PolicingGroup:register(pg)
-    inactiveMenus( pg )
+    local units = group:GetUnits()
+    for _, unit in ipairs(units) do
+        if unit:GetPlayerName() ~= nil then
+            addPoliceUnit(pg, unit, options)
+        end
+    end
+    policeGroup:register(pg)
     return pg
+end
 
+function policeGroup:AddPoliceUnit(unit, options)
+    local group = unit:GetGroup()
+    local isPg, pg = policeGroup:isPolicing(group)
+--Debug("policeGroup:AddPoliceUnit :: pg: " .. DumpPretty(pg)) nisse
+    if not isPg then
+        pg = routines.utils.deepCopy(policeGroup)
+        pg.group = group
+        policeGroup:register(pg)
+    elseif policeGroup:isPoliceUnit(unit) then
+        error("Cannot register same police unit twice: ".. unit:GetName()) 
+        return
+    end
+    return addPoliceUnit(pg, unit, options)
+end
+
+function policeGroup:RemovePoliceUnit(unit, playerName)
+    local pg = policeGroup:getUnitPoliceGroup(unit)
+    if pg then 
+        playerName = playerName or unit:GetPlayerName()
+        local pu = pg.units[playerName]
+        if pu then
+            return removePoliceUnit(pu)
+        end
+    end
+    return false
 end
 
 AirPolicingOptions = {
@@ -2294,6 +2416,7 @@ AirPolicingOptions = {
     aiReactionAssistAudio = false,
     showOfForceAssist = false,
     showOfForceAssistAudio = false,
+    policeUnitState = false, -- when set each unit in group will have own "Policing" menu 
 
     GetAiReactionDelay = function( aiGroup )
         -- todo consider using different AI reaction delays for different types of AI groups (ships might take longer to react, cocky fighter pilots might be insubordinate)
@@ -2422,30 +2545,81 @@ function AirPolicingOptions:WithAiInterceptorDebugging( timeout )
   return self
 end
 
-function AirPolicingOptions:WithTracing( value )
-    value = value or true
-    AirPolicing.Trace = value
+function AirPolicingOptions:WithTrace( value )
+    if value == nil then value = true end
     DCAFCore.Trace = DCAFCore.Trace or value
     return self
 end
 
+function AirPolicingOptions:WithIndividualPoliceUnits(value)
+    if value == nil then value = true end
+    self.policeUnitState = value
+end
+
 function EnableAirPolicing( options ) -- todo consider allowing filtering which groups/type of groups are to be policing
     options = options or AirPolicingOptions
-    MissionEvents:OnPlayerEnteredAirplane(
-        function( data )
-            local group = getGroup( data.IniGroupName )
-            if (group ~= null) then 
-                if (PolicingGroup:isPolicing(group)) then
-                    Trace("EnableAirPolicing :: player ("..data.IniPlayerName..") entered "..data.IniUnitName.." :: group is already air police: "..data.IniGroupName)
-                    return
-                end
-                PolicingGroup:New(group, options)
-                Trace("EnableAirPolicing :: player ("..data.IniPlayerName..") entered "..data.IniUnitName.." :: air policing options added for group "..data.IniGroupName)
-            end
-    
-        end)
+
+    -- add policing features for player as he/she enters airplane ...
+    MissionEvents:OnPlayerEnteredAirplane(function( event )
+        local unit = event.IniUnit
+        if policeGroup:AddPoliceUnit(unit, options) then
+            Trace("EnableAirPolicing :: player ("..event.IniPlayerName..") entered "..event.IniUnitName.." as police unit of group " .. event.IniGroupName)
+        end
+        -- local group = getGroup( event.IniGroupName ) obsolete
+        -- if (group ~= null) then 
+        --     local isPolicing, pg = policeGroup:isPolicing(group)
+        --     if (isPolicing) then
+        --         if not AirPolicing.policeUnitState then
+        --             Trace("EnableAirPolicing :: player ("..event.IniPlayerName..") entered "..event.IniUnitName.." :: group is already air police: "..event.IniGroupName)
+        --             return
+        --         end
+        --         Trace("EnableAirPolicing :: player ("..event.IniPlayerName..") entered "..event.IniUnitName.." :: group is already air police: "..event.IniGroupName)
+        --         pg:AddPoliceUnit(event.IniUnit, options)
+        --         return
+        --     end
+        --     policeGroup:New(group, options)
+        --     Trace("EnableAirPolicing :: player ("..event.IniPlayerName..") entered "..event.IniUnitName.." :: air policing options added for group "..event.IniGroupName)
+        -- end
+    end)
+
+    -- remove policing features for player as he/she leaves airplane ...
+    MissionEvents:OnPlayerLeftAirplane(function( event )
+        if policeGroup:RemovePoliceUnit(event.IniUnit) then
+            Trace("EnableAirPolicing :: player ("..event.IniPlayerName..") left "..event.IniUnitName.." :: removed policing options for " .. event.IniGroupName)
+        end
+    end)
+
+    MissionEvents:OnUnitKilled(function( event )
+        if not event.TgtUnit then
+            return end
+
+        local playerName = event.IniPlayerName or event.TgtUnit:GetPlayerName()
+        if playerName and policeGroup:RemovePoliceUnit(event.TgtUnit, playerName) then
+            Trace("EnableAirPolicing :: player (" .. playerName .. ") was killed in unit " .. event.TgtUnit:GetName() .. " :: removed players' policing options for group " .. event.TgtUnit:GetGroup().GroupName)
+        end
+    end)
+
+    MissionEvents:OnUnitCrashed(function( event )
+        local wasRemoved, pu = policeGroup:RemovePoliceUnit(event.IniUnit, event.IniPlayerName)
+        if wasRemoved then
+            Trace("EnableAirPolicing :: player (" .. pu.playerName .. ") crashed in unit " .. event.IniUnit:GetName() .. " :: removed players' policing options for group " .. pu.group.GroupName)
+        end
+    end)
+
+    MissionEvents:OnEjection(function( event )
+Debug("nisse - MissionEvents:OnEjected :: event: " .. DumpPretty(event))      
+        if not event.IniUnit then
+            return end
+
+        local playerName = event.IniPlayerName or event.IniUnit:GetPlayerName()
+        if playerName and policeGroup:RemovePoliceUnit(event.IniUnit, playerName) then
+            Trace("EnableAirPolicing :: player (" .. playerName .. ") ejected from unit " .. event.IniUnitName .. " :: removed players' policing options for group " .. event.IniGroupName)
+        end
+    end)
+
     Trace("AirPolicing was enabled")
 end
+
 
 
 -------------------------- DEBUGGING ---------------------------
@@ -2466,14 +2640,14 @@ function INTERCEPT_STATE:ToString(value)
     return "(unknown)"
 end
 
-function AirPolicingOptions:WithDebugging( value )
+function AirPolicingOptions:WithDebug( value )
     value = value or true
     AirPolicing.Debug = value
     DCAFCore.Debug = DCAFCore.Debug or value
     return self
 end
 
-function AirPolicingOptions:WithDebuggingToUI( value )
+function AirPolicingOptions:WithDebugToUI( value )
     value = value or true
     DCAFCore.DebugToUI = value
     return self
@@ -2636,8 +2810,8 @@ function DebugGetSpottedFlights( source ) -- nisse Remove when debugged
     
 end
 
-function DebugInvokeLocal_beginIntercept(pg, igInfo )
-    beginIntercept( pg, igInfo )
+function DebugInvokeLocal_beginIntercept(pu, igInfo )
+    beginIntercept( pu, igInfo )
 end
 
 ----------------------- END -----------------------
@@ -2649,3 +2823,24 @@ Trace("DCAF.AirPolicing was loaded")
 MissionEvents:OnWeaponFired(function(event) -- nisse
     Debug("nisse - MissionEvents:OnWeaponFired :: event: " .. DumpPretty(event))
 end)
+
+
+
+
+
+--[[
+    todo:
+        test:
+            A. Assert menus are created and removed as players enters/leaves group
+                1. Two players enter same group
+                2. Assert both players have individual F10 Policing menu
+                3. One player leaves group
+                4. Remaining player asserts only his Polcing menu remains
+            
+            B. Assert menus are removed when player gets destroyed
+                1. Two players enter same group
+                2. Assert both players have individual F10 Policing menu
+                3. One player gets destroyed (by SAM, AI flight or friendly, third, player)
+                4. Remaining player asserts only his Polcing menu remains
+
+]]--
