@@ -1638,6 +1638,7 @@ function policeGroup:register(pg)
         coalitionPolicing = {}
         _policingGroups[coalition] = coalitionPolicing
     end
+    pg.coalitionPolicing = coalitionPolicing
     coalitionPolicing[pg.group.GroupName] = pg
     return pg
 end
@@ -2399,8 +2400,14 @@ function policeGroup:RemovePoliceUnit(unit, playerName)
     if pg then 
         playerName = playerName or unit:GetPlayerName()
         local pu = pg.units[playerName]
-        if pu then
-            return removePoliceUnit(pu)
+        if pu and removePoliceUnit(pu) then
+            local units = pg.units
+Debug("nisse - policeGroup:RemovePoliceUnit :: units: " .. DumpPretty(units))
+            if not units or #units == 0 then
+                pg.coalitionPolicing[pg.group.GroupName] = nil
+                Trace("policeGroup:RemovePoliceUnit-".. unit:GetName() .." :: removed last police unit of group :: POLICE GROUP REMOVED")
+            end
+            return true
         end
     end
     return false
@@ -2722,6 +2729,9 @@ function AirPolicing:AddDebugMenus( policingCoalition, scope )
         if policingGroups then
             local function getPlayers(info)
                 local units = info.group:GetUnits()
+                if not units then
+                    return "(none)" end
+
                 local s = ""
                 for _, unit in ipairs(units) do
                     if string.len(s) > 0 then
