@@ -10,6 +10,7 @@ DCAFCore = {
 }
 
 function isString( value ) return type(value) == "string" end
+function isBoolean( value ) return type(value) == "boolean" end
 function isNumber( value ) return type(value) == "number" end
 function isTable( value ) return type(value) == "table" end
 function isFunction( value ) return type(value) == "function" end
@@ -72,11 +73,14 @@ function MissionTime()
 function SecondsOfToday(missionTime)
     return _missionStartTime + missionTime or 0 end
 
-function MissionClockTime( short )
+function MissionClockTime( short, offset )
     if (short == nil) then
         short = true
     end
-    return UTILS.SecondsToClock( MissionTime(), short )
+    if not isNumber(offset) then
+        offset = 0
+    end
+    return UTILS.SecondsToClock( MissionTime() + offset, short )
 end
 
 local function log( rank, message )
@@ -187,7 +191,7 @@ function IsHeadingFor( source, target, maxDistance, tolerance )
     end
     sourceCoordinate = sourceUnit:GetCoordinate()
 
-    local nisse_targetName = nil
+    -- local nisse_targetName = nil
     local targetCoordinate = nil
     local targetUnit = getUnit(target)
     if targetUnit == nil then
@@ -196,10 +200,10 @@ function IsHeadingFor( source, target, maxDistance, tolerance )
             error("IsHeadingFor :: target coordinate could not be resolved from " .. Dump(target))
             return
         end
-        nisse_targetName = g.GroupName
+        -- nisse_targetName = g.GroupName
         targetCoordinate = g:GetCoordinate()
     else
-        nisse_targetName = targetUnit:GetName()
+        -- nisse_targetName = targetUnit:GetName()
         targetCoordinate = targetUnit:GetCoordinate()
     end
 
@@ -1163,8 +1167,23 @@ function GotoWaypoint( controllable, from, to, offset)
         Warning("GotoWaypoint :: 'to' is not a number :: EXITS")
         return
     end
-    offset = offset or 1
-    group:SetCommand(group:CommandSwitchWayPoint( from + offset, to + offset ))
+    if isNumber(offset) then
+        from = from + offset
+        to = to + offset
+    end
+    Trace("GotoWaypoint-" .. group.GroupName .. " :: goes direct from waypoint " .. tostring(from) .. " --> " .. tostring(to))
+    local dcsCommand = {
+        id = 'SwitchWaypoint',
+        params = {
+          fromWaypointIndex = from,
+          goToWaypointIndex = to,
+        },
+    }
+    if not group:IsAir() then
+        dcsCommand.id = "GoToWaypoint"
+    end
+    group:SetCommand( dcsCommand )
+    -- group:SetCommand(group:CommandSwitchWayPoint( from, to ))
 end
 
 function LandHere( controllable, category, coalition )
@@ -1379,7 +1398,6 @@ MissionEvents = {
     _unitDeadHandlers = {},
     _unitKilledHandlers = {},
     _unitCrashedHandlers = {},
-    _ejectedHandlers = {},
     _playerEnteredUnitHandlers = {},
     _playerLeftUnitHandlers = {},
     _ejectionHandlers = {},
@@ -1401,7 +1419,7 @@ end
 
 function _e:onEvent( event )
 local deep = DumpPrettyOptions:New():Deep() -- nisse
---Debug("_e:onEvent-? :: event: " .. DumpPretty(event))
+--Debug("_e:onEvent-? :: event: " .. DumpPretty(event)) -- nisse
 
     local function getTarget(event)
         local dcsTarget = event.target 

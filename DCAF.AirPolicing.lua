@@ -1093,7 +1093,7 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
         local intruderCoord = group:GetCoordinate()
         local foundInterceptor = nil
         
-        Trace("OnShowOfForce.findAircrafts-"..groupName.." :: found interceptors "..tostring(#interceptors).." (timestamp = "..tostring(timestamp)..")")
+        --Trace("OnShowOfForce.findAircrafts-"..groupName.." :: found interceptors "..tostring(#interceptors).." (timestamp = "..tostring(timestamp)..")")
 
         interceptors:ForEachGroup(
             function(interceptor)
@@ -1114,19 +1114,19 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
                 
                 local interceptorInfo = interceptorsInfo[interceptor.GroupName]
                 if isTooEarly(interceptorInfo) then
-                    Trace("OnShowOfForce-"..groupName.." :: filters out interceptor (SOF is too early)")
+                    --Debug("OnShowOfForce-"..groupName.." :: filters out interceptor (SOF is too early)")
                     return 
                 end
 
                 local velocityKts = interceptor:GetVelocityKNOTS()
                 if (velocityKts < minSpeedKts) then
-                    Trace("OnShowOfForce-"..groupName.." :: filters out interceptor (too slow at "..tostring(velocityKts)..")")
+                    --Debug("OnShowOfForce-"..groupName.." :: filters out interceptor (too slow at "..tostring(velocityKts)..")")
                     return
                 end
                 local interceptorCoord = interceptor:GetCoordinate()
                 local distance = interceptorCoord:Get3DDistance(intruderCoord)
                 if (distance > radius) then 
-                    Trace("OnShowOfForce-"..groupName.." :: filters out "..interceptor.GroupName.." (vertically outside radius)")
+                    --Debug("OnShowOfForce-"..groupName.." :: filters out "..interceptor.GroupName.." (vertically outside radius)")
                     return 
                 end
                 if (interceptorInfo == nil) then
@@ -2404,12 +2404,11 @@ function policeGroup:RemovePoliceUnit(unit, playerName)
         local pu = pg.units[playerName]
         if pu and removePoliceUnit(pu) then
             local units = pg.units
-Debug("nisse - policeGroup:RemovePoliceUnit :: units: " .. DumpPretty(units))
             if not units or #units == 0 then
                 pg.coalitionPolicing[pg.group.GroupName] = nil
                 Trace("policeGroup:RemovePoliceUnit-".. unit:GetName() .." :: removed last police unit of group :: POLICE GROUP REMOVED")
             end
-            return true
+            return true, pu
         end
     end
     return false
