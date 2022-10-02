@@ -1725,6 +1725,7 @@ end
 local function controllingInterceptMenus( pu, ig, ai ) -- ig = intruder group; ai = _ActiveIntercept
 
     pu.mainMenu:RemoveSubMenus()
+    pu.optionsMenu = nil
 
     local function landHereCommand()
         local airbase = LandHere( ig )
@@ -2310,6 +2311,7 @@ makeOptionsMenus = optionsMenus
 local function inactiveMenus( pu )
     pu:interceptInactive()
     pu.mainMenu:RemoveSubMenus()
+    pu.optionsMenu = nil
     makeOptionsMenus( pu )
     pu.interceptMenu = MENU_GROUP_COMMAND:New(pu.group, "SCAN AREA for nearby flights", pu.mainMenu, intrudersMenus, pu)
 end
