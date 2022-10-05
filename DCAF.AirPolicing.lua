@@ -1,3 +1,5 @@
+--require "DCAF.Core"
+
 local _isDebuggingWithAiInterceptor = false -- nisse
 local _aiInterceptedBehavior = {}
 
@@ -162,8 +164,7 @@ end
 function AirPolicing:GetGroupDescription( group )
     group = getGroup(group)
     if (group == nil) then
-        Warning("AirPolicing:GetGroupDescription :: cannot resolve group from "..Dump(group).." :: EXITS")
-        return
+        return exitWarning("AirPolicing:GetGroupDescription :: cannot resolve group from "..Dump(group))
     end
 
     local description = self._aiGroupDescriptions[group.GroupName]
@@ -205,8 +206,7 @@ end
 function CanBeIntercepted( controllable )
     local group = getGroup(controllable)
     if (group == nil) then
-        Trace("CanBeIntercepted-?  :: group cannot be resolve :: EXITS")
-        return false
+        return exitWarning("CanBeIntercepted-?  :: group cannot be resolve", false)
     end
     local leadUnit = group:GetUnit(1)
     if (leadUnit:IsPlayer()) then  -- TOTEST -- this needs tp be testen on MP server
@@ -433,8 +433,8 @@ Debug("getIntrudersReactions :: #escorts= " .. tostring(#escorts))
 
     local function getGroupReaction( g, defaultGroup )
         if not g then
-            Trace("getIntrudersReactions.getGroupReaction-? :: cannot resolve intruder group from ".. Dump(intruder).." :: EXITS")
-            return getDefaultIntruderReaction( useDefault )
+            return exitWarning("getIntrudersReactions.getGroupReaction-? :: cannot resolve intruder group from ".. Dump(intruder),
+                               getDefaultIntruderReaction( useDefault ))
         end
 
         local behavior = getGroupBehavior( g )
@@ -479,10 +479,9 @@ local function setDefaultInterceptedBehavior( behavior )
     end
 
     for _, reaction in pairs(behavior) do
-      if (not INTERCEPT_REACTION:IsValid( reaction )) then
-          Trace("setDefaultInterceptedBehavior :: not a valid raction: "..Dump(reaction).." :: EXITS")
-          return self
-      end
+        if (not INTERCEPT_REACTION:IsValid( reaction )) then
+            return exitWarning("setDefaultInterceptedBehavior :: not a valid raction: "..Dump(reaction), self)
+        end
     end
     AirPolicing.DefaultInterceptedBehavior = behavior
     Trace("WithDefaultInterceptReaction :: set to " .. reaction) 
@@ -506,10 +505,9 @@ local function setDefaultShowOfForceBehavior( behavior )
     end
 
     for _, reaction in pairs(behavior) do
-      if (not INTERCEPT_REACTION:IsValid( reaction )) then
-          Trace("setDefaultInterceptedBehavior :: not a valid raction: "..Dump(reaction).." :: EXITS")
-          return self
-      end
+        if (not INTERCEPT_REACTION:IsValid( reaction )) then
+            return exitWarning("setDefaultInterceptedBehavior :: not a valid raction: "..Dump(reaction), self)
+        end
     end
     AirPolicing.DefaultInterceptedBehavior = behavior
     Trace("WithDefaultInterceptReaction :: set to " .. reaction) 
@@ -550,17 +548,14 @@ OnInsideGroupZoneDefaults =
 
 function OnInsideGroupZone( groupName, callback, options )
     if ( groupName == nil) then
-      Trace("OnInsideGroupZone-? :: Group name missing :: EXITS")
-      return 
+        return exitWarning("OnInsideGroupZone-? :: Group name missing")
     end
     if (callback == nil) then 
-      Trace("OnInsideGroupZone-"..groupName.." :: missing callback function :: EXITS")
-      return 
+        return exitWarning("OnInsideGroupZone-"..groupName.." :: missing callback function")
     end
     local monitoredGroup = GROUP:FindByName( groupName )
     if (monitoredGroup == nil) then 
-      Trace("OnInsideGroupZone-"..groupName.." :: intruder group not found :: EXITS")
-      return 
+        return exitWarning("OnInsideGroupZone-"..groupName.." :: intruder group not found")
     end
 
     options = options or OnInsideGroupZoneDefaults
@@ -572,8 +567,7 @@ function OnInsideGroupZone( groupName, callback, options )
     local unitNo = options.monitoredUnitNo or OnInsideGroupZoneDefaults.monitoredUnitNo
     local monitoredUnit = monitoredGroup:GetUnit(unitNo)
     if (monitoredUnit == nil) then 
-      Trace("OnInsideGroupZone-"..groupName.." :: monitored group unit #"..tostring(unitNo).." not found :: EXITS")
-      return 
+        return exitWarning("OnInsideGroupZone-"..groupName.." :: monitored group unit #"..tostring(unitNo))
     end
 
     local timer = nil
@@ -584,11 +578,11 @@ function OnInsideGroupZone( groupName, callback, options )
     local ar = options._activeIntercept
     --[[ todo Deal with unit getting killed (end monitoring)
     local groupDeadEvent = EVENT:OnEventForUnit( 
-      monitoredUnitName,
-      function()
-        Trace("OnInsideGroupZone-"..groupName.." :: Monitored unit () was killed :: EXITS")
-        stopTimerAfter = interval
-      end
+        monitoredUnitName,
+        function()
+            stopTimerAfter = interval
+            return exitWarning("OnInsideGroupZone-"..groupName.." :: Monitored unit () was killed")
+        end
       )
     ]]--
 
@@ -637,8 +631,7 @@ function OnInsideGroupZone( groupName, callback, options )
                 local distance = math.abs(unitUnitMSL - monitoredUnitMSL)
 
                 if (distance > zoneRadius) then 
-                    Trace("OnInsideGroupZone-"..unitName.." :: filters out "..unitName.." (vertically outside radius) :: EXITS")
-                    return 
+                    return exitWarning("OnInsideGroupZone-"..unitName.." :: filters out "..unitName.." (vertically outside radius)")
                 end
                 count = count+1
                 table.insert(detected, count, unit:GetName())
@@ -1632,6 +1625,7 @@ function policeGroup:isPoliceUnit(unit)
 end
 
 function policeGroup:register(pg)
+Debug("nisse - policeGroup:register :: pg: " .. DumpPretty(pg))
     local coalition = pg.group:GetCoalition()
     local coalitionPolicing = _policingGroups[coalition]
     if (coalitionPolicing == nil) then
@@ -2385,7 +2379,7 @@ end
 function policeGroup:AddPoliceUnit(unit, options)
     local group = unit:GetGroup()
     local isPg, pg = policeGroup:isPolicing(group)
---Debug("policeGroup:AddPoliceUnit :: pg: " .. DumpPretty(pg)) nisse
+--Debug("nisse - policeGroup:AddPoliceUnit :: pg: " .. DumpPretty(pg))
     if not isPg then
         pg = routines.utils.deepCopy(policeGroup)
         pg.group = group

@@ -18,6 +18,19 @@ function isClass( value, class ) return isTable(value) and value.ClassName == cl
 function isUnit( value ) return isClass(value, "UNIT") end
 function isGroup( value ) return isClass(value, "GROUP") end
 function isZone( value ) return isClass(value, "ZONE") end
+function isAssignedString( value )
+    if not isString(value) then
+        return false end
+
+    return string.len(value) > 0 
+end
+
+function swap(a, b)
+    local _ = a
+    a = b
+    b = _
+    return a, b
+end
 
 FeetPerNauticalMile = 6076.1155
 MetersPerNauticalMile = UTILS.NMToMeters(1)
@@ -44,6 +57,76 @@ function findFirstNonWhitespace( s, start )
         end
     end
     return nil
+end
+
+function copyTo(source, target)
+    for k,v in pairs(source) do
+        if target[k] == nil then
+            if isTable(v) then
+                target[k] = routines.utils.deepCopy(v)
+            else
+                target[k] = v
+            end
+        end
+    end
+    return target
+end
+
+function tableIndexOf( table, item )
+    if not isTable(table) then
+        error("indexOfItem :: unexpected type for table: " .. type(table)) end
+
+    if item == nil then
+        error("indexOfItem :: item was unassigned") end
+
+    for index, value in ipairs(table) do
+        if isFunction(item) and item(value) then
+            return index
+        elseif item == value then
+            return index
+        end
+    end
+    return -1
+end
+
+function TraceIgnore(message, ...)
+    Trace(message .. " :: IGNORES")
+    return arg
+end
+
+function exitTrace(message, ...)
+    Warning(message .. " :: EXITS")
+    return arg
+end
+
+function exitWarning(message, ...)
+    Warning(message .. " :: EXITS")
+    return arg
+end
+
+function activateNow( source )
+    local group = getGroup( source )
+    if not group then
+        return exitWarning("activateNow :: cannot resolve group from " .. Dump(source))
+    end
+    if not group:IsActive() then
+        group:Activate()
+    end
+    return group
+end
+
+function spawnNow( source )
+    local name = nil
+    if isGroup(source) then
+        name = source.GroupName
+    elseif isString(source) then
+        name = source
+    else
+        error("spawnNow :: source is unexpected type: " .. type(source)) end
+
+    local group = SPAWN:New( name ):Spawn()
+    activateNow( group ) -- hack. Not sure why the spawned group is not active but this fixes that
+    return group
 end
 
 function Delay( seconds, userFunction, data )
@@ -113,6 +196,35 @@ function Warning( message )
       MESSAGE:New("DCAF-WRN: "..message):ToAll()
     end
 end
+
+
+
+---------------------------- FILE SYSTEM -----------------------------
+
+-- https://www.geeks3d.com/hacklab/20210901/how-to-check-if-a-directory-exists-in-lua-and-in-python/
+
+files = {}
+
+function files.gettype( path )
+    local attributes = lfs.attributes( path )
+    if attributes then
+        return attributes.mode end
+    return nil
+end
+
+function files.isdir( path )
+    return files.gettype( path ) == "directory"
+end
+
+function files.isfile( path )
+    return files.gettype( path ) == "file"
+end
+
+function files.exists( path )
+    return file.gettype( path ) ~= nil
+end
+
+------------------------------------------------------------------
   
 
 --[[
@@ -191,7 +303,6 @@ function IsHeadingFor( source, target, maxDistance, tolerance )
     end
     sourceCoordinate = sourceUnit:GetCoordinate()
 
-    -- local nisse_targetName = nil
     local targetCoordinate = nil
     local targetUnit = getUnit(target)
     if targetUnit == nil then
@@ -200,10 +311,8 @@ function IsHeadingFor( source, target, maxDistance, tolerance )
             error("IsHeadingFor :: target coordinate could not be resolved from " .. Dump(target))
             return
         end
-        -- nisse_targetName = g.GroupName
         targetCoordinate = g:GetCoordinate()
     else
-        -- nisse_targetName = targetUnit:GetName()
         targetCoordinate = targetUnit:GetCoordinate()
     end
 
@@ -250,8 +359,7 @@ function GetEscortingGroups( source, subjectiveOnly )
     end
     local group = getGroup(source)
     if not group then
-        Warning("GetEscortingGroups :: cannot resolve group from " .. Dump(source) .. " :: EXITS")
-        return
+        return exitWarning("GetEscortingGroups :: cannot resolve group from " .. Dump(source))
     end
 
     local zone = ZONE_GROUP:New(group.GroupName.."-escorts", group, NauticalMilesToMeters(5))
@@ -302,11 +410,8 @@ function GetEscortClientGroup( source, maxDistance, resolveSubjective )
     end
     local group = getGroup(source)
     if not group then
-        Warning("GetEscortClientGroup :: cannot resolve group from " .. Dump(source) .. " :: EXITS")
-        return
+        return exitWarning("GetEscortClientGroup :: cannot resolve group from " .. Dump(source))
     end
-
---Debug("GetEscortClientGroup-" .. group.GroupName .. "..." )
 
     local zone = ZONE_GROUP:New(group.GroupName.."-escorts", group, maxDistance)
     local nearbyGroups = SET_GROUP:New()
@@ -368,16 +473,13 @@ end
 function GetOtherCoalitions( controllable, excludeNeutral )
     local group = getGroup( controllable )
     if (group == nil) then
-        Warning("GetOtherCoalitions :: group not found: "..Dump(controllable).." :: EXITS")
-        return
+        return exitWarning("GetOtherCoalitions :: group not found: "..Dump(controllable))
     end
 
     local c = group:GetCoalition()
 
     if excludeNeutral == nil then 
         excludeNeutral = false end
-
---Debug("GetOtherCoalitions :: coalition: " .. tostring(c)) -- nisse
 
     if c == "red" or c == coalition.side.RED then
         if excludeNeutral then 
@@ -432,8 +534,8 @@ function GetGroupSuperiority( a, b, aSize, aMissiles, bSize, bMissiles )
     end
     -- todo Would be great to check type of missiles here, depending on groups' distance from each other
     local missileRatio = (aMissiles / aSize) / (bMissiles / bSize)
-Debug("GetGroupSuperiority-"..aGroup.GroupName.." / "..bGroup.GroupName.." :: " .. string.format("size: %d / %d :: missiles: %d / %d", aSize, bSize, aMissiles, bMissiles)) -- nisse
-Debug("GetGroupSuperiority-"..aGroup.GroupName.." / "..bGroup.GroupName.." :: missileRatio: "..tostring(missileRatio)) -- nisse
+-- Debug("GetGroupSuperiority-"..aGroup.GroupName.." / "..bGroup.GroupName.." :: " .. string.format("size: %d / %d :: missiles: %d / %d", aSize, bSize, aMissiles, bMissiles)) -- nisse
+-- Debug("GetGroupSuperiority-"..aGroup.GroupName.." / "..bGroup.GroupName.." :: missileRatio: "..tostring(missileRatio)) -- nisse
     if (aSize < bSize) then 
         if missileRatio > 2 then
             -- A is smaller than B but a is strongly superior in armament ...
@@ -458,12 +560,10 @@ Sends a simple message to groups, clients or lists of groups or clients
 ]]--
 function MessageTo( recipient, message, duration )
     if (recipient == nil) then
-        Warning("MessageTo :: Recipient name not specified :: EXITS")
-        return
+        return exitWarning("MessageTo :: Recipient name not specified")
     end
     if (message == nil) then
-        Warning("MessageTo :: Message was not specified :: EXITS")
-        return
+        return exitWarning("MessageTo :: Message was not specified")
     end
     duration = duration or 5
 
@@ -478,8 +578,7 @@ function MessageTo( recipient, message, duration )
             MessageTo(group, message, duration)
             return
         end
-        Warning("MessageTo-?"..recipient.." :: Group could not be resolved :: EXITS")
-        return
+        return exitWarning("MessageTo-?"..recipient.." :: Group could not be resolved")
     end
 
     if isTable(recipient) then
@@ -617,7 +716,7 @@ function DumpPrettyOptions:New()
     return routines.utils.deepCopy(DumpPrettyOptions)
 end
 
-function DumpPrettyOptions:AsJson( value )
+function DumpPrettyOptions:JSON( value )
     self.asJson = value or true
     return self
 end
@@ -644,7 +743,7 @@ function DumpPretty(value, options)
     local asJson = options.asJson or DumpPrettyOptions.asJson
    
     local function dumpRecursive(value, ilvl)
-      if type(value) ~= 'table' then
+    if type(value) ~= 'table' then
         if (isString(value)) then
           return '"' .. tostring(value) .. '"'
         end
@@ -733,13 +832,11 @@ end
 function GetRelativeLocation( source, target )
     local sourceGroup = getGroup(source)
     if not sourceGroup then
-        Warning("GetRelativeLocation :: cannot resolve source group from " .. Dump(source) .. " :: EXITS")
-        return nil
+        return exitWarning("GetRelativeLocation :: cannot resolve source group from " .. Dump(source))
     end
     local targetGroup = getGroup(target)
     if not targetGroup then
-        Warning("GetRelativeLocation :: cannot resolve target group from " .. Dump(target) .. " :: EXITS")
-        return nil
+        return exitWarning("GetRelativeLocation :: cannot resolve target group from " .. Dump(target))
     end
 
     local sourceCoordinate = sourceGroup:GetCoordinate()
@@ -817,8 +914,7 @@ end
 function GetMSL( controllable )
     local group = getGroup( controllable )
     if (group == nil) then
-        Warning("GetMSL :: cannot resolve group from "..Dump(controllable).." :: EXITS")
-        return false
+        return exitWarning("GetMSL :: cannot resolve group from "..Dump(controllable), false)
     end 
 
     return UTILS.MetersToFeet( group:GetCoordinate().y )
@@ -832,8 +928,7 @@ end
 function GetAGL( controllable )
     local group = getGroup( controllable )
     if (group == nil) then
-        Warning("GetAGL :: cannot resolve group from "..Dump(controllable).." :: EXITS")
-        return false
+        return exitWarning("GetAGL :: cannot resolve group from "..Dump(controllable), false)
     end 
 
     local coord = group:GetCoordinate()
@@ -910,40 +1005,34 @@ end
 
 function RouteDirectTo( controllable, steerpoint )
     if (controllable == nil) then
-        Warning("DirectTo-? :: controllable not specified :: EXITS")
-        return
+        return exitWarning("DirectTo-? :: controllable not specified")
     end
     if (steerpoint == nil) then
-        Warning("DirectTo-? :: steerpoint not specified :: EXITS")
-        return
+        return exitWarning("DirectTo-? :: steerpoint not specified")
     end
 
     local route = nil
     local group = getGroup( controllable )
     if ( group == nil ) then
-        Warning("DirectTo-? :: cannot resolve group: "..Dump(controllable).." :: EXITS")
-        return
+        return exitWarning("DirectTo-? :: cannot resolve group: "..Dump(controllable))
     end
     
     route = group:CopyRoute()
     if (route == nil) then
-        Warning("DirectTo-" .. group.GroupName .." :: cannot resolve route from controllable: "..Dump(controllable).." :: EXITS")
-        return
+        return exitWarning("DirectTo-" .. group.GroupName .." :: cannot resolve route from controllable: "..Dump(controllable))
     end
 
     local wpIndex = nil
     if (isString(steerpoint)) then
         local wp = FindWaypointByName( route, steerpoint )
         if (wp == nil) then
-            Warning("DirectTo-" .. group.GroupName .." :: no waypoint found with name '"..steerpoint.."' :: EXITS")
-        return
+            return exitWarning("DirectTo-" .. group.GroupName .." :: no waypoint found with name '"..steerpoint.."'")
         end
         wpIndex = wp.index
     elseif (isNumber(steerpoint)) then
         wpIndex = steerpoint
     else
-        Warning("DirectTo-" .. group.GroupName .." :: cannot resolved steerpoint: "..Dump(steerpoint).." :: EXITS")
-        return
+        return exitWarning("DirectTo-" .. group.GroupName .." :: cannot resolved steerpoint: "..Dump(steerpoint))
     end
 
     local directToRoute = {}
@@ -956,31 +1045,18 @@ function RouteDirectTo( controllable, steerpoint )
 end
 
 function SetRoute( controllable, route )
-
     if (controllable == nil) then
-        Warning("SetRoute-? :: controllable not specified :: EXITS")
-        return
+        return exitWarning("SetRoute-? :: controllable not specified")
     end
     if (not isTable(route)) then
-        Warning("SetRoute-? :: invalid route (not a table) :: EXITS")
-        return
+        return exitWarning("SetRoute-? :: invalid route (not a table)")
     end
     local group = getGroup(controllable)
     if (group == nil) then
-        Warning("SetRoute-? :: group not found: "..Dump(controllable).." :: EXITS")
-        return
+        return exitWarning("SetRoute-? :: group not found: "..Dump(controllable))
     end
-
     group:Route( route )
     Trace("SetRoute-"..group.GroupName.." :: group route was set :: DONE")
---[[
-    local taskRoute = group:TaskRoute( route )
-
-    Debug("SetRoute (nisse) :: taskRoute: " .. DumpPretty(taskRoute, DumpPrettyOptions:New():Deep()))
-
-    group:SetTask( taskRoute )
-    Trace("SetRoute-"..group.GroupName.." :: group route was set :: DONE")
-]]--    
 end
 
 local function calcGroupOffset( group1, group2 )
@@ -1065,23 +1141,19 @@ Parameters
 function TaskFollow( follower, leader, offsetLimits, lastWaypoint )
 
     if (follower == nil) then
-        Trace("Follow-? :: Follower was not specified :: EXITS")
-        return
+        return exitWarning("Follow-? :: Follower was not specified")
     end
     local followerGrp = getGroup(follower)
     if (followerGrp == nil) then
-        Trace("Follow-? :: Cannot find follower: "..Dump(follower).." :: EXITS")
-        return
+        return exitWarning("Follow-? :: Cannot find follower: "..Dump(follower))
     end
 
     if (leader == nil) then
-        Trace("Follow-? :: Leader was not specified :: EXITS")
-        return
+        return exitWarning("Follow-? :: Leader was not specified")
     end
     local leaderGrp = getGroup(leader)
     if (leaderGrp == nil) then
-        Trace("Follow-? :: Cannot find leader: "..Dump(leader).." :: EXITS")
-        return
+        return exitWarning("Follow-? :: Cannot find leader: "..Dump(leader))
     end
 
     if (lastWaypoint == nil) then
@@ -1144,28 +1216,22 @@ end
 function GotoWaypoint( controllable, from, to, offset)
     local group = nil
     if not controllable then
-        Warning("GotoWaypoint :: missing controllable :: EXITS")
-        return
+        return exitWarning("GotoWaypoint :: missing controllable")
     else
         group = getGroup(controllable)
         if not group then
-            Warning("GotoWaypoint :: cannot resolve group from "..Dump(controllable).." :: EXITS")
-            return
+            return exitWarning("GotoWaypoint :: cannot resolve group from "..Dump(controllable))
         end
     end
     if not from then
-        Warning("GotoWaypoint :: missing 'from' :: EXITS")
-        return
+        return exitWarning("GotoWaypoint :: missing 'from'")
     elseif not isNumber(from) then
-        Warning("GotoWaypoint :: 'from' is not a number :: EXITS")
-        return
+        return exitWarning("GotoWaypoint :: 'from' is not a number")
     end
     if not to then
-        Warning("GotoWaypoint :: missing 'to' :: EXITS")
-        return
+        return exitWarning("GotoWaypoint :: missing 'to'")
     elseif not isNumber(to) then
-        Warning("GotoWaypoint :: 'to' is not a number :: EXITS")
-        return
+        return exitWarning("GotoWaypoint :: 'to' is not a number")
     end
     if isNumber(offset) then
         from = from + offset
@@ -1190,16 +1256,14 @@ function LandHere( controllable, category, coalition )
 
     local group = getGroup( controllable )
     if (group == nil) then
-        Trace("LandHere-? :: group not found: "..Dump(controllable).." :: EXITS")
-        return
+        return exitWarning("LandHere-? :: group not found: "..Dump(controllable))
     end
 
     category = category or Airbase.Category.AIRDROME
 
     local ab = group:GetCoordinate():GetClosestAirbase2( category, coalition )
     if (ab == nil) then
-        Trace("LandHere-"..group.GroupName.." :: no near airbase found :: EXITS")
-        return
+        return exitWarning("LandHere-"..group.GroupName.." :: no near airbase found")
     end
 
     local abCoord = ab:GetCoordinate()
@@ -1375,11 +1439,11 @@ function TaskAttackGroup( attacker, target )
 
     local ag = getGroup(attacker)
     if (ag == nil) then
-        Warning("TaskAttackGroup-? :: cannot resolve attacker group "..Dump(attacker) .." :: EXITS")
+        return exitWarning("TaskAttackGroup-? :: cannot resolve attacker group "..Dump(attacker))
     end
     local tg = getGroup(target)
     if (tg == nil) then
-        Warning("TaskAttackGroup-? :: cannot resolve target group "..Dump(tg) .." :: EXITS")
+        return exitWarning("TaskAttackGroup-? :: cannot resolve target group "..Dump(tg))
     end
 
     if (ag:OptionROEOpenFirePossible()) then
@@ -1392,7 +1456,9 @@ end
 
 --------------------------------------------- [[ MISSION EVENTS ]] ---------------------------------------------
 
-MissionEvents = {
+MissionEvents = { }
+
+local _missionEventsHandlers = {
     _groupSpawnedHandlers = {},
     _unitSpawnedHandlers = {},
     _unitDeadHandlers = {},
@@ -1406,7 +1472,12 @@ MissionEvents = {
     _shootingStartHandlers = {},
     _shootingStopHandlers = {},
     _unitHitHandlers = {},
+    _aircraftLandedHandlers = {},
+    _unitEnteredZone = {},
+    _unitInsideZone = {},
+    _unitLeftZone = {},
 }
+
 
 local isMissionEventsListenerRegistered = false
 local _e = {}
@@ -1420,6 +1491,11 @@ end
 function _e:onEvent( event )
 local deep = DumpPrettyOptions:New():Deep() -- nisse
 --Debug("_e:onEvent-? :: event: " .. DumpPretty(event)) -- nisse
+
+    if event.id == world.event.S_EVENT_MISSION_END then
+        MissionEvents:Invoke( _missionEventsHandlers._missionEndHandlers, event )
+        return
+    end
 
     local function getTarget(event)
         local dcsTarget = event.target 
@@ -1445,42 +1521,48 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
         return event
     end
 
-    if (event.id == EVENTS.Birth) then
-        if event.IniGroup and #MissionEvents._groupSpawnedHandlers > 0 then
-            MissionEvents:Invoke( MissionEvents._groupSpawnedHandlers, event )
-        end
-        if event.IniUnit then
-            if #MissionEvents._unitSpawnedHandlers > 0 then
-                MissionEvents:Invoke( MissionEvents._unitSpawnedHandlers, event )
-            end
-            if  event.IniPlayerName then
-                MissionEvents:Invoke( MissionEvents._playerEnteredUnitHandlers, event )
-            end
-        end
-        return
+    -- if (event.id == EVENTS.Birth) then obsolete
+    --     if event.IniGroup and #_missionEventsHandlers._groupSpawnedHandlers > 0 then
+    --         MissionEvents:Invoke( _missionEventsHandlers._groupSpawnedHandlers, event )
+    --     end
+    --     if event.IniUnit then
+    --         if #_missionEventsHandlers._unitSpawnedHandlers > 0 then
+    --             MissionEvents:Invoke( _missionEventsHandlers._unitSpawnedHandlers, event )
+    --         end
+    --         if  event.IniPlayerName then
+    --             MissionEvents:Invoke( _missionEventsHandlers._playerEnteredUnitHandlers, event )
+    --         end
+    --     end
+    --     return
+    -- end
+
+    if event.id == world.event.S_EVENT_PLAYER_ENTER_UNIT then --  event
+        if not event.initiator then
+            return end -- weird!
+
+        local unit = UNIT:Find(event.initiator)
+        if not unit then 
+            return end -- weird!
+
+        MissionEvents:Invoke( _missionEventsHandlers._playerEnteredUnitHandlers, {
+            time = MissionTime(),
+            IniPlayerName = unit:GetPlayerName(),
+            IniUnit = unit,
+            IniUnitName = unit.UnitName,
+            IniGroupName = unit:GetGroup().GroupName,
+            IniUnitTypeName = unit:GetTypeName(),
+            IniCategoryName = unit:GetCategoryName(),
+            IniCategory = unit:GetCategory()
+        })
     end
 
-    --[[
-        note I can't figure out how to get to the player with this event: {
-            ["id"] = 20,
-            ["time"] = 0,
-            ["initiator"] = { 
-                ["id_"] = 16812544, 
-            },
-        })
-    -- if event.id == world.event.S_EVENT_PLAYER_ENTER_UNIT then --  event
-    --     Debug("nisse - world.event.S_EVENT_PLAYER_ENTER_UNIT :: event: " .. DumpPretty(event, deep))
-    -- end
-    ]]--
-
     if event.id == world.event.S_EVENT_PLAYER_LEAVE_UNIT then
---        Debug("nisse - world.event.S_EVENT_PLAYER_LEAVE_UNIT :: event: " .. DumpPretty(event, deep))
-        MissionEvents:Invoke( MissionEvents._playerLeftUnitHandlers, event )
+        MissionEvents:Invoke( _missionEventsHandlers._playerLeftUnitHandlers, event )
     end
 
     if event.id == world.event.S_EVENT_DEAD then
-        if event.IniUnit and #MissionEvents._unitDeadHandlers > 0 then
-            MissionEvents:Invoke( MissionEvents._unitDeadHandlers, {
+        if event.IniUnit and #_missionEventsHandlers._unitDeadHandlers > 0 then
+            MissionEvents:Invoke( _missionEventsHandlers._unitDeadHandlers, {
                 IniUnit = event.IniUnit,
                 IniUnitName = event.IniUnit.UnitName,
                 IniGroup = event.IniGroup,
@@ -1492,13 +1574,13 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
     end
 
     if event.id == world.event.S_EVENT_KILL then
-        if #MissionEvents._unitKilledHandlers > 0 then
-            MissionEvents:Invoke( MissionEvents._unitKilledHandlers, {
+        if #_missionEventsHandlers._unitKilledHandlers > 0 then
+            MissionEvents:Invoke( _missionEventsHandlers._unitKilledHandlers, {
                 IniUnit = UNIT:Find(event.initiator),
                 TgtUnit = UNIT:Find(event.target)
             })
         end
-        if #MissionEvents._unitDeadHandlers > 0 then
+        if #_missionEventsHandlers._unitDeadHandlers > 0 then
             local unit = UNIT:Find(event.target)
             local group = unit:GetGroup()
             _e:onEvent({
@@ -1514,58 +1596,46 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
     end
 
     if event.id == world.event.S_EVENT_EJECTION then
-        if #MissionEvents._ejectionHandlers > 0 then
-            MissionEvents:Invoke( MissionEvents._ejectionHandlers, event)
-        end
+        MissionEvents:Invoke( _missionEventsHandlers._ejectionHandlers, event)
         return
     end
 
     if event.id == world.event.S_EVENT_CRASH then
-        if #MissionEvents._unitCrashedHandlers > 0 then
-            MissionEvents:Invoke( MissionEvents._unitCrashedHandlers, event)
-        end
---         if #MissionEvents._unitDeadHandlers > 0 then
---             event.id = world.event.S_EVENT_DEAD
---             event.IniUnit = UNIT:Find(event.initiator)
---             event.IniPlayerName = event.IniUnit:GetPlayerName()
--- Debug("nisse - S_EVENT_CRASH >> S_EVENT_DEAD :: event: " .. DumpPretty(event))
---             _e:onEvent(event)
---         end
+        MissionEvents:Invoke( _missionEventsHandlers._unitCrashedHandlers, event)
         return
     end
 
     if event.id == world.event.S_EVENT_SHOT then
-        if (#MissionEvents._weaponFiredHandlers > 0) then
+        if #_missionEventsHandlers._weaponFiredHandlers > 0 then
             local dcsTarget = event.target 
             if not dcsTarget and event.weapon then
                 dcsTarget = event.weapon:getTarget()
             end
-            MissionEvents:Invoke( MissionEvents._weaponFiredHandlers, addInitiatorAndTarget(event))
+            MissionEvents:Invoke( _missionEventsHandlers._weaponFiredHandlers, addInitiatorAndTarget(event))
         end
         return
     end
         
-    if (event.id == world.event.S_EVENT_SHOOTING_START) then
-        if (#MissionEvents._shootingStartHandlers > 0) then
-            MissionEvents:Invoke( MissionEvents._shootingStartHandlers, addInitiatorAndTarget(event))
-        end
+    if event.id == world.event.S_EVENT_SHOOTING_START then
+        MissionEvents:Invoke( _missionEventsHandlers._shootingStartHandlers, addInitiatorAndTarget(event))
         return
     end
 
-    if (event.id == world.event.S_EVENT_SHOOTING_END) then
-        if (#MissionEvents._shootingStopHandlers > 0) then
-            MissionEvents:Invoke( MissionEvents._shootingStopHandlers, addInitiatorAndTarget(event))
-        end
+    if event.id == world.event.S_EVENT_SHOOTING_END then
+        MissionEvents:Invoke( _missionEventsHandlers._shootingStopHandlers, addInitiatorAndTarget(event))
         return
     end
         
-    if (event.id == world.event.S_EVENT_HIT) then
---Debug("_e:onEvent-S_EVENT_HIT :: event: " .. DumpPretty(event, deep))
-        if (#MissionEvents._unitHitHandlers > 0) then
-            MissionEvents:Invoke( MissionEvents._unitHitHandlers, event)
-        end
+    if event.id == world.event.S_EVENT_HIT then
+        MissionEvents:Invoke( _missionEventsHandlers._unitHitHandlers, event)
         return
     end
+
+    if event.id == world.event.S_EVENT_LAND then
+        MissionEvents:Invoke( _missionEventsHandlers._aircraftLandedHandlers, event)
+        return
+    end
+
 end
 
 function MissionEvents:AddListener(listeners, func, predicateFunc, insertFirst )
@@ -1596,46 +1666,51 @@ function MissionEvents:RemoveListener(listeners, func)
     end
 end
 
-function MissionEvents:OnGroupSpawned( func, insertFirst ) MissionEvents:AddListener(MissionEvents._groupSpawnedHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnGroupSpawned( func ) MissionEvents:RemoveListener(MissionEvents._groupSpawnedHandlers, func) end
+function MissionEvents:OnMissionEnd( func, insertFirst ) MissionEvents:AddListener(_missionEventsHandlers._missionEndHandlers, func, nil, insertFirst) end
 
-function MissionEvents:OnUnitSpawned( func, insertFirst ) MissionEvents:AddListener(MissionEvents._unitSpawnedHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnUnitSpawned( func ) MissionEvents:RemoveListener(MissionEvents._unitSpawnedHandlers, func) end
+function MissionEvents:OnGroupSpawned( func, insertFirst ) MissionEvents:AddListener(_missionEventsHandlers._groupSpawnedHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnGroupSpawned( func ) MissionEvents:RemoveListener(_missionEventsHandlers._groupSpawnedHandlers, func) end
 
-function MissionEvents:OnUnitDead( func, insertFirst ) MissionEvents:AddListener(MissionEvents._unitDeadHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnUnitDead( func ) MissionEvents:RemoveListener(MissionEvents._unitDeadHandlers, func) end
+function MissionEvents:OnUnitSpawned( func, insertFirst ) MissionEvents:AddListener(_missionEventsHandlers._unitSpawnedHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnUnitSpawned( func ) MissionEvents:RemoveListener(_missionEventsHandlers._unitSpawnedHandlers, func) end
 
-function MissionEvents:OnUnitKilled( func, insertFirst ) MissionEvents:AddListener(MissionEvents._unitKilledHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnUnitKilled( func ) MissionEvents:RemoveListener(MissionEvents._unitKilledHandlers, func) end
+function MissionEvents:OnUnitDead( func, insertFirst ) MissionEvents:AddListener(_missionEventsHandlers._unitDeadHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnUnitDead( func ) MissionEvents:RemoveListener(_missionEventsHandlers._unitDeadHandlers, func) end
 
-function MissionEvents:OnUnitCrashed( func, insertFirst ) MissionEvents:AddListener(MissionEvents._unitCrashedHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnUnitCrashed( func ) MissionEvents:RemoveListener(MissionEvents._unitCrashedHandlers, func) end
+function MissionEvents:OnUnitKilled( func, insertFirst ) MissionEvents:AddListener(_missionEventsHandlers._unitKilledHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnUnitKilled( func ) MissionEvents:RemoveListener(_missionEventsHandlers._unitKilledHandlers, func) end
 
-function MissionEvents:OnPlayerEnteredUnit( func, insertFirst ) MissionEvents:AddListener(MissionEvents._playerEnteredUnitHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnPlayerEnteredUnit( func ) MissionEvents:RemoveListener(MissionEvents._playerEnteredUnitHandlers, func) end
+function MissionEvents:OnUnitCrashed( func, insertFirst ) MissionEvents:AddListener(_missionEventsHandlers._unitCrashedHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnUnitCrashed( func ) MissionEvents:RemoveListener(_missionEventsHandlers._unitCrashedHandlers, func) end
 
-function MissionEvents:OnPlayerLeftUnit( func, insertFirst ) MissionEvents:AddListener(MissionEvents._playerLeftUnitHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnPlayerLeftUnit( func ) MissionEvents:RemoveListener(MissionEvents._playerLeftUnitHandlers, func) end
+function MissionEvents:OnPlayerEnteredUnit( func, insertFirst ) MissionEvents:AddListener(_missionEventsHandlers._playerEnteredUnitHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnPlayerEnteredUnit( func ) MissionEvents:RemoveListener(_missionEventsHandlers._playerEnteredUnitHandlers, func) end
 
-function MissionEvents:OnEjection( func, insertFirst ) MissionEvents:AddListener(MissionEvents._ejectionHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnEjection( func ) MissionEvents:RemoveListener(MissionEvents._ejectionHandlers, func) end
+function MissionEvents:OnPlayerLeftUnit( func, insertFirst ) MissionEvents:AddListener(_missionEventsHandlers._playerLeftUnitHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnPlayerLeftUnit( func ) MissionEvents:RemoveListener(_missionEventsHandlers._playerLeftUnitHandlers, func) end
 
-function MissionEvents:OnWeaponFired( func, insertFirst ) MissionEvents:AddListener(MissionEvents._weaponFiredHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnWeaponFired( func ) MissionEvents:RemoveListener(MissionEvents._weaponFiredHandlers, func) end
+function MissionEvents:OnEjection( func, insertFirst ) MissionEvents:AddListener(_missionEventsHandlers._ejectionHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnEjection( func ) MissionEvents:RemoveListener(_missionEventsHandlers._ejectionHandlers, func) end
 
-function MissionEvents:OnShootingStart( func, insertFirst ) MissionEvents:AddListener(MissionEvents._shootingStartHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnShootingStart( func ) MissionEvents:RemoveListener(MissionEvents._shootingStartHandlers, func) end
+function MissionEvents:OnWeaponFired( func, insertFirst ) MissionEvents:AddListener(_missionEventsHandlers._weaponFiredHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnWeaponFired( func ) MissionEvents:RemoveListener(_missionEventsHandlers._weaponFiredHandlers, func) end
 
-function MissionEvents:OnShootingStop( func, insertFirst ) MissionEvents:AddListener(MissionEvents._shootingStopHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnShootingStop( func ) MissionEvents:RemoveListener(MissionEvents._shootingStopHandlers, func) end
+function MissionEvents:OnShootingStart( func, insertFirst ) MissionEvents:AddListener(_missionEventsHandlers._shootingStartHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnShootingStart( func ) MissionEvents:RemoveListener(_missionEventsHandlers._shootingStartHandlers, func) end
 
-function MissionEvents:OnUnitHit( func, insertFirst ) MissionEvents:AddListener(MissionEvents._unitHitHandlers, func, nil, insertFirst) end
-function MissionEvents:EndOnUnitHit( func ) MissionEvents:RemoveListener(MissionEvents._unitHitHandlers, func) end
+function MissionEvents:OnShootingStop( func, insertFirst ) MissionEvents:AddListener(_missionEventsHandlers._shootingStopHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnShootingStop( func ) MissionEvents:RemoveListener(_missionEventsHandlers._shootingStopHandlers, func) end
+
+function MissionEvents:OnUnitHit( func, insertFirst ) MissionEvents:AddListener(_missionEventsHandlers._unitHitHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnUnitHit( func ) MissionEvents:RemoveListener(_missionEventsHandlers._unitHitHandlers, func) end
+
+function MissionEvents:OnAircraftLanded( func, insertFirst ) MissionEvents:AddListener(_missionEventsHandlers._aircraftLandedHandlers, func, nil, insertFirst) end
+function MissionEvents:EndOnAircraftLanded( func ) MissionEvents:RemoveListener(_missionEventsHandlers._aircraftLandedHandlers, func) end
 
 
 --- CUSTOM EVENTS
 function MissionEvents:OnPlayerEnteredAirplane( func, insertFirst ) 
-    MissionEvents:AddListener(MissionEvents._playerEnteredUnitHandlers, 
+    MissionEvents:AddListener(_missionEventsHandlers._playerEnteredUnitHandlers, 
         function( event )
             if event.IniUnit:IsAirPlane() then
                 func( event )
@@ -1644,10 +1719,10 @@ function MissionEvents:OnPlayerEnteredAirplane( func, insertFirst )
         nil,
         insertFirst) 
 end
-function MissionEvents:EndOnPlayerEnteredAirplane( func ) MissionEvents:RemoveListener(MissionEvents._playerEnteredUnitHandlers, func) end
+function MissionEvents:EndOnPlayerEnteredAirplane( func ) MissionEvents:RemoveListener(_missionEventsHandlers._playerEnteredUnitHandlers, func) end
 
 function MissionEvents:OnPlayerLeftAirplane( func, insertFirst )
-    MissionEvents:AddListener(MissionEvents._playerLeftUnitHandlers, 
+    MissionEvents:AddListener(_missionEventsHandlers._playerLeftUnitHandlers, 
         function( event )
             if event.IniUnit:IsAirPlane() then
                 func( event )
@@ -1656,10 +1731,10 @@ function MissionEvents:OnPlayerLeftAirplane( func, insertFirst )
         nil,
         insertFirst) 
 end
-function MissionEvents:EndOnPlayerLeftAirplane( func ) MissionEvents:RemoveListener(MissionEvents._playerLeftUnitHandlers, func) end
+function MissionEvents:EndOnPlayerLeftAirplane( func ) MissionEvents:RemoveListener(_missionEventsHandlers._playerLeftUnitHandlers, func) end
 
 function MissionEvents:OnPlayerEnteredHelicopter( func, insertFirst ) 
-    MissionEvents:AddListener(MissionEvents._playerEnteredUnitHandlers, 
+    MissionEvents:AddListener(_missionEventsHandlers._playerEnteredUnitHandlers, 
         function( event )
             if (event.IniUnit:IsHelicopter()) then
                 func( event )
@@ -1668,10 +1743,10 @@ function MissionEvents:OnPlayerEnteredHelicopter( func, insertFirst )
         nil,
         insertFirst)
 end
-function MissionEvents:EndOnPlayerEnteredHelicopter( func ) MissionEvents:RemoveListener(MissionEvents._playerEnteredUnitHandlers, func) end
+function MissionEvents:EndOnPlayerEnteredHelicopter( func ) MissionEvents:RemoveListener(_missionEventsHandlers._playerEnteredUnitHandlers, func) end
 
 function MissionEvents:OnPlayerLeftHelicopter( func, insertFirst ) 
-    MissionEvents:AddListener(MissionEvents._playerLeftUnitHandlers, 
+    MissionEvents:AddListener(_missionEventsHandlers._playerLeftUnitHandlers, 
         function( event )
             if (event.IniUnit:IsHelicopter()) then
                 func( event )
@@ -1680,301 +1755,438 @@ function MissionEvents:OnPlayerLeftHelicopter( func, insertFirst )
         nil,
         insertFirst)
 end
-function MissionEvents:EndOnPlayerLeftHelicopter( func ) MissionEvents:RemoveListener(MissionEvents._playerLeftUnitHandlers, func) end
+function MissionEvents:EndOnPlayerLeftHelicopter( func ) MissionEvents:RemoveListener(_missionEventsHandlers._playerLeftUnitHandlers, func) end
 
 function MissionEvents:OnGroupDiverted( func, insertFirst ) 
-    MissionEvents:AddListener(MissionEvents._groupDivertedHandlers, 
+    MissionEvents:AddListener(_missionEventsHandlers._groupDivertedHandlers, 
         func,
         nil,
         insertFirst) 
 end
-function MissionEvents:EndOnGroupDiverted( func ) MissionEvents:RemoveListener(MissionEvents._groupDivertedHandlers, func) end
+function MissionEvents:EndOnGroupDiverted( func ) MissionEvents:RemoveListener(_missionEventsHandlers._groupDivertedHandlers, func) end
 
 
 _onDivertFunc = function( controllable, route ) -- called by Divert()
-    MissionEvents:Invoke(MissionEvents._groupDivertedHandlers, { Controllable = controllable, Route = route })
+    MissionEvents:Invoke(_missionEventsHandlers._groupDivertedHandlers, { Controllable = controllable, Route = route })
 end
 
---------------------------------------------- [[ TRIGGER ZONES ]] ---------------------------------------------
+--------------------------------------------- [[ ZONE EVENTS ]] ---------------------------------------------
 
-TRIGGER_ZONE_EVENT_TYPE = {
-    Enters = 1,
+local ZoneEventState = {
+    Outside = 1,
     Inside = 2,
     Left = 3,
+    _countZoneEventZones = 0,        -- no. of 'zone centric' zone events (as opposed to 'object centric')
+    _timer = nil,
 }
 
-TriggerZoneOptions = {
-    Interval = 4,
-    Coalitions = nil,
-    IncludeZoneNamePattern = nil,
-    ExcludeZoneNamePattern = nil
+local ZoneEventStrategy = {
+    Named = 'named',
+    Any = 'any'
 }
 
-function TriggerZoneOptions:New()
-    return routines.utils.deepCopy(TriggerZoneOptions)
+local ZoneEventType = {
+    Enter = 'enter',
+    Inside = 'inside',
+    Left = 'left'
+}
+
+local ZoneEventObjectType = {
+    Any = 'any',
+    Group = 'group',
+    Unit = 'unit'
+}
+
+local ZoneEvent = {
+    objectName = nil,                -- string; name of group / unit (nil if objectType = 'any')
+    objectType = nil,                -- <ZoneEventObjectType>
+    object = nil,                    -- UNIT or GROUP
+    eventType = nil,                 -- <MonitoredZoneEventType>
+    zoneName = nil,                  -- string; name of zone
+    zone = nil,                      -- ZONE
+    func = nil,                      -- function to be invoked when event triggers
+    state = ZoneEventState.Outside,  -- <MonitoredZoneEventState>
+    isZoneCentered = false,          -- when set, the ZoneEvent:EvaluateForZone() functon is invoked; otherwise ZoneEvent:EvaluateForObject()
+    continous = false,               -- when set, the event is not automatically removed when triggered
+}
+
+local ZoneEventSetGroup = {
+    zone = nil,                      -- the monitored zone
+    zoneEvents = {},                 -- list of <ZoneEvent>
+}
+
+local ObjectCentricZoneEvents = { 
+    -- list of <MonitoredZoneEvent>
+}
+
+local ZoneCentricZoneEvents = {
+    -- key = zoneName, 
+    -- value = <ZoneEventSetGroup>
+}
+
+local ZoneEventArgs = {
+    EventType = nil,                 -- <ZoneEventType>
+    ZoneName = nil,                  -- string
+}
+
+function ZoneEventSetGroup:New(zone, zoneName)
+    local zesg = routines.utils.deepCopy(ZoneEventSetGroup)
+    zesg.zone = zone
+    ZoneCentricZoneEvents[zoneName] = zesg
+    ZoneEventState._countZoneEventZones = ZoneEventState._countZoneEventZones + 1
+    return zesg
 end
 
+function ZoneEventSetGroup:Get(zoneName)
+    return ZoneCentricZoneEvents[zoneName]
+end
 
-function TriggerZoneOptions:WithIncludeZoneNames( pattern )
-    if (type(pattern) ~= "string") then error("Zone name pattern must be string") end
-    if (ExcludeZoneNamePattern ~= nil) then error("ExcludeZoneNamePattern was already set. Use one or the other, not both") end
-    self.IncludeZoneNamePattern = pattern
+function ZoneEventSetGroup:Scan()
+    local setGroup = SET_GROUP:New():FilterZones({ self.zone }):FilterActive():FilterOnce()
+    local groups = {}
+    setGroup:ForEachGroup(
+        function(g)
+            table.insert(groups, g)
+        end
+    )
+    return groups
+end
+
+function ZoneEventArgs:New(zoneEvent)
+    local args = routines.utils.deepCopy(ZoneEventArgs)
+    args.EventType = zoneEvent.eventType
+    args.ZoneName = zoneEvent.zoneName
+    return args
+end
+
+function ZoneEventArgs:End()
+    self._terminateEvent = true
     return self
 end
 
-function TriggerZoneOptions:WithExcludedZoneNames( pattern )
-    if (type(pattern) ~= "string") then error("Zone name pattern must be string") end
-    if (IncludeZoneNamePattern ~= nil) then error("IncludeZoneNamePattern was already set. Use one or the other, not both") end
-    self.ExcludeZoneNamePattern = pattern
-    return self
-end
-
-function TriggerZoneOptions:WithCoalitions( coalitions )
-    if (coalitions == nil) then error("Coalitions must be assigned") end
-    if (type(coalitions) == string) then coalitions = { coalitions } end
-    self.Coalitions = coalitions
-    return self
-end
-
-local _triggerZoneUnitHandlers = {
-    isMonitoring = false,
-    unitEnters = {},
-    unitInside = {},
-    unitLeft = {},
-    groupEnters = {},
-    groupInside = {},
-    groupLeft = {},
-}
-   
-local _groupEvents = {
-    -- [zoneName] = { entered = {}, inside = {}, left = {} }
-}
-
-function _groupEvents:IsHandled( event )
-    local zone = event.Zone
-    local group = event.Group
-    local zoneTable = self[zone:GetName()]
-    if (zoneTable == nil) then return false end
-    local groupName = group:GetName()
-    if (event.EventType == TRIGGER_ZONE_EVENT_TYPE.Enters) then
-        return zoneTable.entered[groupName] ~= nil 
-    end
-    if (event.EventType == TRIGGER_ZONE_EVENT_TYPE.Inside) then
-        return zoneTable.inside[groupName] ~= nil 
-    end
-    if (event.EventType == TRIGGER_ZONE_EVENT_TYPE.Left) then
-        return zoneTable.left[groupName] ~= nil 
+local function stopMonitoringZoneEventsWhenEmpty()
+    if ZoneEventState._timer ~= nil and #ObjectCentricZoneEvents == 0 and ZoneEventState._countZoneEventZones == 0 then
+        Trace("stopMonitoringZoneEventsWhenEmpty :: mission zone events monitoring stopped")
+        ZoneEventState._timer:Stop()
+        ZoneEventState._timer = nil
     end
 end
 
-function _groupEvents:SetHandled( event )
-    local zone = event.Zone
-    local group = event.Group
-    local zoneTable = self[zone:GetName()]
-    if (zoneTable == nil) then 
-        zoneTable = { entered = {}, inside = {}, left = {} }
-        _groupEvents[zone:GetName()] = zoneTable
-    end
-    local groupName = group:GetName()
-    if (event.EventType == TRIGGER_ZONE_EVENT_TYPE.Enters) then
-        zoneTable.entered[groupName] = true
-    elseif (event.EventType == TRIGGER_ZONE_EVENT_TYPE.Inside) then
-        zoneTable.inside[groupName] = true
-    elseif (event.EventType == TRIGGER_ZONE_EVENT_TYPE.Left) then
-        zoneTable.left[groupName] = true
-    end
-end
+local function startMonitorZoneEvents()
+    local function monitor()
 
-local function triggerZoneEventDispatcher( event )
-
-    local group = event.Group
-    if (group:IsPartlyOrCompletelyInZone(event.Zone)) then
-        local function invokeGroupLeft( group )
-            -- there are other units remaining in the zone so we're skipping this event
-            return 
-        end
-        for k, handler in pairs(_triggerZoneUnitHandlers.groupLeft) do
-            local groupEvent = routines.utils.deepCopy(event)
-            args.Group = group
-            args[Unit] = nil
-            _groupEvents:SetHandled( event )
-            handler( groupEvent )
-        end
-    end
-
-    local function invokeGroupInside( group )
-        for k, handler in pairs(_triggerZoneUnitHandlers.groupInside) do
-            local groupEvent = routines.utils.deepCopy(event)
-            args.Group = group
-            args[Unit] = nil
-            _groupEvents:SetHandled( event )
-            handler( groupEvent )
-        end
-    end
-
-    local function invokeGroupEnters( group )
-        for k, handler in pairs(_triggerZoneUnitHandlers.groupEnters) do
-            local groupEvent = routines.utils.deepCopy(event)
-            args.Group = group
-            args[Unit] = nil
-            _groupEvents:SetHandled( event )
-            handler( groupEvent )
-            -- also, always trigger the 'group inside' event ...
-            invokeGroupInside(event)
-        end
-    end
-
-    if (event.EventType == TRIGGER_ZONE_EVENT_TYPE.Enters) then
-        local group = event.Unit:GetGroup()
-        if (#_triggerZoneUnitHandlers.groupEnters > 0 and not _groupEvents:IsHandled( event )) then
-            invokeGroupEnters( group )
-        end
-        for k, v in pairs(_triggerZoneUnitHandlers.unitEnters) do
-            v.handler( event )
-        end
-    end
-
-    if (event.EventType == TRIGGER_ZONE_EVENT_TYPE.Inside) then
-        local group = event.Unit:GetGroup()
-        if (#_triggerZoneUnitHandlers.groupInside > 0 and not _groupEvents:IsHandled( event )) then
-            invokeGroupInside( group )
-        end
-        for k, v in pairs(_triggerZoneUnitHandlers.unitInside) do
-            v.handler( event )
-        end
-    end
-
-    if (event.EventType == TRIGGER_ZONE_EVENT_TYPE.Left) then
-        local group = event.Unit:GetGroup()
-        if (#_triggerZoneUnitHandlers.groupLeft > 0 and not _groupEvents:IsHandled( event )) then
-            invokeGroupLeft( group )
-        end
-        for k, v in pairs(_triggerZoneUnitHandlers.unitLeft) do
-            v.handler( event )
-        end
-    end
-end
-
-local _triggerZoneUnitsInfo = {}
-
-function MonitorTriggerZones( options )
-
-   if (_triggerZoneUnitHandlers.isMonitoring) then error("Trigger zones are already monitored for events") end
-    _triggerZoneUnitHandlers.isMonitoring = true
-    options = options or TriggerZoneOptions
-    local handler = triggerZoneEventDispatcher
-
-    local function timeCallback()
-        local timestamp = UTILS.SecondsOfToday()
-        -- todo Consider some filtering mechanism to avoid scanning TZ's that are intended for other purposes
-        for zoneName, zone in pairs(_DATABASE.ZONES) do
-            local ignoreZone = false
-
-            if (options.IncludeZoneNamePattern ~= nil and not string.find(zoneName, options.IncludeZoneNamePattern)) then --  not string.match(zoneName, options.IncludeZoneNamePattern)) then
-                -- Debug("---> Filters out zone " .. zoneName .. " (does not match pattern '".. options.IncludeZoneNamePattern .."')")
-                ignoreZone = true
-            elseif (options.ExcludeZoneNamePattern ~= nil and string.match(zoneName, options.ExcludeZoneNamePattern)) then
-                -- Debug("---> Filters out zone " .. zoneName .. " (matches pattern '".. options.ExcludeZoneNamePattern .."')")
-                ignoreZone = true
+        -- zone object events ...
+        local removeZoneObjectEvents = {}
+        for _, zoneEvent in ipairs(ObjectCentricZoneEvents) do
+            if zoneEvent:EvaluateForObject() then
+                table.insert(removeZoneObjectEvents, zoneEvent)
             end
-                                        
-            if (not ignoreZone) then
-                local unitsInZone = SET_UNIT:New():FilterZones({ zone })--:FilterCategories({ "plane" })
-                if (coalitions ~= nil) then
-                    unitsInZone:FilterCoalitions(coalitions)
-                end
-                local units = unitsInZone:FilterActive():FilterOnce()
-                local unhandledUnits = nil
-                local zoneInfo = _triggerZoneUnitsInfo[zoneName]
-                if (zoneInfo ~= nil) then
-                    unhandledUnits = routines.utils.deepCopy(routines.utils.deepCopy(zoneInfo))
-                end
-                units:ForEach(
-                    function(unit)
-                        local unitName = unit:GetName()
-                        local handlerArgs = { 
-                            Zone = zone, 
-                            ZoneName = zoneName,
-                            Unit = unit, 
-                            Group = unit:GetGroup(),
-                            Time = timestamp,
-                            EntryTime = timestamp,
-                            EventType = nil
-                        }
-                        if (zoneInfo == nil) then
-                            -- unit has entered zone ...
-                            zoneInfo = { [unitName] =  { unit = unit, entryTime = timestamp } }
-                            _triggerZoneUnitsInfo[zoneName] = zoneInfo
-                            handlerArgs.EventType = TRIGGER_ZONE_EVENT_TYPE.Entered
-                            Debug("---> MonitorTriggerZones-" .. zoneName .." :: unit name " .. unitName .. " :: ENTERED")
-                        elseif (zoneInfo[unitName] == nil) then
-                            Debug("---> MonitorTriggerZones-" .. zoneName .." :: unit name " .. unitName .. " :: ENTERED")
-                            handlerArgs.EventType = TRIGGER_ZONE_EVENT_TYPE.Entered
-                            zoneInfo[unitName] = { unit = unit, entryTime = timestamp }
-                        else
-                            local unitInfo = zoneInfo[unitName]
-                            handlerArgs.EventType = TRIGGER_ZONE_EVENT_TYPE.Inside
-                            handlerArgs.EntryTime = unitInfo.entryTime
-                            unhandledUnits[unitName] = nil
-                            --Debug("---> MonitorTriggerZones-" .. zoneName .." :: unit name " .. unitName .. " :: INSIDE")
-                        end
-                        handler( handlerArgs )
-                    end)
-    
-                if (unhandledUnits ~= nil) then
-                    for k, v in pairs(unhandledUnits) do
-                        -- unit has left the zone 
-                        local unitInfo = zoneInfo[k]
-                        local handlerArgs = { 
-                            Zone = zone, 
-                            Unit = unitInfo.unit,
-                            Time = timestamp,
-                            EventType = TRIGGER_ZONE_EVENT_TYPE.Left,
-                            EntryTime = unitInfo.entryTime
-                        }
-                        --Debug("---> MonitorTriggerZones-" .. zoneName .." :: unit name " .. k .. " :: LEFT")
-                        handler( handlerArgs )
-                        zoneInfo[k] = nil
+        end
+        for _, zoneEvent in ipairs(removeZoneObjectEvents) do
+            zoneEvent:Remove()
+        end
+
+        -- zone 'all objects' events ...
+        local removeZoneEvents = {}
+        for zoneName, zesg in pairs(ZoneCentricZoneEvents) do
+            local groups = zesg:Scan()
+            if #groups > 0 then
+                for _, zoneEvent in ipairs(zesg.zoneEvents) do
+                    if zoneEvent:EvaluateForZone(zesg) then
+                        table.insert(removeZoneEvents, zoneEvent)
                     end
                 end
             end
+            for _, zoneEvent in ipairs(removeZoneEvents) do
+                local index = tableIndexOf(zesg.zoneEvents, zoneEvent)
+                if index < 1 then
+                    error("startMonitorZoneEvents_monitor :: cannot remove zone event :: event was not found in the internal ZESG") end
+                
+                table.remove(zesg.zoneEvents, index)
+                if #zesg.zoneEvents == 0 then
+                    ZoneCentricZoneEvents[zoneName] = nil
+                    ZoneEventState._countZoneEventZones = ZoneEventState._countZoneEventZones - 1
+                end
+            end
         end
-        _groupEvents = {}
+        stopMonitoringZoneEventsWhenEmpty()
+    end
+    -- todo consider monitoring zones for 'any' object
+    if not ZoneEventState._timer then
+        ZoneEventState._timer = TIMER:New(monitor):Start(1, 1)
+    end
+end
 
+function ZoneEvent:Trigger(object, objectName)
+    local event = ZoneEventArgs:New(self)
+    if isGroup(object) then
+        event.IniGroup = self.object
+        event.IniGroupName = event.IniGroup.GroupName
+    elseif isUnit(object) then
+        event.IniUnit = self.object
+        event.IniUnitName = self.object.UnitName
+        event.IniGroup = self.object:GetGroup()
+        event.IniGroupName = event.IniGroup.GroupName
+    end
+    self.func(event)
+    return not self.continous or event._terminateEvent
+end
+
+function ZoneEvent:TriggerMultiple(groups)
+    local event = ZoneEventArgs:New(self)
+    event.IniGroups = groups
+    self.func(event)
+    return not self.continous or event._terminateEvent
+end
+
+local function isAnyGroupUnitInZone(group, zone)
+    local units = group:GetUnits()
+    for _, unit in ipairs(units) do
+        if unit:IsInZone(zone) then
+            return true
+        end
+    end
+    return false
+end
+
+function ZoneEvent:EvaluateForZone(groups)
+    -- 'zone perspective'; use <zone> to check event ...
+    return self:TriggerMultiple(groups)
+end
+
+function ZoneEvent:EvaluateForObject()
+    -- 'named object perspective'; use <object> to check zone event ...
+    -- entered zone ....
+    if self.eventType == ZoneEventType.Enter then
+        if self.objectType == 'group' then
+            if isAnyGroupUnitInZone(self.object, self.zone) then
+                return self:Trigger(self.object, self.objectName) 
+            end
+        elseif self.object:IsInZone(self.zone) then
+            return self:Trigger(self.object, self.objectName) 
+        end
+        return false
     end
 
-    local interval = options.Interval or TriggerZoneOptions.Interval
-    TIMER:New(timeCallback):Start(interval, interval)
+    -- left zone ...
+    if self.eventType == ZoneEventType.Left then
+        local isInZone = nil
+        if self.objectType == ZoneEventObjectType.Group then
+            isInZone = isAnyGroupUnitInZone(self.object, self.zone)
+        else
+            isInZone = self.object:IsInZone(self.zone)
+        end
+        if isInZone then
+            self.state = ZoneEventState.Inside
+            return false
+        elseif self.state == ZoneEventState.Inside then
+            return self:Trigger(self.object, self.objectName) 
+        end
+        return false
+    end
+
+    -- inside zone ...
+    if self.eventType == ZoneEventType.Inside then
+        if self.objectType == ZoneEventObjectType.Group then
+            if isAnyGroupUnitInZone(self.object, self.zone) then
+                return self:Trigger(self.object, self.objectName) 
+            end
+        elseif self.object:IsInZone(self.zone) then
+            return self:Trigger(self.object, self.objectName) 
+        end
+    end
+    return false
 end
 
-function OnUnitEntersTriggerZone( callback, data )
-    if (not _triggerZoneUnitHandlers.isMonitoring) then error( "Please start monitoring trigger zones for events first (call MonitorTriggerZones once)" ) end
-    table.insert(_triggerZoneUnitHandlers.unitEnters, { handler = callback, data = data })
+function ZoneEvent:Insert()
+    if self.isZoneCentered then
+        local zesg = ZoneCentricZoneEvents[self.zoneName]
+        if not zesg then
+            zesg = ZoneEventSetGroup:New(self.zone, self.zoneName)
+        end
+        table.insert(zesg.zoneEvents, self)
+    else
+        table.insert(ObjectCentricZoneEvents, self)
+    end
+    startMonitorZoneEvents()
+end
+    
+function ZoneEvent:Remove()
+    if self.objectType ~= ZoneEventObjectType.Any then
+        local index = tableIndexOf(ObjectCentricZoneEvents, self)
+        if index < 1 then
+            error("ZoneEvent:Remove :: cannot find zone event")
+        end
+        table.remove(ObjectCentricZoneEvents, index)
+    end
+    stopMonitoringZoneEventsWhenEmpty()
 end
 
-function OnUnitInsideTriggerZone( callback, data )
-    if (not _triggerZoneUnitHandlers.isMonitoring) then error( "Please start monitoring trigger zones for events first (call MonitorTriggerZones once)" ) end
-    table.insert(_triggerZoneUnitHandlers.unitInside, { handler = callback, data = data })
+function ZoneEvent:NewForZone(objectType, eventType, zone, func, continous, makeZest)
+    local zoneEvent = routines.utils.deepCopy(ZoneEvent)
+    zoneEvent.isZoneCentered = true
+    zoneEvent.objectType = objectType
+    if eventType ~= 'enter' and eventType ~= 'inside' and eventType ~= 'left' then
+        error("MonitoredZoneEvent:New :: unexpected event type: " .. Dump(eventType))
+    end
+    zoneEvent.eventType = eventType
+
+    if not isAssignedString(zone) then
+        error("MonitoredZoneEvent:New :: unexpected/unassigned zone: " .. Dump(zone))
+    end
+    zoneEvent.zone = ZONE:FindByName(zone)
+    zoneEvent.zoneName = zone
+
+    if not isFunction(func) then
+        error("MonitoredZoneEvent:New :: unexpected/unassigned callack function: " .. Dump(func))
+    end
+    zoneEvent.func = func
+
+    if eventType == ZoneEventType.Inside and not isBoolean(continous) then
+        continous = true
+    end
+    if not isBoolean(continous) then
+        continous = false
+    end
+    zoneEvent.continous = continous
+
+    if makeZest then
+        local zesg = ZoneCentricZoneEvents[zoneEvent.zoneName]
+        if not zesg then
+            zesg = ZoneEventSetGroup:New(zoneEvent.zone)
+            ZoneCentricZoneEvents[zoneEvent.zoneName] = zesg
+        end
+        zesg:AddEvent()
+    end
+    return zoneEvent
 end
 
-function OnUnitLeftTriggerZone( callback, data )
-    if (not _triggerZoneUnitHandlers.isMonitoring) then error( "Please start monitoring trigger zones for events first (call MonitorTriggerZones once)" ) end
-    table.insert(_triggerZoneUnitHandlers.unitLeft, { handler = callback, data = data })
+function ZoneEvent:NewForObject(object, objectType, eventType, zone, func, continous)
+    local zoneEvent = ZoneEvent:NewForZone(eventType, zone, func, continous, false)
+    zoneEvent.isZoneCentered = false
+    if objectType == 'unit' then
+        zoneEvent.object = getUnit(object)
+        if not zoneEvent.object then
+            error("MonitoredZoneEvent:New :: cannot resolve UNIT from " .. Dump(object))
+        end
+    elseif objectType == 'group' then
+        zoneEvent.object = getGroup(object)
+        if not zoneEvent.object then
+            error("MonitoredZoneEvent:New :: cannot resolve GROUP from " .. Dump(object))
+        end
+    elseif objectType ~= ZoneEventStrategy.Any then
+        error("MonitoredZoneEvent:New :: cannot resolve object from " .. Dump(object))
+    end
+    zoneEvent.objectType = objectType
+
+    if eventType == ZoneEventType.Inside and not isBoolean(continous) then
+        continous = true
+    end
+    if not isBoolean(continous) then
+        continous = false
+    end
+    zoneEvent.continous = continous
+    return zoneEvent
 end
 
-function OnGroupEntersTriggerZone( callback, data )
-    if (not _triggerZoneUnitHandlers.isMonitoring) then error( "Please start monitoring trigger zones for events first (call MonitorTriggerZones once)" ) end
-    table.insert(_triggerZoneUnitHandlers.groupEnters, { handler = callback, data = data })
+function MissionEvents:OnUnitEntersZone( unit, zone, func, continous )
+    if unit == nil then
+        error("MissionEvents:OnUnitEntersZone :: unit was unassigned") end
+
+    local zoneEvent = ZoneEvent:NewForObject(
+        unit, 
+        ZoneEventObjectType.Unit, 
+        ZoneEventType.Enter, 
+        zone, 
+        func,
+        continous)
+    zoneEvent:Insert()
 end
 
-function OnGroupInsideTriggerZone( callback, data )
-    if (not _triggerZoneUnitHandlers.isMonitoring) then error( "Please start monitoring trigger zones for events first (call MonitorTriggerZones once)" ) end
-    table.insert(_triggerZoneUnitHandlers.groupInside, { handler = callback, data = data })
+function MissionEvents:OnUnitInsideZone( unit, zone, func, continous )
+    if unit == nil then
+        error("MissionEvents:OnUnitInsideZone :: unit was unassigned") end
+
+    if not isBoolean(continous) then
+        continous = true
+    end
+    local zoneEvent = ZoneEvent:NewForObject(
+        unit, 
+        ZoneEventObjectType.Unit, 
+        ZoneEventType.Inside, 
+        zone, 
+        func,
+        continous)
+    zoneEvent:Insert()
 end
 
-function OnGroupLeftTriggerZone( callback, data )
-    if (not _triggerZoneUnitHandlers.isMonitoring) then error( "Please start monitoring trigger zones for events first (call MonitorTriggerZones once)" ) end
-    table.insert(_triggerZoneUnitHandlers.groupLeft, { handler = callback, data = data })
+function MissionEvents:OnUnitLeftZone( unit, zone, func, continous )
+    if unit == nil then
+        error("MissionEvents:OnUnitLeftZone :: unit was unassigned") end
+
+    local zoneEvent = ZoneEvent:NewForObject(
+        unit, 
+        ZoneEventObjectType.Unit, 
+        ZoneEventType.Left, 
+        zone, 
+        func,
+        continous)
+    zoneEvent:Insert()
 end
+
+function MissionEvents:OnGroupEntersZone( group, zone, func, continous )
+    if group == nil then
+        MissionEvents:OnGroupInsideZone( nil, zone, func )
+    else
+        local zoneEvent = ZoneEvent:NewForObject(
+            group, 
+            ZoneEventObjectType.Group, 
+            ZoneEventType.Enter, 
+            zone, 
+            func,
+            continous)
+        zoneEvent:Insert()
+    end
+end
+
+function MissionEvents:OnGroupInsideZone( group, zone, func, continous )
+    if not isBoolean(continous) then
+        continous = true
+    end
+    local zoneEvent = nil
+    if group ~= nil then
+        zoneEvent = ZoneEvent:NewForObject(
+            group, 
+            ZoneEventObjectType.Group, 
+            ZoneEventType.Inside, 
+            zone, 
+            func,
+            continous)
+    else
+        zoneEvent = ZoneEvent:NewForZone(
+            ZoneEventObjectType.Group, 
+            ZoneEventType.Inside, 
+            zone, 
+            func,
+            continous)
+    end
+    zoneEvent:Insert()
+end
+
+function MissionEvents:OnGroupLeftZone( group, zone, func, continous )
+    if group == nil then
+        error("MissionEvents:OnGroupLeftZone :: group was unassigned") end
+
+    local zoneEvent = ZoneEvent:NewForObject(
+        group, 
+        ZoneEventObjectType.Group, 
+        ZoneEventType.Left, 
+        zone, 
+        func,
+        continous)
+    zoneEvent:Insert()
+end
+
+
 
 Trace("DCAF.Core was loaded")
