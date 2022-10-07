@@ -18,11 +18,54 @@ function isClass( value, class ) return isTable(value) and value.ClassName == cl
 function isUnit( value ) return isClass(value, "UNIT") end
 function isGroup( value ) return isClass(value, "GROUP") end
 function isZone( value ) return isClass(value, "ZONE") end
+
 function isAssignedString( value )
     if not isString(value) then
         return false end
 
     return string.len(value) > 0 
+end
+
+function trimInstanceFromName( name, qualifierAt )
+    if not isNumber(qualifierAt) then
+        qualifierAt = string.find(name, "#%d")
+    end
+    if not qualifierAt then
+        return name end
+
+    return string.sub(name, 1, qualifierAt-1)
+end
+
+function isNameInstanceOf( name, templateName )
+    if name == templateName then
+        return true end
+
+Debug("isNameInstanceOf :: name: " .. name .. " :: templateName: " .. templateName)        
+    -- check for spawned pattern (eg. "Unit-1-1 #001") ...
+    local i = string.find(name, "#%d")
+    if i then
+        local test = trimInstanceFromName(name, i)
+Debug("isNameInstanceOf :: test: " .. test)        
+        if test == templateName then
+Debug("isNameInstanceOf :: nisse")        
+            return true, templateName end
+    end
+
+    if i and trimInstanceFromName(name, i) == templateName then
+        return true, templateName
+    end
+    return false
+end
+
+function isUnitInstanceOf( unit, unitTemplate )
+    if unit.UnitName == unitTemplate.UnitName then
+        return true end
+
+    return isNameInstanceOf( unit:GetGroup().GroupName, unitTemplate:GetGroup().GroupName )
+end
+
+function isGroupInstanceOf( group, groupTemplate )
+    return isNameInstanceOf( group.GroupName, groupTemplate.GroupName )
 end
 
 function swap(a, b)
@@ -89,6 +132,22 @@ function tableIndexOf( table, item )
     return -1
 end
 
+function tableKeyOf( table, item )
+    if not isTable(table) then
+        error("indexOfItem :: unexpected type for table: " .. type(table)) end
+
+    if item == nil then
+        error("indexOfItem :: item was unassigned") end
+
+    for key, value in pairs(table) do
+        if isFunction(item) and item(value) then
+            return key
+        elseif item == value then
+            return key
+        end
+    end
+end
+
 function TraceIgnore(message, ...)
     Trace(message .. " :: IGNORES")
     return arg
@@ -102,6 +161,14 @@ end
 function exitWarning(message, ...)
     Warning(message .. " :: EXITS")
     return arg
+end
+
+function errorOnDebug(message)
+    if DCAFCore.Debug then
+        error(message)
+    else
+        Error(message)
+    end
 end
 
 function activateNow( source )
@@ -175,7 +242,7 @@ function Trace( message )
         BASE:E("DCAF-TRC @"..timestamp.." ===> "..tostring(message))
     end
     if (DCAFCore.TraceToUI) then
-      MESSAGE:New("DCAF-TRC: "..message):ToAll()
+        MESSAGE:New("DCAF-TRC: "..message):ToAll()
     end
 end
   
@@ -185,7 +252,7 @@ function Debug( message )
         BASE:E("DCAF-DBG @"..timestamp.." ===> "..tostring(message))
     end
     if (DCAFCore.DebugToUI) then
-      MESSAGE:New("DCAF-DBG: "..message):ToAll()
+        MESSAGE:New("DCAF-DBG: "..message):ToAll()
     end
 end
   
@@ -193,10 +260,17 @@ function Warning( message )
     local timestamp = UTILS.SecondsToClock( UTILS.SecondsOfToday() )
     BASE:E("DCAF-WRN @"..timestamp.."===> "..tostring(message))
     if (DCAFCore.TraceToUI or DCAFCore.DebugToUI) then
-      MESSAGE:New("DCAF-WRN: "..message):ToAll()
+        MESSAGE:New("DCAF-WRN: "..message):ToAll()
     end
 end
 
+function Error( message )
+    local timestamp = UTILS.SecondsToClock( UTILS.SecondsOfToday() )
+    BASE:E("DCAF-ERR @"..timestamp.."===> "..tostring(message))
+    if (DCAFCore.TraceToUI or DCAFCore.DebugToUI) then
+        MESSAGE:New("DCAF-ERR: "..message):ToAll()
+    end
+end
 
 
 ---------------------------- FILE SYSTEM -----------------------------
@@ -235,7 +309,6 @@ function getUnit( source )
     if (isString(source)) then
         return UNIT:FindByName( source )
     end
-    return nil
 end
 
 --[[
@@ -259,7 +332,6 @@ function getGroup( source )
     if (unit ~= nil) then 
         return unit:GetGroup() 
     end
-    return nil
 end
   
 function isSameHeading( group1, group2 ) 
@@ -559,9 +631,9 @@ DebugAudioMessageToAll = false -- set to true to debug audio messages
 Sends a simple message to groups, clients or lists of groups or clients
 ]]--
 function MessageTo( recipient, message, duration )
-    if (recipient == nil) then
-        return exitWarning("MessageTo :: Recipient name not specified")
-    end
+    -- if (recipient == nil) then
+    --     return exitWarning("MessageTo :: Recipient name not specified")
+    -- end
     if (message == nil) then
         return exitWarning("MessageTo :: Message was not specified")
     end
@@ -581,60 +653,53 @@ function MessageTo( recipient, message, duration )
         return exitWarning("MessageTo-?"..recipient.." :: Group could not be resolved")
     end
 
-    if isTable(recipient) then
-        if (string.match(message, ".\.ogg") or string.match(message, ".\.wav")) then
-            local audio = USERSOUND:New(message)
-            if DebugAudioMessageToAll then
-                audio:ToAll()
-            elseif isGroup(recipient) then
-                Trace("MessageTo (audio) :: group " .. recipient.GroupName .. " :: '" .. message .. "'")
-                audio:ToGroup(recipient)
-            elseif isUnit(recipient) then
-                Trace("MessageTo (audio) :: unit " .. recipient:GetName() .." :: '" .. message .. "'")
-                audio:ToUnit(recipient)
-            end
-            return
-        end
-        
-        local msg = MESSAGE:New(message, duration)
-        if isGroup(recipient) then
-            Trace("MessageTo :: group " .. recipient.GroupName .. " :: '" .. message .."'")
-            msg:ToGroup(recipient)
-            return
+    if (string.match(message, ".\.ogg") or string.match(message, ".\.wav")) then
+        local audio = USERSOUND:New(message)
+        if recipient == nil or DebugAudioMessageToAll then
+            Trace("MessageTo (audio) :: (all) " .. recipient.GroupName .. " :: '" .. message .. "'")
+            audio:ToAll()
+        elseif isGroup(recipient) then
+            Trace("MessageTo (audio) :: group " .. recipient.GroupName .. " :: '" .. message .. "'")
+            audio:ToGroup(recipient)
         elseif isUnit(recipient) then
-            Trace("MessageTo :: unit " .. recipient:GetName() .. " :: '" .. message .. "'")
-            msg:ToUnit(recipient)
-            return
+            Trace("MessageTo (audio) :: unit " .. recipient:GetName() .." :: '" .. message .. "'")
+            audio:ToUnit(recipient)
         end
-        -- if (recipient.ClassName == "CLIENT") then obsolete?
-        --     if (string.match(message, ".\.ogg") or string.match(message, ".\.wav")) then
-        --         USERSOUND:New(message):ToGroup(recipient)
-        --         Trace("MessageTo (sound) :: Group "..recipient.GroupName.." :: '"..message.."'")
-        --         return
-        --     end
-        --     MESSAGE:New(message, duration):ToClient(recipient)
-        --     Trace("MessageTo :: Client "..recipient:GetName().." :: "..message.."'")
-        --     return
-        -- end
-        for k, v in pairs(recipient) do
-            MessageTo( v, message, duration )
-        end
+        return
+    end
+    
+    local msg = MESSAGE:New(message, duration)
+    if recipient == nil then
+        Trace("MessageTo :: (all) :: '" .. message .."'")
+        msg:ToAll()
+        return
+    elseif isGroup(recipient) then
+        Trace("MessageTo :: group " .. recipient.GroupName .. " :: '" .. message .."'")
+        msg:ToGroup(recipient)
+        return
+    elseif isUnit(recipient) then
+        Trace("MessageTo :: unit " .. recipient:GetName() .. " :: '" .. message .. "'")
+        msg:ToUnit(recipient)
+        return
+    end
+    for k, v in pairs(recipient) do
+        MessageTo( v, message, duration )
+    end
     return
-  end
+end
 
-  local function SendMessageToClient( recipient )
-      local unit = CLIENT:FindByName( recipient )
-      if (unit ~= nil) then
-          Trace("MessageTo-"..recipient.." :: "..message)
-          MESSAGE:New(message, duration):ToClient(unit)
-          return
-      end
-  end
+local function SendMessageToClient( recipient )
+    local unit = CLIENT:FindByName( recipient )
+    if (unit ~= nil) then
+        Trace("MessageTo-"..recipient.." :: "..message)
+        MESSAGE:New(message, duration):ToClient(unit)
+        return
+    end
 
-  if (pcall(SendMessageToClient(recipient))) then 
-    return end
+    if (pcall(SendMessageToClient(recipient))) then 
+        return end
 
-  Warning("MessageTo-"..recipient.." :: Recipient not found")
+    Warning("MessageTo-"..recipient.." :: Recipient not found")
 end
 
 function SetFlag( name, value, menuKey )
@@ -754,7 +819,7 @@ function DumpPretty(value, options)
         if (options.asJson) then
             return "{ }" 
         end
-        return "{ --[[ data omitted ]]-- }"
+        return "{ --[[ data omitted ]] }"
       end
   
       local s = '{\n'
@@ -774,13 +839,21 @@ function DumpPretty(value, options)
     end
   
     return dumpRecursive(value, 0)
+end
   
-  end
-  
-  function DumpPrettyJson(value, options)
+function DumpPrettyJson(value, options)
     options = (options or DumpPrettyOptions:New()):AsJson()
     return DumpPretty(value, options)
-  end
+end
+
+function DumpPrettyDeep(value, options)
+    if isTable(options) then
+        options = options:Deep()
+    else
+        options = DumpPrettyOptions:New():Deep()
+    end
+    return DumpPretty(value, options)
+end
   
 function DistanceToStringA2A( meters, estimated )
     if (not isNumber(meters)) then error( "<meters> must be a number" ) end
@@ -1459,6 +1532,7 @@ end
 MissionEvents = { }
 
 local _missionEventsHandlers = {
+    _missionEndHandlers = {},
     _groupSpawnedHandlers = {},
     _unitSpawnedHandlers = {},
     _unitDeadHandlers = {},
@@ -1507,17 +1581,26 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
     local function addInitiatorAndTarget( event )
         if event.initiator ~= nil and event.IniUnit == nil then
             event.IniUnit = UNIT:Find(event.initiator)
-            event.IniUnitName = event.IniUnit:GetName()
+            event.IniUnitName = event.IniUnit.UnitName
             event.IniGroup = event.IniUnit:GetGroup()
             event.IniGroupName = event.IniGroup.GroupName
         end
         local dcsTarget = event.target or getTarget(event)
         if event.TgtUnit == nil and dcsTarget ~= nil then
             event.TgtUnit = UNIT:Find(dcsTarget)
-            event.TgtUnitName = event.TgtUnit:GetName()
+            event.TgtUnitName = event.TgtUnit.UnitName
             event.TgtGroup = event.TgtUnit:GetGroup()
             event.TgtGroupName = event.TgtGroup.GroupName
         end
+        return event
+    end
+
+    local function addPlace( event )
+        if event.place == nil or event.Place ~= nil then
+            return event
+        end
+        event.Place = AIRBASE:Find( event.place )
+        event.PlaceName = event.Place:GetName()
         return event
     end
 
@@ -1632,7 +1715,9 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
     end
 
     if event.id == world.event.S_EVENT_LAND then
-        MissionEvents:Invoke( _missionEventsHandlers._aircraftLandedHandlers, event)
+        addInitiatorAndTarget(addPlace(event))
+Debug("nisse - #_missionEventsHandlers._aircraftLandedHandlers: " .. tostring(#_missionEventsHandlers._aircraftLandedHandlers))
+        MissionEvents:Invoke(_missionEventsHandlers._aircraftLandedHandlers, addInitiatorAndTarget(addPlace(event)))
         return
     end
 
@@ -1647,7 +1732,7 @@ function MissionEvents:AddListener(listeners, func, predicateFunc, insertFirst )
     else
         table.insert(listeners, func)
     end
-    if (isMissionEventsListenerRegistered) then
+    if isMissionEventsListenerRegistered then
         return 
     end
     isMissionEventsListenerRegistered = true
@@ -1704,7 +1789,11 @@ function MissionEvents:EndOnShootingStop( func ) MissionEvents:RemoveListener(_m
 function MissionEvents:OnUnitHit( func, insertFirst ) MissionEvents:AddListener(_missionEventsHandlers._unitHitHandlers, func, nil, insertFirst) end
 function MissionEvents:EndOnUnitHit( func ) MissionEvents:RemoveListener(_missionEventsHandlers._unitHitHandlers, func) end
 
-function MissionEvents:OnAircraftLanded( func, insertFirst ) MissionEvents:AddListener(_missionEventsHandlers._aircraftLandedHandlers, func, nil, insertFirst) end
+function MissionEvents:OnAircraftLanded( func, insertFirst ) 
+    MissionEvents:AddListener(_missionEventsHandlers._aircraftLandedHandlers, func, nil, insertFirst) 
+Debug("core - MissionEvents:OnAircraftLanded :: func: " .. tostring(func) .. " ::  registered :: #_aircraftLandedHandlers: " .. tostring(#_missionEventsHandlers._aircraftLandedHandlers))    
+
+end
 function MissionEvents:EndOnAircraftLanded( func ) MissionEvents:RemoveListener(_missionEventsHandlers._aircraftLandedHandlers, func) end
 
 
@@ -1770,6 +1859,88 @@ _onDivertFunc = function( controllable, route ) -- called by Divert()
     MissionEvents:Invoke(_missionEventsHandlers._groupDivertedHandlers, { Controllable = controllable, Route = route })
 end
 
+------------------------------- [ EVENT PRE-REGISTRATION /LATE ACTIVATION ] -------------------------------
+--[[ 
+    This api allows Storylines to accept delegates and postpone their registration 
+    until the Storyline runs
+ ]]
+
+ local DCAFEventActivation = {  -- use to pre-register event handler, to be activated when Storyline runs
+    eventName = nil,         -- string (name of MissionEvents:OnXXX function )
+    func = nil,              -- event handler function
+    notifyFunc = nil,        -- (optional) callback handler, for notifying the event was activated
+    insertFirst = nil,       -- boolean; passed to event delegate registration (see StorylineEventDelegate:ActivateFor)
+}
+
+local _DCAFEvents_lateActivations = {} -- { key = storyline name, value = { -- list of <DCAFEventActivation> } }
+
+DCAFEvents = {
+    OnAircraftLanded = "OnAircraftLanded"
+    -- todo add more events ...
+}
+
+local _DCAFEvents = {
+    [DCAFEvents.OnAircraftLanded] = function(func, insertFirst) MissionEvents:OnAircraftLanded(func, insertFirst) end
+    -- todo add more events ...
+}
+
+function _DCAFEvents:Activate(activation)
+    local activator = _DCAFEvents[activation.eventName]
+    if activator then
+Debug("nisse - DCAFEvents:Activate :: activator: " .. DumpPretty(activator))
+        activator(activation.func, activation.insertFirst)
+
+        -- notify event activation, if callback func is registered ...
+        if activation.notifyFunc then
+            activation.notifyFunc({
+                EventName = activation.eventName,
+                Func = activation.func,
+                InsertFirst = activation.insertFirst
+            })
+        end
+    else
+        error("DCAFEvents:Activate :: cannot activate delegate for event '" .. activation.eventName .. " :: event is not supported")
+    end
+end
+
+function _DCAFEvents:ActivateFor(source)
+Debug("nisse - _DCAFEvents:ActivateFor :: source:" .. Dump(source) .. " :: _DCAFEvents_lateActivations: " .. DumpPrettyDeep(_DCAFEvents_lateActivations))
+
+    local activations = _DCAFEvents_lateActivations[source]
+    if not activations then
+        return
+    end
+Debug("nisse - _DCAFEvents:ActivateFor :: #activations: " .. DumpPrettyDeep(#activations) .. " :: (1 expected)")
+    _DCAFEvents_lateActivations[source] = nil
+    for _, activation in ipairs(activations) do
+        _DCAFEvents:Activate(activation)
+    end
+end
+
+function DCAFEvents:PreActivate(source, eventName, func, onActivateFunc)
+    if source == nil then
+        error("DCAFEvents:LateActivate :: unassigned source") end
+
+    if not isAssignedString(eventName) then
+        error("DCAFEvents:LateActivate :: unsupported eventName value: " .. Dump(eventName)) end
+
+    if not DCAFEvents[eventName] then
+        error("DCAFEvents:LateActivate :: unsupported event: " .. Dump(eventName)) end
+
+    local activation = routines.utils.deepCopy(DCAFEventActivation)
+    activation.eventName = eventName
+    activation.func = func
+    activation.onActivateFunc = onActivateFunc
+    local activations = _DCAFEvents_lateActivations[source]
+    if not activations then
+        activations = {}
+        _DCAFEvents_lateActivations[source] = activations
+    end
+    table.insert(activations, activation)
+end
+
+function DCAFEvents:ActivateFor(source) _DCAFEvents:ActivateFor(source) end
+
 --------------------------------------------- [[ ZONE EVENTS ]] ---------------------------------------------
 
 local ZoneEventState = {
@@ -1810,7 +1981,7 @@ local ZoneEvent = {
     continous = false,               -- when set, the event is not automatically removed when triggered
 }
 
-local ZoneEventSetGroup = {
+local ZoneCentricZoneEventInfo = {
     zone = nil,                      -- the monitored zone
     zoneEvents = {},                 -- list of <ZoneEvent>
 }
@@ -1821,7 +1992,7 @@ local ObjectCentricZoneEvents = {
 
 local ZoneCentricZoneEvents = {
     -- key = zoneName, 
-    -- value = <ZoneEventSetGroup>
+    -- value = <ZoneCentricZoneEventInfo>
 }
 
 local ZoneEventArgs = {
@@ -1829,19 +2000,15 @@ local ZoneEventArgs = {
     ZoneName = nil,                  -- string
 }
 
-function ZoneEventSetGroup:New(zone, zoneName)
-    local zesg = routines.utils.deepCopy(ZoneEventSetGroup)
-    zesg.zone = zone
-    ZoneCentricZoneEvents[zoneName] = zesg
+function ZoneCentricZoneEventInfo:New(zone, zoneName)
+    local info = routines.utils.deepCopy(ZoneCentricZoneEventInfo)
+    info.zone = zone
+    ZoneCentricZoneEvents[zoneName] = info
     ZoneEventState._countZoneEventZones = ZoneEventState._countZoneEventZones + 1
-    return zesg
+    return info
 end
 
-function ZoneEventSetGroup:Get(zoneName)
-    return ZoneCentricZoneEvents[zoneName]
-end
-
-function ZoneEventSetGroup:Scan()
+function ZoneCentricZoneEventInfo:Scan()
     local setGroup = SET_GROUP:New():FilterZones({ self.zone }):FilterActive():FilterOnce()
     local groups = {}
     setGroup:ForEachGroup(
@@ -2000,11 +2167,11 @@ end
 
 function ZoneEvent:Insert()
     if self.isZoneCentered then
-        local zesg = ZoneCentricZoneEvents[self.zoneName]
-        if not zesg then
-            zesg = ZoneEventSetGroup:New(self.zone, self.zoneName)
+        local info = ZoneCentricZoneEvents[self.zoneName]
+        if not info then
+            info = ZoneCentricZoneEventInfo:New(self.zone, self.zoneName)
         end
-        table.insert(zesg.zoneEvents, self)
+        table.insert(info.zoneEvents, self)
     else
         table.insert(ObjectCentricZoneEvents, self)
     end
@@ -2051,12 +2218,12 @@ function ZoneEvent:NewForZone(objectType, eventType, zone, func, continous, make
     zoneEvent.continous = continous
 
     if makeZest then
-        local zesg = ZoneCentricZoneEvents[zoneEvent.zoneName]
-        if not zesg then
-            zesg = ZoneEventSetGroup:New(zoneEvent.zone)
-            ZoneCentricZoneEvents[zoneEvent.zoneName] = zesg
+        local info = ZoneCentricZoneEvents[zoneEvent.zoneName]
+        if not info then
+            info = ZoneCentricZoneEventInfo:New(zoneEvent.zone)
+            ZoneCentricZoneEvents[zoneEvent.zoneName] = info
         end
-        zesg:AddEvent()
+        info:AddEvent()
     end
     return zoneEvent
 end

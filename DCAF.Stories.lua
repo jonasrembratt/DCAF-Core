@@ -2,28 +2,70 @@
 
 local _allStories = {}
 
-Story = {
-    Name = nil,              -- name of the story
-    Enabled = true,          -- must be set for stories to activate
-    Storylines = {},         -- list of <Storyline>
-    _timer = nil,
+local StoryGroupIndex = {     -- used for keeping track of GROUPs, and how they are related to stories
+    GroupName = nil,          -- string; name of group
+    Group = nil,              -- <GROUP> (MOOSE object)
+    Stories = {},             -- key = story name, value = { list of <Story> where group partakes }
+    Storylines = {},          -- key = story name, value = { list of <Storyline> where group partakes }
+    CountStories = 0,         -- integer; number of stories controlling the <GROUP>
+    CountStorylines = 0,      -- integer; number of storylines controlling the <GROUP>
 }
 
-StorylineState = {
+local StoryIndex = {
+    CountStories = 0,         -- integer; counts number of stories 
+    CountStorylines = 0,      -- integer; counts number of storylines
+    CountGroups = 0,          -- integer; counts number of groups controlled by stories
+    Stories = {
+        -- key = Story name; value = <Story>
+    },
+    Storylines = {
+        -- key = Storyline name; value = <Storyline>
+    },
+    Groups = {
+        -- key = group name; value = <StoryGroupIndex>
+    }
+}
+
+StorySandboxScope = {
+    None = 'None',            -- no sandbox in use (completely unrestricted)
+    Story = 'Story',          -- sandbox is Story (eg. one stoyline may destroy groups in other Storylines of same Story)
+    Storyline = 'Storyline'   -- sandbox is Storyline (eg. storyline cannot affect state of other storylines, other than starting them)
+}
+
+StoryConfiguration = {
+    Sandbox = StorySandboxScope.Storyline   -- <StorySandboxScope>
+}
+
+StoryState = {
     Pending = 1,
     Running = 2,
     Done = 3
 }
 
+Story = {
+    Name = nil,               -- name of the story
+    Description = nil,        -- string, Story description
+    Enabled = true,           -- must be set for stories to activate
+    Storylines = {},          -- list of <Storyline>
+    Config = nil,             -- <StoryConfiguration>
+    State = StoryState.Pending, -- story  state
+    _timer = nil,
+    _onStartedHandlers = {},  -- list of <function(<Story>)
+    _onEndedHandlers = {}     -- list of <function(<Story>)
+}
+
 Storyline = {
-    Name = nil,              -- name of the story line
-    Description = nil,       -- (optional) story line description 
-    State = StorylineState.Pending, -- story line state
-    WasCancelled = false,    -- when set; storu line was cancelled
-    Enabled = true,          -- must be set for story to activate
-    Level = nil,             -- (DifficultyLevel) optional; when set story will only run if level is equal or higher
-    StartTime = nil,         -- how long (seconds) into the mission before story begins
-    Groups = {},             -- key = list of <StoryGroup>
+    _nisse_debug = nil,
+    Name = nil,               -- name of the story line (see also Storyline:FullName())
+    Story = nil,              -- <Story>
+    Description = nil,        -- (optional) story line description 
+    State = StoryState.Pending, -- <StoryState>
+    WasCancelled = false,     -- when set; storu line was cancelled
+    Enabled = true,           -- must be set for story to activate
+    Level = nil,              -- (DifficultyLevel) optional; when set story will only run if level is equal or higher
+    StartTime = nil,          -- how long (seconds) into the mission before story begins
+    Groups = {},              -- key = list of <StoryGroup>
+    Config = nil,             -- <StoryConfiguration>
 
     StartConditionFunc = nil, -- callback function(<self>, <MissionStories>) , returns true when story should start
     EndConditionFunc = nil,   -- callback function(<self>, <MissionStories>) , returns true when story should end
@@ -33,11 +75,12 @@ Storyline = {
     OnEndedFunc = nil        -- event handler: triggered when story ends
 }
 
-StorylineWaiting = {}
+StorylineIdle = {}
 
-StoryGroup = {
-    GroupName = nil,
-    Group = nil,           -- the activated/spawned group
+local StoryGroup = {
+    GroupName = nil,         -- string; name of GROUP
+    Group = nil,             -- the activated/spawned group
+    Storyline = nil,         -- <Storyline>
 }
 
 StoryEventArgs = {
@@ -45,13 +88,113 @@ StoryEventArgs = {
     Storyline = nil
 }
 
-function StoryGroup:New(groupName)
+function StoryConfiguration:New()
+    return routines.utils.deepCopy(StoryConfiguration)
+end
+
+
+------------------------------- [ INDEXING ] -------------------------------
+
+function StoryGroupIndex:New(storyGroup)
+    local index = routines.utils.deepCopy(StoryGroupIndex)
+    index.GroupName = storyGroup.GroupName
+    index.Group = storyGroup.Group
+    index.Stories[storyGroup.Storyline.Story.Name] = storyGroup.Storyline.Story
+    index.Storylines[storyGroup.Storyline.Name] = storyGroup.Storyline
+    return index
+end
+
+function StoryGroupIndex:Update(storyGroup)
+    self.Stories[storyGroup.Storyline.Story.Name] = storyGroup.Storyline.Story
+    self.Storylines[storyGroup.Storyline.Name] = storyGroup.Storyline
+end
+
+function StoryIndex:AddGroup(storyGroup)
+    local index = StoryIndex.Groups[storyGroup.GroupName]
+    if index then
+        index:Update(storyGroup)
+        return
+    end
+    index = StoryGroupIndex:New(storyGroup)
+    StoryIndex.CountGroups = StoryIndex.CountGroups + 1
+    StoryIndex.Groups[storyGroup.GroupName] = index
+end
+
+function StoryIndex:AddStoryline(storyline)
+    StoryIndex.Storylines[storyline.Name] = storyline
+    StoryIndex.CountStorylines = StoryIndex.CountStorylines + 1
+    for _, storyGroup in ipairs(storyline.Groups) do
+        StoryIndex:AddGroup(storyGroup)
+    end
+end
+
+function StoryIndex:AddStory(story)
+    StoryIndex.Stories[story.Name] = story
+    StoryIndex.CountStories = StoryIndex.CountStories + 1
+    for _, storyline in ipairs(story.Storylines) do
+        StoryIndex:AddStoryline(storyline)
+    end
+end
+
+function StoryIndex:GetGroupStories(groupName)
+    local index = StoryIndex.Groups[groupName]
+    if index ~= nil then
+        return index.Stories
+    end
+    return {}
+end
+
+function StoryIndex:CountGroupStories(groupName)
+    local index = StoryIndex.Groups[groupName]
+    if index ~= nil then
+        return index.CountStoryies
+    end
+    return 0
+end
+
+function StoryIndex:GetGroupStorylines(groupName)
+    local index = StoryIndex.Groups[groupName]
+    if index ~= nil then
+        return index.Storylines
+    end
+    return {}
+end
+
+function StoryIndex:CountGroupStorylines(groupName)
+    local index = StoryIndex.Groups[groupName]
+    if index ~= nil then
+        return index.CountStorylines
+    end
+    return 0
+end
+
+function StoryIndex:IsGroupExclusiveToStory(groupName, story)
+    local index = StoryIndex.Groups[groupName]
+    if index == nil or index.CountStories ~= 0 then 
+        return false end
+
+    return index.Stories[story.Name] ~= nil
+end
+
+function StoryIndex:IsGroupExclusiveToStoryline(groupName, storyline)
+    local index = StoryIndex.Groups[groupName]
+    if index == nil or index.CountStorylines ~= 0 then 
+        return false end
+
+    return index.Storylines[storyline.Name] ~= nil
+end
+
+
+------------------------------- [ STORY GROUP ] -------------------------------
+
+function StoryGroup:New(groupName, storyline)
     local sg = routines.utils.deepCopy(StoryGroup)
     sg.Group = GROUP:FindByName(groupName)
     if not sg.Group then
         error("StoryGroup:New :: group not found: " .. groupName) end
 
     sg.GroupName = groupName
+    sg.Storyline = storyline
     return sg
 end
 
@@ -61,11 +204,11 @@ function Story:FindStoryline(storylineName)
             return storyline
         end
     end
-    return nil
 end
 
-function StoryGroup:Run(time)
-    if self._storyline.State == StorylineState.Pending then
+function StoryGroup:Run()
+Debug("nisse - StoryGroup:Run :: storyline: " .. self.Storyline.Name .. " :: group: " .. self.GroupName)
+    if self.Storyline:IsPending() then
         self.Group = activateNow(self.GroupName)
     else
         self.Group = spawnNow(self.GroupName)
@@ -86,6 +229,9 @@ function StoryGroup:Stop()
     return self
 end
 
+
+------------------------------- [ STORYLINE ] -------------------------------
+
 function Storyline:New(name, description)
     local ms = routines.utils.deepCopy(Storyline)
     ms.Name = name
@@ -93,7 +239,18 @@ function Storyline:New(name, description)
     return ms
 end
 
-function StorylineWaiting(name, description)
+function Storyline:SandboxScope()
+    return self.Config.Sandbox
+end
+
+function Storyline:FullName()
+    if self.Story ~= nil then
+        return self.Story.Name ..'/'..self.Name
+    end
+    return self.Name
+end
+
+function StorylineIdle:New(name, description)
     local storyline = Storyline:New(name, description)
     storyline._isIdle = true
     return storyline
@@ -103,7 +260,7 @@ function Storyline:WithDescription(description)
     if description ~= nil and not isString(description) then
         error("Storyline:WithDescription :: unexpected type for description: " .. type(description)) end
 
-        self.StoryDescription = description
+    self.StoryDescription = description
     return self
 end
 
@@ -153,15 +310,23 @@ function Storyline:WithEndCondition(func, onDoneFunc)
 end
 
 function Storyline:WithGroups(...)
-    for _, sg in ipairs(arg) do
-        if isString(sg) then
-            sg = StoryGroup:New(sg)
+    if self.Story ~= nil then
+        error("Storyline:WithGroups :: cannot initialize Storyline using 'WithGroup' after Storyline was added to story. Please use 'Storyline:AddGroups' instead") end
+
+    for _, group in ipairs(arg) do
+        local storyGroup = nil
+        if isString(group) then
+            storyGroup = StoryGroup:New(group, self)
         end
-        sg._storyline = self
-        table.insert(self.Groups, sg)
+        storyGroup.Storyline = self
+        table.insert(self.Groups, storyGroup)
     end
     return self
 end
+
+function Storyline:IsPending() return self.State == StoryState.Pending end
+function Storyline:IsRunning() return self.State == StoryState.Running end
+function Storyline:IsDone() return self.State == StoryState.Done end
 
 function Storyline:FindGroup(groupName)
     for _, sg in ipairs(self.Groups) do
@@ -172,44 +337,52 @@ function Storyline:FindGroup(groupName)
 end
 
 function Storyline:FindUnit(unitName)
-    for _, sg in ipairs(self.Groups) do
-        local index = tableIndexOf(sg.Group:GetUnits(), function(unit) return unit.UnitName == unitName end)
-        if index > 0 then
+    for _, storyGroup in ipairs(self.Groups) do
+        local key = tableKeyOf(storyGroup.Group:GetUnits(), 
+            function(unit) 
+                return unit.UnitName == unitName 
+            end)
+        if key then
             return true 
         end
     end
 end
 
-function Storyline:Run(time)
-    if not self.Enabled then
+function Storyline:Run(delay)
+    local function run()
+        if not self.Enabled then
+            return self end
+
+        DCAFEvents:ActivateFor(self.Name)
+        for _, storyGroup in ipairs(self.Groups) do
+            storyGroup:Run(time)
+        end
+        self._isIdle = false
+        self.State = StoryState.Running    
+Debug("nisse - Storyline:Run :: self: " .. DumpPretty(self))
+        if self.OnStartedFunc ~= nil then
+            self.OnStartedFunc(StoryEventArgs:New(self))
+        end
         return self
     end
-    for _, sg in ipairs(self.Groups) do
-        sg:Run(time)
+
+    if isNumber(delay) then
+        Delay(delay, run)
+    else
+        run()
     end
-    self._isIdle = false
-    self.State = StorylineState.Running
-    if self.OnStartedFunc ~= nil then
-        self.OnStartedFunc(StoryEventArgs:New(self))
-    end
-    return self
 end
 
-function Story:RunStoryline(storylineName)
-    if not isString(storylineName) then 
-        error("Story:RunStoryline :: storylineName was unassigned") end
-
-    local storyline = self:FindStoryline(storylineName)
-    if storyline and storyline.State == StorylineState.Pending then
-        Trace("Story-".. self.Name .." :: starts storyline '" .. storyline.Name .. "' ...")
-        storyline:Run()
-    end
-    return self
-end
+-- function Storyline:Restart(delay)
+--     if self.State == StoryState.Pending then
+--         return self:Run(delay)
+--     end
+--     -- todo Consider supporting restarting storylines
+-- end
 
 function StoryEventArgs:New(storyline)
     local args = routines.utils.deepCopy(StoryEventArgs)
-    args.Story = storyline._story
+    args.Story = storyline.Story
     args.Storyline = storyline
     return args
 end
@@ -218,42 +391,55 @@ function StoryEventArgs:FindStoryline(storylineName)
     return self.Story:FindStoryline(storylineName)
 end
 
-function StoryEventArgs:RunStoryline(storylineName)
-    return self.Story:RunStoryline(storylineName)
+function StoryEventArgs:RunStoryline(storylineName, delay)
+    return self.Story:RunStoryline(storylineName, delay)
 end
 
-function StoryEventArgs:RunStory(storyName)
-    return self.Story:RunStory(storyName)
+function StoryEventArgs:RunStory(storyName, delay)
+    return self.Story:RunStory(storyName, delay)
 end
 
-function Storyline:_startIfDue(time)
+function StoryEventArgs:EndStoryline()
+    self.Storyline:End()
+end
+
+function StoryEventArgs:EndStory()
+    self.Storyline.Story:End()
+end
+
+function StoryEventArgs:DestroyGroups(...)
+    return self.Storyline:DestroyGroups(...)
+end
+
+function Storyline:_runIfDue()
     if not self.Enabled or self._isIdle or (self.StartTime ~= nil and self.StartTime > time) then
         return false end
     
     if self.StartConditionFunc ~= nil and not self.StartConditionFunc(StoryEventArgs:New(self)) then
         return false end
 
-    self:Run(time)
+    self:Run()
     return true
 end
 
 function Storyline:End()
-    if self.State ~= StorylineState.Running then
+    if not self:IsRunning() then
         return end
 
     if self._onUnitDeadFunc then
         MissionEvents:EndOnUnitDead(self._onUnitDeadFunc)
     end
-    self.State = StorylineState.Done
+    self.State = StoryState.Done
     if self.OnEndedFunc ~= nil then
         self.OnEndedFunc(StoryEventArgs:New(self))
     end
 end
 
 function Storyline:_endOnCondition(now)
-    if self.State ~= self.Running then
-        return false
-    end
+
+    if not self:IsRunning() then
+        return false end
+
     if self.EndConditionFunc ~= nil and self.EndConditionFunc(StoryEventArgs:New(self)) then
         self:End()
     elseif self.CancelCondition ~= nil and self.CancelCondition(StoryEventArgs:New(self)) then
@@ -263,6 +449,33 @@ function Storyline:_endOnCondition(now)
 end
 
 function Storyline:DestroyGroups(...)
+    local groups = arg
+    if #arg == 0 then
+        groups = self.Groups
+    end
+
+    for _, sg in ipairs(groups) do
+        sg:Destroy()
+    end
+    return self
+end
+
+function Storyline:DestroyGroup(group)
+    if group == nil then
+        error("Storyline:DestroyGroup :: group was unassigned") end
+
+    group = getGroup(group)
+    if group == nil then
+        error("Storyline:DestroyGroup :: group cannot be resolved from: " .. Dump(group)) end
+
+    local sandboxScope = self:SandboxScope()
+    if sandboxScope == StorySandboxScope.Story and not StoryIndex:IsGroupExclusiveToStory(group.GroupName, self.Story) then
+        error("Storyline:DestroyGroup :: cannot destroy group that are also controlled by other stories (see sandbox configuration)") 
+    end
+    if sandboxScope == StorySandboxScope.Storyline and not StoryIndex:IsGroupExclusiveToStoryline(group.GroupName, self) then
+        error("Storyline:DestroyGroup :: cannot destroy group that are also controlled by other storylines (see sandbox configuration)") 
+    end
+
     local groups = arg
     if #arg == 0 then
         groups = self.Groups
@@ -285,11 +498,15 @@ function Storyline:StopGroups(...)
     return self
 end
 
+function Storyline:_addPendingDelagate(eventName, func)
+
+end
+
 function Storyline:OnStarted(func)
     if not isFunction(func) then
         error("Storyline:OnStarted :: unexpected function type: " .. type(func)) end
 
-        self.OnStartedFunc = func
+    self.OnStartedFunc = func
     return self
 end
 
@@ -297,37 +514,87 @@ function Storyline:OnEnded(func)
     if not isFunction(func) then
         error("Storyline:OnEnded :: unexpected function type: " .. type(func)) end
 
-        self.OnEndedFunc = func
+    self.OnEndedFunc = func
     return self
+end
+
+function Storyline:OnStoryEnded(func)
+    if not isFunction(func) then
+        error("Storyline:OnStoryEnded :: unexpected function type: " .. type(func)) end
+
+    self._onStoryEndedFunc = func
+    return self
+end
+
+--  todo For events, consider pre-registering the handler without calling MissionEvent:... until Storyline runs
+
+local function isStorylineEventUnit(storyline, expectedUnit, eventUnit)
+    if expectedUnit.UnitName == eventUnit.UnitName then
+        if storyline:FindUnit(eventUnit.UnitName) then
+            return true 
+        else
+            return false
+        end
+    end
+
+    -- check whether the event unit was spawned from storyline group ...
+    local isInstance, name = isUnitInstanceOf(eventUnit, expectedUnit)
+    if not isInstance then
+        return false end
+
+    if storyline:FindUnit(eventUnit.UnitName) then
+        return true
+    else
+        return false
+    end
 end
 
 function Storyline:OnAircraftLanded(aircraft, func)
     if aircraft ~= nil then
         aircraft = getUnit(aircraft)
         if aircraft then
-            if not self:FindUnit(aircraft) then
-                error("Storyline:OnGroupDiverted :: unit is not in storyline: " .. aircraft.UnitName) 
+            if not self:FindUnit(aircraft.UnitName) then
+                error("Storyline:OnAircraftLanded :: aircraft '" .. aircraft.UnitName .. "' is not in storyline '"..self:FullName() .. "'")
             end
         else
-            error("Storyline:OnGroupDiverted :: cannot resolve aircraft from: " .. Dump(aircraft))
+            error("Storyline:OnAircraftLanded :: cannot resolve aircraft from: " .. Dump(aircraft))
         end
     end
     if not isFunction(func) then
-        error("Storyline:OnUnitLanded :: unexpected function type: " .. type(func)) end
+        error("Storyline:OnAircraftLanded :: unexpected function type: " .. type(func)) end
 
     local eventFunc = nil
     eventFunc = function(event)
-        -- only trigger for units in storyline ...
-        if aircraft and aircraft.UniName ~= event.IniUnitName then
-            return end
-        if not self:FindGroup(event.IniGroupName) then
+-- Debug("nisse - Storyline:OnAircraftLanded :: event: " .. DumpPretty(event))
+Debug("nisse - Storyline:OnAircraftLanded :: self.State: " .. DumpPrettyDeep(self.State))
+        if not self:IsRunning() then
             return end
 
+        -- only trigger for specified aircraft ...
+        local testUnitName = event.IniGroupName 
+        if aircraft and not isStorylineEventUnit(self, aircraft, event.IniUnit) then
+            return end
+
+        -- this is a one-time event ... 
         MissionEvents:EndOnAircraftLanded(eventFunc)
         event = copyTo(StoryEventArgs:New(self), event)
+Debug("nisse - Storyline:OnAircraftLanded :: self.State: " .. DumpPrettyDeep(self.State))
         func(event)
     end
-    MissionEvents:OnAircraftLanded(eventFunc)
+
+    -- pre-register event if Pending; otherwise, just add it ...
+    if self:IsPending() then
+        DCAFEvents:PreActivate(self.Name, DCAFEvents.OnAircraftLanded, eventFunc, function() 
+            self:OnStoryEnded(function(story)
+                MissionEvents:EndOnAircraftLanded(eventFunc)
+            end)
+        end)
+    else
+        MissionEvents:OnAircraftLanded(eventFunc)
+        self:OnStoryEnded(function(story)
+            MissionEvents:EndOnAircraftLanded(eventFunc)
+        end)
+    end
     return self
 end
 
@@ -345,6 +612,9 @@ function Storyline:OnGroupDiverted(group, func)
 
     local eventFunc = nil
     eventFunc = function(event)
+        if not self:IsRunning() then
+            return end
+
         -- only trigger for specified group or groups in storyline ...
         if group and group.GroupName ~= event.IniGroupName then
             return end
@@ -355,6 +625,9 @@ function Storyline:OnGroupDiverted(group, func)
         event = copyTo(StoryEventArgs:New(self), event)
         func(event)
     end
+    self:OnStoryEnded(function(story)
+        MissionEvents:EndOnGroupDiverted(eventFunc)
+    end)
     MissionEvents:OnGroupDiverted(eventFunc)
     return self
 end
@@ -366,13 +639,19 @@ function Storyline:OnGroupEntersZone(group, zone, func, continous)
 
     local eventFunc = nil
     eventFunc = function(event)
-        -- only trigger for groups in storyline ...
+        if not self:IsRunning() then
+            return end
+
+        -- only trigger for specified group or groups in storyline ...
+        if group and group.GroupName ~= event.IniGroupName then
+            return end
         if not self:FindGroup(event.IniGroupName) then
             return end
 
         event = copyTo(StoryEventArgs:New(self), event)
         func(event)
     end
+    -- todo end event OnGroupEntersZone when Story ends
     MissionEvents:OnGroupEntersZone(group, zone, func, continous)
     return self
 end
@@ -383,7 +662,13 @@ function Storyline:OnGroupInsideZone(group, zone, func, continous)
 
     local eventFunc = nil
     eventFunc = function(event)
-        -- only trigger for groups in storyline ...
+        if not self:IsRunning() then
+            return end
+
+        -- only trigger for specified group or groups in storyline ...
+        if group and group.GroupName ~= event.IniGroupName then
+            return end
+
         if not self:FindGroup(event.IniGroupName) then
             error("Storyline:OnGroupInsideZone :: group is not part of storyline '" .. self.Name .. "': " .. event.IniGroupName)
             return 
@@ -391,6 +676,7 @@ function Storyline:OnGroupInsideZone(group, zone, func, continous)
         event = copyTo(StoryEventArgs:New(self), event)
         func(event)
     end
+    -- todo end event OnGroupInsideZone when Story ends
     MissionEvents:OnGroupInsideZone(group, zone, func, continous)
     return self
 end
@@ -401,13 +687,20 @@ function Storyline:OnGroupLeftZone(group, zone, func, continous)
 
     local eventFunc = nil
     eventFunc = function(event)
-        -- only trigger for groups in storyline ...
+        if not self:IsRunning() then
+            return end
+
+        -- only trigger for specified group or groups in storyline ...
+        if group and group.GroupName ~= event.IniGroupName then
+            return end
+
         if not self:FindGroup(event.IniGroupName) then
             return end
 
         event = copyTo(StoryEventArgs:New(self), event)
         func(event)
     end
+    -- todo end event OnGroupLeftZone when Story ends
     MissionEvents:OnGroupLeftZone(group, zone, func, continous)
     return self
 end
@@ -418,13 +711,20 @@ function Storyline:OnUnitEntersZone(unit, zone, func, continous)
 
     local eventFunc = nil
     eventFunc = function(event)
-        -- only trigger for units in storyline ...
+        if not self:IsRunning() then
+            return end
+
+        -- only trigger for specified unit or units in storyline ...
+        if unit and unit.UnitName ~= event.IniUnitName then
+            return end
+
         if not self:FindUnit(event.IniUnitName) then
             return end
 
         event = copyTo(StoryEventArgs:New(self), event)
         func(event)
     end
+    -- todo end event OnUnitEntersZone when Story ends
     MissionEvents:OnUnitEntersZone(unit, zone, func, continous)
     return self
 end
@@ -435,13 +735,20 @@ function Storyline:OnUnitInsideZone(unit, zone, func, continous)
 
     local eventFunc = nil
     eventFunc = function(event)
-        -- only trigger for units in storyline ...
+        if not self:IsRunning() then
+            return end
+
+        -- only trigger for specified unit or units in storyline ...
+        if unit and unit.UnitName ~= event.IniUnitName then
+            return end
+
         if not self:FindUnit(event.IniUnitName) then
             return end
 
         event = copyTo(StoryEventArgs:New(self), event)
         func(event)
     end
+    -- todo end event OnUnitInsideZone when Story ends
     MissionEvents:OnUnitInsideZone(unit, zone, func, continous)
     return self
 end
@@ -452,13 +759,20 @@ function Storyline:OnUnitLeftZone(unit, zone, func, continous)
 
     local eventFunc = nil
     eventFunc = function(event)
-        -- only trigger for units in storyline ...
+        if not self:IsRunning() then
+            return end
+
+        -- only trigger for specified unit or units in storyline ...
+        if unit and unit.UnitName ~= event.IniUnitName then
+            return end
+
         if not self:FindGroup(event.IniUnitName) then
             return end
 
         event = copyTo(StoryEventArgs:New(self), event)
         func(event)
     end
+    -- todo end event OnUnitLeftZone when Story ends
     MissionEvents:OnUnitLeftZone(unit, zone, func, continous)
     return self
 end
@@ -478,43 +792,134 @@ end
 --     return self
 -- end
 
+------------------------------- [ STORY ] -------------------------------
+
+local function addStorylines(story, index, ...)
+    for _, storyline in ipairs(arg) do
+        table.insert(story.Storylines, storyline)
+        storyline.Story = story
+        storyline.Config = routines.utils.deepCopy(story.Config)
+        if index then
+            StoryIndex:AddStoryline(storyline)
+        end
+    end
+end
+
 function Story:New(name, ...)
     local story = routines.utils.deepCopy(Story)
     story.Name = name
+    story.Config = StoryConfiguration:New()
     if not isAssignedString(name) then
         error("Story:New :: story name was unspecified") end
 
-    for _, storyline in ipairs(arg) do
-        table.insert(story.Storylines, storyline)
-        storyline._story = story
-    end
     table.insert(_allStories, story)
+    story:WithStorylines(...)
     return story
 end
 
-function Story:Complete(missionStoryName)
+function Story:WithDescription(description)
+    self.Description = description
+    return self
 end
 
-function Story:Run(interval)
-    if not isNumber(interval) then
-        interval = 1
-    end
+function Story:WithStorylines(...)
+    addStorylines(self, true, ...)
+    return self
+end
+
+function Story:WithConfiguration(configuration)
+    self.Config = configuration
+    return self
+end
+
+function Story:Run(delay, interval)
 
     local function onTimer()
+        self.State = StoryState.Running
         local now = MissionTime()
         if not self.Enabled then
             return end
         
         for _, storyline in ipairs(self.Storylines) do
-            if storyline.State == StorylineState.Pending then
-                storyline:_startIfDue(now)
-            elseif storyline.State == StorylineState.Running then
+            if storyline.State == StoryState.Pending then
+                storyline:_runIfDue(now)
+            elseif storyline.State == StoryState.Running then
                 storyline:_endOnCondition(now)
             end
         end
     end
 
-    self._timer = TIMER:New(onTimer):Start(1, interval)
+    if not isNumber(delay) then
+        delay = 1
+    end
+    if not isNumber(interval) then
+        interval = 1
+    end
+    self._timer = TIMER:New(onTimer):Start(delay, interval)
+    for _, func in ipairs(self._onStartedHandlers) do
+        local success, err = pcall(func(self))
+        if not success then
+            Error("Story:End :: error when invoken OnStarted handler. " .. tostring(err))
+        end
+    end
+    return self
+end
+
+function Story:RunStoryline(storylineName, delay, restart)
+    if not isString(storylineName) then
+        errorOnDebug("Story:RunStoryline :: unexpected type for storylineName: " .. type(storylineName))
+        return
+    end
+
+    local storyline = self:FindStoryline(storylineName)
+    if not storyline then
+        errorOnDebug("Story:RunStoryline :: storyline '".. storylineName .. "' not found in story '" .. self.Name .. "'")
+        return
+    end
+    if storyline.State == StoryState.Pending then
+        storyline:Run(delay)
+    elseif restart then
+        storyline:Restart(delay)
+    end
+    return self
+end
+
+function Story:End()
+    
+    -- invoke Storye:OnEnded events ...
+    for _, func in ipairs(self._onEndedHandlers) do
+        local success, err = pcall(func(self))
+        if not success then
+            errorOnDebug("Story:End :: error when invoking Story:OnEnd handler. " .. tostring(err))
+        end
+    end
+
+    -- invoke Storyline:OnStoryEnded events ...
+    for _, storyline in ipairs(self.Storylines) do
+        if storyline._onStoryEndedFunc then
+            local success, err = pcall(storyline._onStoryEndedFunc(self))
+            if not success then
+                errorOnDebug("Story:End :: error when invoke Storyline:OnStoryEnded handler. " .. tostring(err))
+            end
+        end
+    end
+    
+    self.State = StoryState.Done
+end
+
+function Story:OnStarted(func)
+    if not isFunction(func) then
+        error("Story:OnStarted :: expected function but got " .. type(func)) end
+    
+    table.insert(self._onStartedHandlers, func)
+    return self
+end
+
+function Story:OnEnded(func)
+    if not isFunction(func) then
+        error("Story:OnEnded :: expected function but got " .. type(func)) end
+    
+    table.insert(self._onEndedHandlers, func)
     return self
 end
 
@@ -531,7 +936,7 @@ function Story:FindStory(storyName)
     end
 end
 
-function Story:RunStory(storyName)
+function Story:RunStory(storyName, delay, interval)
     if not isAssignedString(storyName) then
         Warning("Story:RunStory :: storyName was unassigned :: IGNORES")
         return
@@ -542,6 +947,6 @@ function Story:RunStory(storyName)
         Warning("Story:RunStory :: story was not found: '" .. storyName .. "' :: IGNORES")
         return
     end
-    story:Run()
+    story:Run(delay, interval)
     return story
 end

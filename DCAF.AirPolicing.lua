@@ -689,17 +689,14 @@ OnInterceptedDefaults = {
 }
 function OnIntercepted( groupName, callback, options )
     if (groupName == nil) then
-      Trace("OnIntercepted-? :: Group name missing :: EXITS")
-      return 
+        return exitWarning("OnIntercepted-? :: Group name missing")
     end
     if (callback == nil) then 
-      Trace("OnIntercepted-"..groupName.." :: missing callback function :: EXITS")
-      return 
+        return exitWarning("OnIntercepted-"..groupName.." :: missing callback function")
     end
     local monitoredGroup = GROUP:FindByName( groupName )
     if (monitoredGroup == nil) then 
-      Trace("OnIntercepted-"..groupName.." :: intruder group not found :: EXITS")
-      return 
+        return exitWarning("OnIntercepted-"..groupName.." :: intruder group not found")
     end
 
     options = options or OnInterceptedDefaults
@@ -712,8 +709,7 @@ function OnIntercepted( groupName, callback, options )
     local unitNo = options.interceptedUnitNo or OnInterceptedDefaults.interceptedUnitNo
     local intruderUnit = monitoredGroup:GetUnit(unitNo) 
     if (intruderUnit == nil) then 
-      Trace("OnIntercepted-"..groupName.." :: intruder group unit #"..tostring(unitNo).." not found :: EXITS")
-      return 
+        return exitWarning("OnIntercepted-"..groupName.." :: intruder group unit #"..tostring(unitNo).." not found")
     end
     local intruderUnitName = intruderUnit:GetName()
 
@@ -860,8 +856,8 @@ function ShowOfForce:New( interceptor, detectionRange )
     local sof = routines.utils.deepCopy(ShowOfForce)
     local group = getGroup( interceptor )
     if (sof._interceptorGrp == nil) then
-        Warning("ShowOfForce:New :: interceptor cannot be resolved from " .. Dump(interceptor) .. " :: EXITS")
-        return nil
+    end
+        return exitWarning("ShowOfForce:New :: interceptor cannot be resolved from " .. Dump(interceptor)")
     end
     sof._interceptorGrp = group
     if (not isNumber(detectionRange)) then
@@ -890,13 +886,11 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
 
     local group = getGroup( intruder )
     if (group == nil) then
-        Trace("OnShowOfForce-? :: cannot resolve group from ".. Dump(intruder) .." :: EXITS")
-        return 
+        return exitWarning("OnShowOfForce-? :: cannot resolve group from ".. Dump(intruder))
     end
     local groupName = group.GroupName
     if (callback == nil) then 
-        Trace("OnShowOfForce-"..groupName.." :: missing callback function :: EXITS")
-        return 
+        return exitWarning("OnShowOfForce-"..groupName.." :: missing callback function")
     end
 
     options = options or OnShowOfForceDefaults
@@ -1183,26 +1177,21 @@ OnFollowMeDefaults = {
 function OnFollowMe( unitName, escortedGroupName, callback, options )
 
     if (unitName == nil) then
-      Trace("OnFollowMe-? :: unitName not specified :: EXITS")
-      return
+        return exitWarning("OnFollowMe-? :: unitName not specified")
     end
     local unit = UNIT:FindByName( unitName )
     if (unit == nil) then
-      Trace("OnFollowMe-"..unitName.." :: Unit was not found :: EXITS")
-      return
+        return exitWarning("OnFollowMe-"..unitName.." :: Unit was not found")
     end
     if (escortedGroupName == nil) then
-      Trace("OnFollowMe-"..groupName.." :: missing escortedGroupName :: EXITS")
-      return
+        return exitWarning("OnFollowMe-"..groupName.." :: missing escortedGroupName")
     end
     local escortedGroup = GROUP:FindByName( escortedGroupName )
     if (escortedGroup == nil) then
-      Trace("OnFollowMe-"..groupName.." :: Escorted group ("..escortedGroupName..") not found :: EXITS")
-      return
+        return exitWarning("OnFollowMe-"..groupName.." :: Escorted group ("..escortedGroupName..") not found")
     end
     if (callback == nil) then 
-      Trace("OnFollowMe-"..groupName.." :: missing callback function :: EXITS")
-      return 
+        return exitWarning("OnFollowMe-"..groupName.." :: missing callback function")
     end
 
     options = options or OnFollowMeDefaults
@@ -1479,12 +1468,10 @@ function OnInterception( group, callback, options, pu )
 
     group = getGroup( group )
     if (group == nil) then
-        Trace("OnInterception-? :: Group could not be resolved :: EXITS")
-        return 
+        return exitWarning("OnInterception-? :: Group could not be resolved")
     end
     if (callback == nil) then
-        Trace("OnInterception-"..group.GroupName.." :: Callback function missing :: EXITS")
-        return 
+        return exitWarning("OnInterception-"..group.GroupName.." :: Callback function missing")
     end
     options = options or InterceptionOptions
     local ai = options._activeIntercept
@@ -2004,8 +1991,7 @@ function GetSpottedFlights( source, radius, coalitions )
     if not unit then
         group = getGroup(source)
         if not group then
-            Warning("GetSpottedFlights :: cannot resolve group from " .. Dump(source) .. " :: EXITS")
-            return 0, {}
+            return exitWarning("GetSpottedFlights :: cannot resolve group from " .. Dump(source), 0, {})
         end
     end
 
@@ -2336,8 +2322,7 @@ local function addPoliceUnit(pg, unit, options)
         return false end
 
     if pg:isPoliceUnit(unit) then 
-        Trace("addPoliceUnit :: attempt to register same police unit/player twice :: EXITS")
-        return false
+        return exitWarning("addPoliceUnit :: attempt to register same police unit/player twice", false)
     end
     local pu = policeUnit:New(unit, options)
     pu.pg = pg
@@ -2676,8 +2661,7 @@ function AirPolicing:AddDebugMenus( policingCoalition, scope )
             -- assume group ...
             targetGroup = getGroup(scope)
             if not targetGroup then
-                Warning("AirPolicing:AddDebugMenus :: cannot resolve group from " .. Dump(scope) .. " :: EXITS")
-                return
+                return exitWarning("AirPolicing:AddDebugMenus :: cannot resolve group from " .. Dump(scope))
             end
             Warning("AirPolicing:AddDebugMenus :: adds debug options for group " .. Dump(targetGroup.GroupName) .. " ...")
         end
@@ -2690,8 +2674,7 @@ function AirPolicing:AddDebugMenus( policingCoalition, scope )
         coalition = targetGroup:GetCoalition()
     end
     if not coalition then
-        Warning("AirPolicing:AddDebugMenus :: cannot resolve coalition from " .. Dump(policingCoalition) .. " :: EXITS")
-        return
+        return exitWarning("AirPolicing:AddDebugMenus :: cannot resolve coalition from " .. Dump(policingCoalition))
     end
 
     local pgDebugging = _policingGroups.debugging
