@@ -1698,7 +1698,7 @@ local function establishInterceptMenus( pu, ig, ai ) -- pu = police unit, ig = i
     end
     makeOptionsMenus( pu )
     MENU_GROUP_COMMAND:New(pu.group, "--CANCEL Interception--", pu.mainMenu, cancel, ig)
-    if (DCAFCore.Debug) then
+    if (DCAF.Debug) then
         MENU_GROUP_COMMAND:New(pu.group, ">> DEBUG: Trigger intercept", pu.mainMenu, _debugTriggerOnAiWasInterceptedFunction, ai, ig, pu)
     end
 end
@@ -2534,7 +2534,7 @@ end
 
 function AirPolicingOptions:WithTrace( value )
     if value == nil then value = true end
-    DCAFCore.Trace = DCAFCore.Trace or value
+    DCAF.Trace = DCAF.Trace or value
     return self
 end
 
@@ -2630,13 +2630,13 @@ end
 function AirPolicingOptions:WithDebug( value )
     value = value or true
     AirPolicing.Debug = value
-    DCAFCore.Debug = DCAFCore.Debug or value
+    DCAF.Debug = DCAF.Debug or value
     return self
 end
 
 function AirPolicingOptions:WithDebugToUI( value )
     value = value or true
-    DCAFCore.DebugToUI = value
+    DCAF.DebugToUI = value
     return self
 end
 

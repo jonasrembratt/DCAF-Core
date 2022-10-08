@@ -1,4 +1,4 @@
-DCAFCore = {
+DCAF = {
     Trace = false,
     TraceToUI = false, 
     Debug = false,
@@ -8,6 +8,38 @@ DCAFCore = {
         Divert = '_divert_',
     }
 }
+
+local _debugId = 0
+local function get_next_debugId()
+    _debugId = _debugId + 1
+    return _debugId
+end
+
+local function with_debug_info(table)
+    table._debugId = "debug_" .. tostring(get_next_debugId())
+    return table
+end
+
+function DCAF.clone(template, deep)
+    if not isBoolean(deep) then
+        deep = true
+    end
+    local cloned = nil
+    if deep then
+        cloned = routines.utils.deepCopy(template)
+    else
+        cloned = {}
+        for k, v in pairs(template) do
+            cloned[k] = v
+        end
+    end
+
+    -- add debug information if applicable ...
+    if DCAF.Debug then
+        return with_debug_info(cloned)
+    end
+    return cloned
+end
 
 function isString( value ) return type(value) == "string" end
 function isBoolean( value ) return type(value) == "boolean" end
@@ -115,21 +147,20 @@ function copyTo(source, target)
     return target
 end
 
-function tableIndexOf( table, item )
+function tableIndexOf( table, itemOrFunc )
     if not isTable(table) then
         error("indexOfItem :: unexpected type for table: " .. type(table)) end
 
-    if item == nil then
+    if itemOrFunc == nil then
         error("indexOfItem :: item was unassigned") end
 
     for index, value in ipairs(table) do
-        if isFunction(item) and item(value) then
+        if isFunction(itemOrFunc) and itemOrFunc(value) then
             return index
-        elseif item == value then
+        elseif itemOrFunc == value then
             return index
         end
     end
-    return -1
 end
 
 function tableKeyOf( table, item )
@@ -164,7 +195,7 @@ function exitWarning(message, ...)
 end
 
 function errorOnDebug(message)
-    if DCAFCore.Debug then
+    if DCAF.Debug then
         error(message)
     else
         Error(message)
@@ -238,20 +269,20 @@ end
     
 function Trace( message )
     local timestamp = UTILS.SecondsToClock( UTILS.SecondsOfToday() )
-    if (DCAFCore.Trace) then
+    if (DCAF.Trace) then
         BASE:E("DCAF-TRC @"..timestamp.." ===> "..tostring(message))
     end
-    if (DCAFCore.TraceToUI) then
+    if (DCAF.TraceToUI) then
         MESSAGE:New("DCAF-TRC: "..message):ToAll()
     end
 end
   
 function Debug( message )
     local timestamp = UTILS.SecondsToClock( UTILS.SecondsOfToday() )
-    if (DCAFCore.Debug) then
+    if (DCAF.Debug) then
         BASE:E("DCAF-DBG @"..timestamp.." ===> "..tostring(message))
     end
-    if (DCAFCore.DebugToUI) then
+    if (DCAF.DebugToUI) then
         MESSAGE:New("DCAF-DBG: "..message):ToAll()
     end
 end
@@ -259,7 +290,7 @@ end
 function Warning( message )
     local timestamp = UTILS.SecondsToClock( UTILS.SecondsOfToday() )
     BASE:E("DCAF-WRN @"..timestamp.."===> "..tostring(message))
-    if (DCAFCore.TraceToUI or DCAFCore.DebugToUI) then
+    if (DCAF.TraceToUI or DCAF.DebugToUI) then
         MESSAGE:New("DCAF-WRN: "..message):ToAll()
     end
 end
@@ -267,7 +298,7 @@ end
 function Error( message )
     local timestamp = UTILS.SecondsToClock( UTILS.SecondsOfToday() )
     BASE:E("DCAF-ERR @"..timestamp.."===> "..tostring(message))
-    if (DCAFCore.TraceToUI or DCAFCore.DebugToUI) then
+    if (DCAF.TraceToUI or DCAF.DebugToUI) then
         MESSAGE:New("DCAF-ERR: "..message):ToAll()
     end
 end
@@ -815,7 +846,7 @@ function DumpPretty(value, options)
         return tostring(value)
       end
 
-      if (not options.deep and ilvl > 0) then
+      if ((not options.deep or not DCAF.Debug) and ilvl > 0) then
         if (options.asJson) then
             return "{ }" 
         end
@@ -1251,7 +1282,7 @@ end
 
 function GetRTBWaypoint( group ) 
     -- TODO consider returning -true- if last WP in route is landing WP
-    return FindWaypointByName( group, DCAFCore.WaypointNames.RTB ) ~= nil
+    return FindWaypointByName( group, DCAF.WaypointNames.RTB ) ~= nil
 end
 
 function CanRTB( group ) 
@@ -1260,14 +1291,14 @@ end
 
 function RTB( controllable, steerpointName )
 
-    local steerpointName = steerpointName or DCAFCore.WaypointNames.RTB
+    local steerpointName = steerpointName or DCAF.WaypointNames.RTB
     local route = RouteDirectTo(controllable, steerpointName)
     return SetRoute( controllable, route )
 
 end
 
 function GetDivertWaypoint( group ) 
-    return FindWaypointByName( group, DCAFCore.WaypointNames.Divert ) ~= nil
+    return FindWaypointByName( group, DCAF.WaypointNames.Divert ) ~= nil
 end
 
 function CanDivert( group ) 
@@ -1277,7 +1308,7 @@ end
 local _onDivertFunc = nil
 
 function Divert( controllable, steerpointName )
-    local steerpointName = steerpointName or DCAFCore.WaypointNames.Divert
+    local steerpointName = steerpointName or DCAF.WaypointNames.Divert
     local divertRoute = RouteDirectTo(controllable, steerpointName)
     local route = SetRoute( controllable, divertRoute )
     if _onDivertFunc then
@@ -1716,7 +1747,7 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
 
     if event.id == world.event.S_EVENT_LAND then
         addInitiatorAndTarget(addPlace(event))
-Debug("nisse - #_missionEventsHandlers._aircraftLandedHandlers: " .. tostring(#_missionEventsHandlers._aircraftLandedHandlers))
+-- Debug("nisse - #_missionEventsHandlers._aircraftLandedHandlers: " .. tostring(#_missionEventsHandlers._aircraftLandedHandlers))
         MissionEvents:Invoke(_missionEventsHandlers._aircraftLandedHandlers, addInitiatorAndTarget(addPlace(event)))
         return
     end
@@ -1791,8 +1822,7 @@ function MissionEvents:EndOnUnitHit( func ) MissionEvents:RemoveListener(_missio
 
 function MissionEvents:OnAircraftLanded( func, insertFirst ) 
     MissionEvents:AddListener(_missionEventsHandlers._aircraftLandedHandlers, func, nil, insertFirst) 
-Debug("core - MissionEvents:OnAircraftLanded :: func: " .. tostring(func) .. " ::  registered :: #_aircraftLandedHandlers: " .. tostring(#_missionEventsHandlers._aircraftLandedHandlers))    
-
+-- Debug("core - MissionEvents:OnAircraftLanded :: func: " .. tostring(func) .. " ::  registered :: #_aircraftLandedHandlers: " .. tostring(#_missionEventsHandlers._aircraftLandedHandlers))    
 end
 function MissionEvents:EndOnAircraftLanded( func ) MissionEvents:RemoveListener(_missionEventsHandlers._aircraftLandedHandlers, func) end
 
@@ -1887,7 +1917,7 @@ local _DCAFEvents = {
 function _DCAFEvents:Activate(activation)
     local activator = _DCAFEvents[activation.eventName]
     if activator then
-Debug("nisse - DCAFEvents:Activate :: activator: " .. DumpPretty(activator))
+-- Debug("nisse - DCAFEvents:Activate :: activator: " .. DumpPretty(activator))
         activator(activation.func, activation.insertFirst)
 
         -- notify event activation, if callback func is registered ...
@@ -1904,13 +1934,12 @@ Debug("nisse - DCAFEvents:Activate :: activator: " .. DumpPretty(activator))
 end
 
 function _DCAFEvents:ActivateFor(source)
-Debug("nisse - _DCAFEvents:ActivateFor :: source:" .. Dump(source) .. " :: _DCAFEvents_lateActivations: " .. DumpPrettyDeep(_DCAFEvents_lateActivations))
-
+--Debug("nisse - _DCAFEvents:ActivateFor :: source:" .. Dump(source) .. " :: _DCAFEvents_lateActivations: " .. DumpPrettyDeep(_DCAFEvents_lateActivations))
     local activations = _DCAFEvents_lateActivations[source]
     if not activations then
         return
     end
-Debug("nisse - _DCAFEvents:ActivateFor :: #activations: " .. DumpPrettyDeep(#activations) .. " :: (1 expected)")
+--Debug("nisse - _DCAFEvents:ActivateFor :: #activations: " .. DumpPrettyDeep(#activations) .. " :: (1 expected)")
     _DCAFEvents_lateActivations[source] = nil
     for _, activation in ipairs(activations) do
         _DCAFEvents:Activate(activation)
