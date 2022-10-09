@@ -162,6 +162,7 @@ function findFirstNonWhitespace( s, start )
 end
 
 function tableCopyTo(source, target)
+    local count = 0
     for k,v in pairs(source) do
         if target[k] == nil then
             if isTable(v) then
@@ -170,8 +171,9 @@ function tableCopyTo(source, target)
                 target[k] = v
             end
         end
+        count = count + 1
     end
-    return target
+    return target, count
 end
 
 function tableIndexOf( table, itemOrFunc )

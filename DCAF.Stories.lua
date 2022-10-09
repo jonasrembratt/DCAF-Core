@@ -1,17 +1,9 @@
-
 --require "DCAF.Core"
 
 local ModuleName = "DCAF Narrator"
 
-local StoryGroup = {
-    GroupName = nil,         -- string; name of GROUP
-    Group = nil,             -- the activated/spawned group
-    StorylineName = nil,     -- identifies the story group's controlling <Storyline>
-}
-
-local StoryGroupIndex = {     -- used for keeping track of a GROUPs and how it relate to stories/storylines
+local GroupInfo = {     -- used for keeping track of a GROUPs and how it relate to stories/storylines
     GroupName = nil,          -- string; name of group
-    StoryGroup = nil,         -- <Storygroup>
     Group = nil,              -- <GROUP> (MOOSE object)
     Stories = {},             -- list of stories that control this group; key = story name, value = <Story> 
     Storylines = {},          -- list of storylines that control this group; key = story name, value = <Storyline>
@@ -31,7 +23,7 @@ local StoryInfo = {           -- items in StoryDB.Info.Story
     State = StoryState.Pending,
     Name = nil,               -- unique name of storyline
     Storylines = {},          -- list of <Storyline>
-    Groups = {},              -- key = group name, value = <StoryGroup>
+    Groups = {},              -- key = group name, value = <GroupInfo>
     CountGroups = 0,          -- number of groups controlled by story
     Config = nil,             -- <StoryConfiguration>
     _type = "StoryInfo"
@@ -41,7 +33,7 @@ local StorylineInfo = {       -- items in StoryDB.Info.Storyline
     State = StoryState.Pending,
     Name = nil,               -- unique name of storyline
     Story = nil,              -- the story where storyline is part
-    Groups = {},              -- key = group name, value = <StoryGroup>
+    Groups = {},              -- key = group name, value = <GroupInfo>
     CountGroups = 0,          -- number of groups controlled by story
     Config = nil,             -- <StoryConfiguration>
     _type = "StorylineInfo"
@@ -63,7 +55,7 @@ local StoryDB = {
         -- key = Storyline name; value = <Storyline>
     },
     Groups = {
-        -- key = group name; value = <StoryGroupIndex>
+        -- key = group name; value = <GroupInfo>
     },
     Info = {
         Story = {
@@ -231,7 +223,7 @@ function StorylineInfo:New(storyline)
     return info
 end
 
-function StoryGroupIndex:AssociateWith(item)
+function GroupInfo:AssociateWith(item)
     if item._type == Type.Story then
         if DCAF.Debug and self.Stories[item.Name] then
             internalError("Group " .. self.GroupName .. " was already associated with " .. item:ToString()) end
@@ -250,35 +242,45 @@ function StoryGroupIndex:AssociateWith(item)
     return self
 end
 
-function StoryGroupIndex:IsAssociatedWith(item)
+function GroupInfo:IsAssociatedWith(item)
     if item._type == Type.Story then
         return self.Stories[item.Name] ~= nil
     elseif item._type == Type.Storyline then
         return self.Storylines[item.Name] ~= nil
     else
-        internalError("StoryGroupIndex:AssociateWith :: cannot associate group '" .. self.GroupName .. "' with item: " .. DumpPretty(item))
+        internalError("GroupInfo:AssociateWith :: cannot associate group '" .. self.GroupName .. "' with item: " .. DumpPretty(item))
     end
 end
 
-function StoryGroupIndex:New(group)
-    local index = DCAF.clone(StoryGroupIndex)
+function GroupInfo:New(group)
+    local index = DCAF.clone(GroupInfo)
     index.GroupName = group.GroupName
     index.Group = group
     return index
 end
 
-function StoryGroupIndex:DestroyBy(item)
+function GroupInfo:RunBy(item)
+    if not self.WasActivatedBy and not self.WasDestroyedBy then
+        self.Group = activateNow(self.Group.GroupName)
+        self.WasActivatedBy = item
+    else
+        self.Group = spawnNow(self.Group.GroupName)
+    end
+    return self
+end
+
+function GroupInfo:DestroyBy(item)
     self.Group:Destroy()
     self.WasDestroyedBy = item
     return self
 end
 
-function StoryGroupIndex:StopBy(item)
+function GroupInfo:StopBy(item)
     Stop(self.Group)
     return self
 end
 
-function StoryGroupIndex:ResumeBy(item)
+function GroupInfo:ResumeBy(item)
     Resume(self.Group)
     return self
 end
@@ -296,7 +298,7 @@ function StoryDB:AssociateGroupsWith(item, ...)
 
         local groupInfo = StoryDB.Groups[g.GroupName]
         if not groupInfo then
-            groupInfo = StoryGroupIndex:New(g)
+            groupInfo = GroupInfo:New(g)
             StoryDB.Groups[g.GroupName] = groupInfo
         end
         groupInfo:AssociateWith(item)
@@ -476,28 +478,20 @@ end
 
 ------------------------------- [ STORY GROUP ] -------------------------------
 
-function StoryGroup:New(group, item)
-    local storyGroup = DCAF.clone(StoryGroup)
-    if isGroup(group) then 
-        storyGroup = group
-    elseif isString(group) then
-        storyGroup.Group = GROUP:FindByName(groupName)
-    end
-    if not storyGroup.Group then
-        error("StoryGroup:New :: cannot resolve group from: " .. Dump(group)) end
+-- function StoryGroup:New(group, item)
+--     local storyGroup = DCAF.clone(StoryGroup)
+--     if isGroup(group) then 
+--         storyGroup = group
+--     elseif isString(group) then
+--         storyGroup.Group = GROUP:FindByName(groupName)
+--     end
+--     if not storyGroup.Group then
+--         error("StoryGroup:New :: cannot resolve group from: " .. Dump(group)) end
 
-    storyGroup.GroupName = storyGroup.Group.GroupName
-    storyGroup.StorylineName = item.Name
-    return storyGroup
-end
-
-function Story:FindStoryline(storylineName)
-    local storylines = self:GetStorylines()
-    local index = tableIndexOf(self:GetStorylines(), function(sl) return sl.Name == storylineName end)
-    if index then
-        return storylines[index] 
-    end
-end
+--     storyGroup.GroupName = storyGroup.Group.GroupName
+--     storyGroup.StorylineName = item.Name
+--     return storyGroup
+-- end
 
 -- function StoryGroup:IsPending()
 --     local info = StoryDB:GetStorylineInfo(self.StorylineName)
@@ -626,17 +620,6 @@ function Storyline:FindUnit(name)
     end
 end
 
--- todo move these StoryGroupIndex functions up higher, to other StoryGroupIndex functions
-function StoryGroupIndex:RunBy(item)
-    if not self.WasActivatedBy and not self.WasDestroyedBy then
-        self.Group = activateNow(self.Group.GroupName)
-        self.WasActivatedBy = item
-    else
-        self.Group = spawnNow(self.Group.GroupName)
-    end
-    return self
-end
-
 function Storyline:Run()
     if not self.Enabled then
         return self end
@@ -726,7 +709,6 @@ function StoryEventArgs:DestroyStorylineGroups(...)
 end
 
 function StoryEventArgs:DestroyGroups(...)
-Debug("StoryEventArgs:DestroyGroups :: arg: " .. DumpPretty(arg))
     local scope = nil
     local groups = nil
 
@@ -742,7 +724,6 @@ Debug("StoryEventArgs:DestroyGroups :: arg: " .. DumpPretty(arg))
         scope = StoryScope.Storyline
         groups = tableCopyTo(arg, groups)
     end
-Debug("StoryEventArgs:DestroyGroups :: groups: " .. DumpPretty(groups))
     if scope == StoryScope.None then
         error("StoryEventArgs:DestroyGroups :: scope cannot be '" .. scope .. "' when destroying groupes") -- todo or can it?
     elseif scope == StoryScope.Story then
@@ -842,13 +823,9 @@ function Storyline:DestroyGroup(group)
 end
 
 function Storyline:DestroyGroups(groupsList)
-Debug("Storyline:DestroyGroups :: groupsList: " .. DumpPrettyDeep(groupsList))
-
     local groups, count = tableFilter(groupsList or {}, function(key, value) return isString(value) end)
-Debug("Storyline:DestroyGroups :: (filtered) groups: " .. DumpPrettyDeep(groups))
     if count > 0 then 
         for _, groupName in ipairs(groups) do
-Debug("Storyline:DestroyGroups :: groupName: " .. groupName)
             self:DestroyGroup(groupName)
         end
         return self
@@ -1335,6 +1312,14 @@ function Story:Run(delay, interval)
         end
     end
     return self
+end
+
+function Story:FindStoryline(storylineName)
+    local storylines = self:GetStorylines()
+    local index = tableIndexOf(self:GetStorylines(), function(sl) return sl.Name == storylineName end)
+    if index then
+        return storylines[index] 
+    end
 end
 
 function Story:RunStoryline(storylineName, restart)
