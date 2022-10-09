@@ -1,13 +1,24 @@
 
 --require "DCAF.Core"
-local StoryGroupIndex = {     -- used for keeping track of GROUPs, and how they are related to stories
+
+local ModuleName = "DCAF Narrator"
+
+local StoryGroup = {
+    GroupName = nil,         -- string; name of GROUP
+    Group = nil,             -- the activated/spawned group
+    StorylineName = nil,     -- identifies the story group's controlling <Storyline>
+}
+
+local StoryGroupIndex = {     -- used for keeping track of a GROUPs and how it relate to stories/storylines
     GroupName = nil,          -- string; name of group
     StoryGroup = nil,         -- <Storygroup>
     Group = nil,              -- <GROUP> (MOOSE object)
-    Stories = {},             -- key = story name, value = { list of <Story> where group partakes }
-    Storylines = {},          -- key = story name, value = { list of <Storyline> where group partakes }
+    Stories = {},             -- list of stories that control this group; key = story name, value = <Story> 
+    Storylines = {},          -- list of storylines that control this group; key = story name, value = <Storyline>
     CountStories = 0,         -- integer; number of stories controlling the <GROUP>
     CountStorylines = 0,      -- integer; number of storylines controlling the <GROUP>
+    WasActivatedBy = nil,     -- nil, <Story>, or <Storyline>
+    WasDestroyedBy = nil,     -- nil, <Story>, or <Storyline>
 }
 
 local StoryState = {
@@ -22,6 +33,7 @@ local StoryInfo = {           -- items in StoryDB.Info.Story
     Storylines = {},          -- list of <Storyline>
     Groups = {},              -- key = group name, value = <StoryGroup>
     CountGroups = 0,          -- number of groups controlled by story
+    Config = nil,             -- <StoryConfiguration>
     _type = "StoryInfo"
 }
 
@@ -31,6 +43,7 @@ local StorylineInfo = {       -- items in StoryDB.Info.Storyline
     Story = nil,              -- the story where storyline is part
     Groups = {},              -- key = group name, value = <StoryGroup>
     CountGroups = 0,          -- number of groups controlled by story
+    Config = nil,             -- <StoryConfiguration>
     _type = "StorylineInfo"
 }
 
@@ -64,16 +77,19 @@ local StoryDB = {
 
 StoryScope = {
     None = 'None',            -- no sandbox in use (completely unrestricted)
-    Story = 'Story',          -- sandbox is Story (eg. one stoyline may destroy groups in other Storylines of same Story)
-    Storyline = 'Storyline'   -- sandbox is Storyline (eg. storyline cannot affect state of other storylines, other than starting them)
+    Story = Type.Story,       -- sandbox is Story (eg. one stoyline may destroy groups in other Storylines of same Story)
+    Storyline = Type.Storyline  -- sandbox is Storyline (eg. storyline cannot affect state of other storylines, other than starting them)
 }
 
 function StoryScope:IsValid(s)
     return s == StoryScope.None or s == StoryScope.Story or s == StoryScope.Storyline
 end
 
-StoryConfiguration = {
-    Sandbox = StoryScope.Storyline   -- <StoryScope>
+StoryConfig = {
+    Scope = {
+        Group = nil           -- <StoryScope>; governs the scope for the configured items ability to control/destroy groups
+        -- todo this is the place to support more types of control scopes (maybe statics etc.)
+    }
 }
 
 Story = {
@@ -94,7 +110,7 @@ Storyline = {
     Enabled = true,           -- must be set for story to activate
     Level = nil,              -- (DifficultyLevel) optional; when set story will only run if level is equal or higher
     StartTime = nil,          -- how long (seconds) into the mission before story begins
-    Config = nil,             -- <StoryConfiguration>
+    -- Config = nil,             -- <StoryConfiguration>
     _type = Type.Storyline,   -- type identifier (needed by StoryIndex:GetInfo)
 
     StartConditionFunc = nil, -- callback function(<self>, <MissionStories>) , returns true when story should start
@@ -107,21 +123,20 @@ Storyline = {
 
 StorylineIdle = {}
 
-local StoryGroup = {
-    GroupName = nil,         -- string; name of GROUP
-    Group = nil,             -- the activated/spawned group
-    StorylineName = nil,     -- identifies the srory group's controlling <Storyline>
-}
-
 StoryEventArgs = {
     Story = nil,
     Storyline = nil
 }
 
-function StoryConfiguration:New()
-    return DCAF.clone(StoryConfiguration)
+function StoryConfig:New()
+    return DCAF.clone(StoryConfig)
 end
 
+------------------------------ [ INTERNALS ] -------------------------------
+
+local function internalError(message)
+    error("[" .. ModuleName .. "] INTERNAL ERROR :: " .. message)
+end
 
 ------------------------------- [ INDEXING ] -------------------------------
 
@@ -162,105 +177,169 @@ function StoryDB:GetInfo(item)
     end
 end
 
-function StoryDB:SetState(item, state)
-    StoryDB:GetInfo(item).State = state
-end
-
 function StoryDB:GetState(item)
     return StoryDB:GetInfo(item).State
 end
 
+function StoryDB:SetState(item, state)
+    StoryDB:GetInfo(item).State = state
+end
+
+function StoryDB:GetConfiguration(item)
+    return StoryDB:GetInfo(item).Config
+end
+
+function StoryDB:GetGroupScope(item)
+    local scope = StoryDB:GetConfiguration(item).Scope.Group
+    if not scope and item._type == Type.Storyline then
+        -- fall back to Story scope, if storyline is attached to story at this point ...
+        local story = item:GetStory()
+        if story then
+            return story:GetGroupScope()
+        end
+    end
+    return scope
+end
+
+function StoryDB:SetGroupScope(item, scope)
+    local config = StoryDB:GetConfiguration(item)
+    config.Scope.Group = scope
+end
+
+function StoryDB:GetGroupInfo(name)
+    return StoryDB.Groups[name]
+end
+
 function StoryDB:GetGroup(name)
-    local index = StoryDB.Groups[name]
-    if index then
-        return index.StoryGroup
+    local info = StoryDB.GetGroupInfo(name)
+    if info then
+        return info.Group
     end        
 end
 
 function StoryInfo:New(story)
     local info = DCAF.clone(StoryInfo)
     info.Name = story.Name
+    info.Config = StoryConfig:New()
     return info
-end
-
-function StoryInfo:AddGroup(storyGroup)
-    if self.Groups[storyGroup.Name] then
-        error("StoryInfo:AddGroup :: group was already added: " .. storyGroup.Name) end
-    
-    self.Groups[storyGroup.GroupName] = storyGroup
-    self.CountGroups = self.CountGroups+1
 end
 
 function StorylineInfo:New(storyline)
     local info = DCAF.clone(StorylineInfo)
     info.Name = storyline.Name
+    info.Config = StoryConfig:New()
     return info
 end
 
-function StorylineInfo:AddGroup(storyGroup)
-    if self.Groups[storyGroup.Name] then
-        error("StorylineInfo:AddGroup :: group was already added: " .. storyGroup.Name) end
+function StoryGroupIndex:AssociateWith(item)
+    if item._type == Type.Story then
+        if DCAF.Debug and self.Stories[item.Name] then
+            internalError("Group " .. self.GroupName .. " was already associated with " .. item:ToString()) end
 
-    self.Groups[storyGroup.GroupName] = storyGroup
-    self.CountGroups = self.CountGroups + 1
-end
-
-function StoryGroupIndex:New(storyGroup, storyline)
-    local index = DCAF.clone(StoryGroupIndex)
-    index.GroupName = storyGroup.GroupName
-    index.StoryGroup = storyGroup
-    index.Group = storyGroup.Group
-
-    -- add to story
-    local story = storyline:GetStory()
-    if story then
-        index.Stories[story.Name] = story
-        local info = StoryDB:GetInfo(story)
-        info:AddGroup(storyGroup)
-    end
-    index.Storylines[storyline.Name] = storyline
-    
-    -- add to controlling storyline ...
-    StoryDB:GetInfo(storyline):AddGroup(storyGroup)
-    return index
-end
-
-function StoryGroupIndex:Update(storyGroup, storyline)
-    local story = storyline:GetStory()
-    if story then
-        self.Stories[story.Name] = story
-        local info = StoryDB:GetInfo(story)
-        if not info.Groups[self.GroupName] then
-            info:AddGroup(self)
-        end
-    end
-
-    self.Storylines[storyline.Name] = storyline
-    local info = StoryDB:GetInfo(storyline)
-    if not info.Groups[self.GroupName] then
-        info:AddGroup(self)
+        self.Stories[item.Name] = item
+        self.CountStories = self.CountStories + 1
+    elseif item._type == Type.Storyline then
+        if DCAF.Debug and self.Storylines[item.Name] then
+            internalError("Group " .. self.GroupName .. " was already associated with " .. item:ToString()) end
+            
+        self.Storylines[item.Name] = item
+        self.CountStorylines = self.CountStorylines + 1
+    else
+        internalError("Cannot add group to (unsupported) item: " .. Dump(item))
     end
     return self
 end
 
-function StoryDB:AddGroup(storyGroup, storyline)
-    local index = StoryDB.Groups[storyGroup.GroupName]
-    if index then
-        index:Update(storyGroup, storyline)
-        return
+function StoryGroupIndex:IsAssociatedWith(item)
+    if item._type == Type.Story then
+        return self.Stories[item.Name] ~= nil
+    elseif item._type == Type.Storyline then
+        return self.Storylines[item.Name] ~= nil
+    else
+        internalError("StoryGroupIndex:AssociateWith :: cannot associate group '" .. self.GroupName .. "' with item: " .. DumpPretty(item))
     end
-    index = StoryGroupIndex:New(storyGroup, storyline)
-    StoryDB.CountGroups = StoryDB.CountGroups + 1
-    StoryDB.Groups[storyGroup.GroupName] = index
 end
 
-function StoryDB:GetStorylineGroups(storyline, ...)
+function StoryGroupIndex:New(group)
+    local index = DCAF.clone(StoryGroupIndex)
+    index.GroupName = group.GroupName
+    index.Group = group
+    return index
+end
+
+function StoryGroupIndex:DestroyBy(item)
+    self.Group:Destroy()
+    self.WasDestroyedBy = item
+    return self
+end
+
+function StoryGroupIndex:StopBy(item)
+    Stop(self.Group)
+    return self
+end
+
+function StoryGroupIndex:ResumeBy(item)
+    Resume(self.Group)
+    return self
+end
+
+function StoryDB:AssociateGroupsWith(item, ...)
+    local count = 0
+    local itemInfo = StoryDB:GetInfo(item)
+    if not itemInfo then
+        internalError("Cannot add groups to " .. item:ToString() .. " :: item has no internal info") end
+
+    for _, group in ipairs(arg) do
+        local g = getGroup(group)
+        if not g then
+            error("Cannot add groups to " .. item:ToString() .. " :: group cannot be resolved from: " .. Dump(group)) end
+
+        local groupInfo = StoryDB.Groups[g.GroupName]
+        if not groupInfo then
+            groupInfo = StoryGroupIndex:New(g)
+            StoryDB.Groups[g.GroupName] = groupInfo
+        end
+        groupInfo:AssociateWith(item)
+        itemInfo.Groups[g.GroupName] = groupInfo
+        count = count+1
+    end
+    return count > 0, count
+end
+
+function StoryDB:FindAssociatedGroup(item, name)
+    local info = StoryDB:GetInfo(item)
+    local group = getGroup(name)
+    if not group then
+        return end
+
+    for _, groupInfo in pairs(info.Groups) do
+        if isGroupNameInstanceOf(group.GroupName, groupInfo.GroupName) then
+            return group
+        end
+    end
+end
+
+function StoryDB:FindAssociatedUnit(item, name)
+    local unit = getUnit(name)
+    if not unit then
+        return end
+
+    local unitGroup = unit:GetGroup()
+    local info = StoryDB:GetInfo(item)
+    for _, groupInfo in pairs(info.Groups) do
+        if isGroupNameInstanceOf(unitGroup.GroupName, groupInfo.GroupName) then
+            return unit
+        end
+    end
+end
+
+function StoryDB:GetStorylineGroups(storyline, namedGroups)
     local storylineGroups = StoryDB:GetInfo(storyline).Groups
-    if arg.n == 0 then
+    if tableIsUnassigned(namedGroups) then
         return storylineGroups end
 
     local named = {}
-    for _, name in ipairs(arg) do
+    for _, name in ipairs(namedGroups) do
         local exists = storylineGroups[name]
         if exists then
             named[name] = exists
@@ -271,6 +350,7 @@ end
 
 function StoryDB:AddStoryLineToStory(storyline, story)
     local si = StoryDB:GetInfo(story)
+    
     if not si then 
         error("Cannot find story info for '" .. storyline.Name .. "'") end
 
@@ -284,10 +364,11 @@ function StoryDB:AddStoryLineToStory(storyline, story)
     table.insert(si.Storylines, storyline)
     sli.Story = story
 
-    -- update story groups ...
-    for sgName, sg in pairs(sli.Groups) do
-        local sgIndex = StoryDB.Groups[sg.GroupName]
-        sgIndex:Update(sg, storyline)
+    -- associate storyline groups with story ...
+    for name, info in pairs(sli.Groups) do
+        if not info:IsAssociatedWith(story) then
+            info:AssociateWith(story)
+        end
     end
 end
 
@@ -327,48 +408,86 @@ function StoryDB:CountGroupStories(groupName)
 end
 
 function StoryDB:GetGroupStorylines(groupName)
-    local index = StoryDB.Groups[groupName]
-    if index ~= nil then
-        return index.Storylines
+    local info = StoryDB.Groups[groupName]
+    if info ~= nil then
+        return info.Storylines
     end
     return {}
 end
 
 function StoryDB:CountGroupStorylines(groupName)
-    local index = StoryDB.Groups[groupName]
-    if index ~= nil then
-        return index.CountStorylines
+    local info = StoryDB.Groups[groupName]
+    if info ~= nil then
+        return info.CountStorylines
     end
     return 0
 end
 
+function StoryDB:IsGroupExclusiveTo(groupName, item)
+    local groupInfo = StoryDB:GetGroupInfo(groupName)
+    if not groupInfo then
+        return false, 0 end
+
+    local countControllers = 0
+    local function getOtherControllers(controllersTable)
+        local oc = {}
+        for name, _ in pairs(controllersTable) do
+            if name ~= item.Name then
+                table.insert(oc, name)
+            end
+        end
+        return oc
+    end
+
+    local controllers = nil
+    if item._type == Type.Story then
+        if groupInfo.CountStories == 1 and groupInfo.Stories[item.Name] then 
+            return true, 1
+        end
+        controllers = groupInfo.Stories
+    elseif item._type == Type.Storyline then
+        if groupInfo.CountStorylines == 1 and groupInfo.Storylines[item.Name] then 
+            return true, 1
+        end
+        controllers = groupInfo.Storylines
+    else
+        internalError("StoryDB:IsGroupExclusiveTo :: unsupported item: " .. DumpPretty(item))
+    end
+
+    return false, groupInfo.CountStorylines, getOtherControllers(controllers)
+end
+
 function StoryDB:IsGroupExclusiveToStory(groupName, story)
-    local index = StoryDB.Groups[groupName]
-    if index == nil or index.CountStories ~= 0 then 
+    local info = StoryDB:GetGroupInfo(groupName)
+    if info == nil or info.CountStories ~= 0 then 
         return false end
 
-    return index.Stories[story.Name] ~= nil
+    return info.Stories[story.Name] ~= nil
 end
 
 function StoryDB:IsGroupExclusiveToStoryline(groupName, storyline)
-    local index = StoryDB.Groups[groupName]
-    if index == nil or index.CountStorylines ~= 0 then 
+    local info = StoryDB:GetGroupInfo(groupName)
+    if info == nil or info.CountStorylines ~= 0 then 
         return false end
 
-    return index.Storylines[storyline.Name] ~= nil
+    return info.Storylines[storyline.Name] ~= nil
 end
 
 
 ------------------------------- [ STORY GROUP ] -------------------------------
 
-function StoryGroup:New(groupName, storyline)
+function StoryGroup:New(group, item)
     local storyGroup = DCAF.clone(StoryGroup)
-    storyGroup.Group = GROUP:FindByName(groupName)
+    if isGroup(group) then 
+        storyGroup = group
+    elseif isString(group) then
+        storyGroup.Group = GROUP:FindByName(groupName)
+    end
     if not storyGroup.Group then
-        error("StoryGroup:New :: group not found: " .. groupName) end
+        error("StoryGroup:New :: cannot resolve group from: " .. Dump(group)) end
 
-    storyGroup.GroupName = groupName
-    storyGroup.StorylineName = storyline.Name
+    storyGroup.GroupName = storyGroup.Group.GroupName
+    storyGroup.StorylineName = item.Name
     return storyGroup
 end
 
@@ -380,33 +499,10 @@ function Story:FindStoryline(storylineName)
     end
 end
 
-function StoryGroup:IsPending()
-    local info = StoryDB:GetStorylineInfo(self.StorylineName)
-    return info.State == StoryState.Pending
-end
-
-function StoryGroup:Run()
-    if self:IsPending() then
-        self.Group = activateNow(self.GroupName)
-    else
-        self.Group = spawnNow(self.GroupName)
-    end
-    return self
-end
-
-function StoryGroup:Destroy()
-    if self.Group then
-        self.Group:Destroy()
-        self.Group = nil
-    end
-    return self
-end
-
-function StoryGroup:Stop()
-    Stop(self.Group)
-    return self
-end
-
+-- function StoryGroup:IsPending()
+--     local info = StoryDB:GetStorylineInfo(self.StorylineName)
+--     return info.State == StoryState.Pending
+-- end
 
 ------------------------------- [ STORYLINE ] -------------------------------
 
@@ -424,8 +520,12 @@ function Storyline:NewIdle(name, description)
     return storyline
 end
 
-function Storyline:SandboxScope()
-    return self.Config.Sandbox
+function Storyline:ToString()
+    return self.Name .. " (storyline)"
+end
+
+function Storyline:GetGroupScope()
+    return StoryDB:GetGroupScope(self)
 end
 
 function Storyline:FullName()
@@ -488,17 +588,14 @@ function Storyline:WithEndCondition(func, onDoneFunc)
 end
 
 function Storyline:WithGroups(...)
-    if self:GetStory() ~= nil then
-        error("Storyline:WithGroups :: cannot initialize Storyline using 'WithGroup' after Storyline was added to story. Please use 'Storyline:AddGroups' instead") end
+    if self:GetStory() then
+        error("Storyline:WithGroups :: cannot initialize Storyline using ':WithGroup' after " .. Type.Storyline .." was added to " .. Type.Story ..". Please use 'Storyline:AddGroups' instead") end
 
-    for _, group in ipairs(arg) do
-        local storyGroup = nil
-        if isString(group) then
-            storyGroup = StoryGroup:New(group, self)
-        end
-        storyGroup.Storyline = self
-        StoryDB:AddGroup(storyGroup, self)
-    end
+    local success, count = StoryDB:AssociateGroupsWith(self, ...)
+    if not success and count == 0 then
+        error("Storyline:WithGroups :: no groups was specified") end
+
+    StoryDB:SetGroupScope(self, StoryScope.Storyline)
     return self
 end
 
@@ -507,28 +604,46 @@ function Storyline:IsPending() return self:GetState() == StoryState.Pending end
 function Storyline:IsRunning() return self:GetState() == StoryState.Running end
 function Storyline:IsDone() return self:GetState() == StoryState.Done end
 
-function Storyline:FindGroup(groupName)
-    local info = StoryDB:GetInfo(self)
-    return info[groupName]
+function Storyline:FindGroup(name)
+    local groupScope = self:GetGroupScope()
+    if groupScope == StoryScope.Storyline then
+        return StoryDB:FindAssociatedGroup(self, name)
+    elseif groupScope == StoryScope.Story then
+        return StoryDB:FindAssociatedGroup(self, name) or StoryDB:FindAssociatedGroup(self:GetGroup(), name)
+    elseif groupScope == StoryScope.None then
+        return getGroup(name)
+    end
 end
 
-function Storyline:FindUnit(unitName)
-    local info = StoryDB:GetInfo(self)
-    for _, storyGroup in pairs(info.Groups) do
-        local key = tableKeyOf(storyGroup.Group:GetUnits(), function(unit) return unit.UnitName == unitName end)
-        if key then
-            return true 
-        end
+function Storyline:FindUnit(name)
+    local groupScope = self:GetGroupScope()
+    if groupScope == StoryScope.Storyline then
+        return StoryDB:FindAssociatedUnit(self, name)
+    elseif groupScope == StoryScope.Story then
+        return StoryDB:FindAssociatedUnit(self, name) or StoryDB:FindAssociatedUnit(self:GetGroup(), name)
+    elseif groupScope == StoryScope.None then
+        return getUnit(name)
     end
+end
+
+-- todo move these StoryGroupIndex functions up higher, to other StoryGroupIndex functions
+function StoryGroupIndex:RunBy(item)
+    if not self.WasActivatedBy and not self.WasDestroyedBy then
+        self.Group = activateNow(self.Group.GroupName)
+        self.WasActivatedBy = item
+    else
+        self.Group = spawnNow(self.Group.GroupName)
+    end
+    return self
 end
 
 function Storyline:Run()
     if not self.Enabled then
         return self end
 
-    local storyGroups = StoryDB:GetStorylineGroups(self)
-    for _, storyGroup in pairs(storyGroups) do
-        storyGroup:Run()
+    local groupInfos = StoryDB:GetStorylineGroups(self)
+    for _, groupInfo in pairs(groupInfos) do
+        groupInfo:RunBy(self)
     end
     self._isIdle = false
     StoryDB:SetState(self, StoryState.Running)
@@ -611,24 +726,32 @@ function StoryEventArgs:DestroyStorylineGroups(...)
 end
 
 function StoryEventArgs:DestroyGroups(...)
-    if arg.n == 0 then
-        arg[1] = StoryScope.Storyline
-        arg.n = 1
-    end
-    if arg.n == 1 and isString(arg[1]) and StoryScope:IsValid(arg[1]) then
-        local scope = arg[1]
-        if scope == StoryScope.None then
-            error("StoryEventArgs:DestroyGroups :: scope cannot be '" .. scope .. "' when destroying groupes") -- todo or can it?
-        elseif scope == StoryScope.Story then
-            self:DestroyStoryGroups()
-        elseif scope == StoryScope.Storyline then
-            self:DestroyStorylineGroups()
-        else
-            error("StoryEventArgs:DestroyGroups :: unknown scope: '" .. scope)
+Debug("StoryEventArgs:DestroyGroups :: arg: " .. DumpPretty(arg))
+    local scope = nil
+    local groups = nil
+
+    groups = {}
+    local n = 0
+    if arg.n >= 1 and StoryScope:IsValid(arg[1]) then
+        scope = arg[1]
+        if arg.n > 1 then
+            table.remove(arg, 1)
         end
-        return
+        groups = tableCopyTo(arg, groups)
+    else
+        scope = StoryScope.Storyline
+        groups = tableCopyTo(arg, groups)
     end
-    error("todo : StoryEventArgs:DestroyGroups :: implement support for destroying named groups")
+Debug("StoryEventArgs:DestroyGroups :: groups: " .. DumpPretty(groups))
+    if scope == StoryScope.None then
+        error("StoryEventArgs:DestroyGroups :: scope cannot be '" .. scope .. "' when destroying groupes") -- todo or can it?
+    elseif scope == StoryScope.Story then
+        return StoryDB:GetStory(self.Storyline):DestroyGroups(groups)
+    elseif scope == StoryScope.Storyline then
+        return StoryDB:GetStoryline(self.Storyline):DestroyGroups(groups)
+    else
+        error("StoryEventArgs:DestroyGroups :: unknown scope: '" .. scope)
+    end
 end
 
 function Storyline:_runIfDue()
@@ -668,23 +791,47 @@ function Storyline:_endOnCondition(now)
     end
 end
 
-function Storyline:DestroyGroup(group)
-    -- todo ensure configured Sandbox Scope is honored
-    
+local function validateItemGroupControl(item, group, errorPrefix, action)
+    -- todo ensure group scope is honored
     if group == nil then
-        error("Storyline:DestroyGroup :: group was unassigned") end
+        error(errorPrefix .. " :: group was unassigned") end
 
     group = getGroup(group)
     if group == nil then
-        error("Storyline:DestroyGroup :: group cannot be resolved from: " .. Dump(group)) end
+        error(errorPrefix .. " :: group cannot be resolved from: " .. Dump(group)) end
 
-    local sandboxScope = self:SandboxScope()
-    if sandboxScope == StoryScope.Story and not StoryDB:IsGroupExclusiveToStory(group.GroupName, self:GetStory()) then
-        error("Storyline:DestroyGroup :: cannot destroy group that are also controlled by other stories (see sandbox configuration)") end
+    local scope = item:GetGroupScope()
+    if item._type == Type.Storyline and scope == StoryScope.Storyline then
+        local isExclusive, countControllers, otherControllers = StoryDB:IsGroupExclusiveTo(group.GroupName, item)
+        if not isExclusive then
+            local msg = nil
+            if countControllers == 1 then
+                msg = "group that are controlled by another storyline ('" .. otherControllers[1] .. "')"
+            else
+                msg = "group that are also controlled by other storylines (there are " .. countControllers .. " storyines controlling)"
+            end
+            error(errorPrefix  .. " :: " .. item._type .. " '" .. item.Name .. "' cannot " .. action .. " " .. msg .. " (see storyline's Scope.Group configuration)")  
+        end
+    end
 
-    if sandboxScope == StoryScope.Storyline and not StoryDB:IsGroupExclusiveToStoryline(group.GroupName, self) then
-        error("Storyline:DestroyGroup :: cannot destroy group that are also controlled by other storylines (see sandbox configuration)")  end
+    if item._type == Type.Story and scope == StoryScope.Story and not StoryDB:IsGroupExclusiveTo(group.GroupName, item:GetStory()) then
+        local isExclusive, countControllers, otherControllers = StoryDB:IsGroupExclusiveTo(group.GroupName, item)
+        if not isExclusive then
+            local msg = nil
+            if countControllers == 1 then
+                msg = "group that are controlled by another story ('" .. otherControllers[1] .. "')"
+            else
+                msg = "group that are also controlled by other stories (there are " .. countControllers .. " stories controlling)"
+            end
+            error(errorPrefix  .. " :: " .. item._type .. " '" .. item.Name .. "' cannot " .. action .. " " .. msg .. " (see story's Scope.Group configuration)")  
+        end
+    end
 
+    return group
+end
+
+function Storyline:DestroyGroup(group)
+    group = validateItemGroupControl(self, group, "Storyline:DestroyGroup", "destroy")
     local sg = StoryDB:GetGroup(group.GroupName)
     if sg then
         sg:Destroy()
@@ -694,20 +841,43 @@ function Storyline:DestroyGroup(group)
     return self
 end
 
-function Storyline:DestroyGroups(...)
-    local groups = nil
-    groups = StoryDB:GetStorylineGroups(self, ...)
+function Storyline:DestroyGroups(groupsList)
+Debug("Storyline:DestroyGroups :: groupsList: " .. DumpPrettyDeep(groupsList))
+
+    local groups, count = tableFilter(groupsList or {}, function(key, value) return isString(value) end)
+Debug("Storyline:DestroyGroups :: (filtered) groups: " .. DumpPrettyDeep(groups))
+    if count > 0 then 
+        for _, groupName in ipairs(groups) do
+Debug("Storyline:DestroyGroups :: groupName: " .. groupName)
+            self:DestroyGroup(groupName)
+        end
+        return self
+    end
+
+    groups = StoryDB:GetStorylineGroups(self, groups)
     for _, storyGroup in pairs(groups) do
         self:DestroyGroup(storyGroup.Group)
     end
     return self
 end
 
-function Storyline:StopGroups(...)
-    local groups = arg
-    if not arg then
+function Storyline:StopGroup(group)
+    group = validateItemGroupControl(self, group, "Storyline:StopGroup", "stop")
+    local groupInfo = StoryDB:GetGroup(group.GroupName)
+    if groupInfo then
+        groupInfo:Destroy()
+    else
+        group:Destroy()
+    end
+    return self
+end
+
+function Storyline:StopGroups(groupsList)
+    local groups, count = tableFilter(groupsList or {}, function(key, value) return isString(value) end)
+    if count == 0 then
         groups = self.Groups
     end
+
     for _, sg in ipairs(self.Groups) do
         sg:Stop()
     end
@@ -791,7 +961,7 @@ function Storyline:OnAircraftLanded(aircraft, func)
 
         -- this is a one-time event ... 
         MissionEvents:EndOnAircraftLanded(eventFunc)
-        event = copyTo(StoryEventArgs:New(self), event)
+        event = tableCopyTo(StoryEventArgs:New(self), event)
         func(event)
     end
 
@@ -835,13 +1005,23 @@ function Storyline:OnGroupDiverted(group, func)
             return end
 
         MissionEvents:EndOnGroupDiverted(eventFunc)
-        event = copyTo(StoryEventArgs:New(self), event)
+        event = tableCopyTo(StoryEventArgs:New(self), event)
         func(event)
     end
-    self:OnStoryEnded(function(story)
-        MissionEvents:EndOnGroupDiverted(eventFunc)
-    end)
-    MissionEvents:OnGroupDiverted(eventFunc)
+
+    -- pre-register event if Pending; otherwise, just add it ...
+    if self:IsPending() then
+        DCAFEvents:PreActivate(self.Name, DCAFEvents.OnAircraftLanded, eventFunc, function() 
+            self:OnStoryEnded(function(story)
+                MissionEvents:EndOnGroupDiverted(eventFunc)
+            end)
+        end)
+    else
+        MissionEvents:OnGroupDiverted(eventFunc)
+        self:OnStoryEnded(function(story)
+            MissionEvents:EndOnGroupDiverted(eventFunc)
+        end)
+    end
     return self
 end
 
@@ -861,11 +1041,20 @@ function Storyline:OnGroupEntersZone(group, zone, func, continous)
         if not self:FindGroup(event.IniGroupName) then
             return end
 
-        event = copyTo(StoryEventArgs:New(self), event)
+        event = tableCopyTo(StoryEventArgs:New(self), event)
         func(event)
     end
-    -- todo end event OnGroupEntersZone when Story ends
-    MissionEvents:OnGroupEntersZone(group, zone, func, continous)
+
+    -- pre-register event if Pending; otherwise, just add it ...
+    if self:IsPending() then
+        DCAFEvents:PreActivate(self.Name, DCAFEvents.OnGroupEntersZone, eventFunc, function() 
+            self:OnStoryEnded(function(story)
+                MissionEvents:EndOnGroupEntersZone(eventFunc)
+            end)
+        end)
+    else
+        MissionEvents:OnGroupEntersZone(eventFunc)
+    end
     return self
 end
 
@@ -886,11 +1075,20 @@ function Storyline:OnGroupInsideZone(group, zone, func, continous)
             error("Storyline:OnGroupInsideZone :: group is not part of storyline '" .. self.Name .. "': " .. event.IniGroupName)
             return 
         end
-        event = copyTo(StoryEventArgs:New(self), event)
+        event = tableCopyTo(StoryEventArgs:New(self), event)
         func(event)
     end
-    -- todo end event OnGroupInsideZone when Story ends
-    MissionEvents:OnGroupInsideZone(group, zone, func, continous)
+
+    -- pre-register event if Pending; otherwise, just add it ...
+    if self:IsPending() then
+        DCAFEvents:PreActivate(self.Name, DCAFEvents.OnGroupInsideZone, eventFunc, function() 
+            self:OnStoryEnded(function(story)
+                MissionEvents:EndOnGroupInsideZone(eventFunc)
+            end)
+        end)
+    else
+        MissionEvents:OnGroupInsideZone(eventFunc)
+    end
     return self
 end
 
@@ -910,11 +1108,20 @@ function Storyline:OnGroupLeftZone(group, zone, func, continous)
         if not self:FindGroup(event.IniGroupName) then
             return end
 
-        event = copyTo(StoryEventArgs:New(self), event)
+        event = tableCopyTo(StoryEventArgs:New(self), event)
         func(event)
     end
-    -- todo end event OnGroupLeftZone when Story ends
-    MissionEvents:OnGroupLeftZone(group, zone, func, continous)
+
+    -- pre-register event if Pending; otherwise, just add it ...
+    if self:IsPending() then
+        DCAFEvents:PreActivate(self.Name, DCAFEvents.OnGroupLeftZone, eventFunc, function() 
+            self:OnStoryEnded(function(story)
+                MissionEvents:EndOnGroupLeftZone(eventFunc)
+            end)
+        end)
+    else
+        MissionEvents:OnGroupLeftZone(eventFunc)
+    end
     return self
 end
 
@@ -934,11 +1141,20 @@ function Storyline:OnUnitEntersZone(unit, zone, func, continous)
         if not self:FindUnit(event.IniUnitName) then
             return end
 
-        event = copyTo(StoryEventArgs:New(self), event)
+        event = tableCopyTo(StoryEventArgs:New(self), event)
         func(event)
     end
-    -- todo end event OnUnitEntersZone when Story ends
-    MissionEvents:OnUnitEntersZone(unit, zone, func, continous)
+
+    -- pre-register event if Pending; otherwise, just add it ...
+    if self:IsPending() then
+        DCAFEvents:PreActivate(self.Name, DCAFEvents.OnUnitEntersZone, eventFunc, function() 
+            self:OnStoryEnded(function(story)
+                MissionEvents:EndOnUnitEntersZone(eventFunc)
+            end)
+        end)
+    else
+        MissionEvents:OnUnitEntersZone(eventFunc)
+    end
     return self
 end
 
@@ -958,11 +1174,20 @@ function Storyline:OnUnitInsideZone(unit, zone, func, continous)
         if not self:FindUnit(event.IniUnitName) then
             return end
 
-        event = copyTo(StoryEventArgs:New(self), event)
+        event = tableCopyTo(StoryEventArgs:New(self), event)
         func(event)
     end
-    -- todo end event OnUnitInsideZone when Story ends
-    MissionEvents:OnUnitInsideZone(unit, zone, func, continous)
+    
+    -- pre-register event if Pending; otherwise, just add it ...
+    if self:IsPending() then
+        DCAFEvents:PreActivate(self.Name, DCAFEvents.OnUnitInsideZone, eventFunc, function() 
+            self:OnStoryEnded(function(story)
+                MissionEvents:EndOnUnitInsideZone(eventFunc)
+            end)
+        end)
+    else
+        MissionEvents:OnUnitInsideZone(eventFunc)
+    end
     return self
 end
 
@@ -982,11 +1207,20 @@ function Storyline:OnUnitLeftZone(unit, zone, func, continous)
         if not self:FindGroup(event.IniUnitName) then
             return end
 
-        event = copyTo(StoryEventArgs:New(self), event)
+        event = tableCopyTo(StoryEventArgs:New(self), event)
         func(event)
     end
-    -- todo end event OnUnitLeftZone when Story ends
-    MissionEvents:OnUnitLeftZone(unit, zone, func, continous)
+        
+    -- pre-register event if Pending; otherwise, just add it ...
+    if self:IsPending() then
+        DCAFEvents:PreActivate(self.Name, DCAFEvents.OnUnitInsideZone, eventFunc, function() 
+            self:OnStoryEnded(function(story)
+                MissionEvents:EndOnUnitInsideZone(eventFunc)
+            end)
+        end)
+    else
+        MissionEvents:OnUnitInsideZone(eventFunc)
+    end
     return self
 end
 
@@ -1020,7 +1254,7 @@ end
 function Story:New(name, ...)
     local story = DCAF.clone(Story)
     story.Name = name
-    story.Config = StoryConfiguration:New()
+    story.Config = StoryConfig:New()
     if not isAssignedString(name) then
         error("Story:New :: story name was unspecified") end
 
@@ -1031,11 +1265,19 @@ function Story:New(name, ...)
     return story
 end
 
+function Story:ToString()
+    return self.Name .. " (story)"
+end
+
 function Story:GetStorylines()
     local info = StoryDB:GetInfo(self)
     if info then
         return info.Storylines
     end
+end
+
+function Story:GetGroupScope()
+    return StoryDB:GetGroupScope(self)
 end
 
 function Story:WithDescription(description)
@@ -1050,6 +1292,15 @@ end
 
 function Story:WithConfiguration(configuration)
     self.Config = configuration
+    return self
+end
+
+function Story:WithGroups(...)
+    if tableIsUnassigned(arg) then
+        error("Story:WithGroups :: no groups were specified") end
+    
+    StoryDB:AssociateGroupsWith(self, ...)
+    StoryDB:SetGroupScope(self, StoryScope.Story)
     return self
 end
 
@@ -1166,6 +1417,24 @@ function Story:FindStory(storyName)
         if story.Name == storyName then
             return story
         end
+    end
+end
+
+function Story:FindGroup(name)
+    local groupScope = self:GetGroupScope()
+    if groupScope == StoryScope.Story then
+        return StoryDB:FindAssociatedGroup(self, name)
+    elseif groupScope == StoryScope.None then
+        return getGroup(name)
+    end
+end
+
+function Story:FindUnit(name)
+    local groupScope = self:GetGroupScope()
+    if groupScope == StoryScope.Story then
+        return StoryDB:FindAssociatedUnit(self, name)
+    elseif groupScope == StoryScope.None then
+        return getUnit(name)
     end
 end
 

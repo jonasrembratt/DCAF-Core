@@ -65,22 +65,49 @@ function trimInstanceFromName( name, qualifierAt )
     if not qualifierAt then
         return name end
 
-    return string.sub(name, 1, qualifierAt-1)
+    return string.sub(name, 1, qualifierAt-1), string.sub(name, qualifierAt)
 end
 
-function isNameInstanceOf( name, templateName )
+function isGroupNameInstanceOf( name, templateName )
     if name == templateName then
         return true end
 
-Debug("isNameInstanceOf :: name: " .. name .. " :: templateName: " .. templateName)        
-    -- check for spawned pattern (eg. "Unit-1-1 #001") ...
+Debug("isGroupNameInstanceOf :: name: " .. name .. " :: templateName: " .. templateName)        
+    -- check for spawned pattern (eg. "Unit-1#001-1") ...
     local i = string.find(name, "#%d")
     if i then
         local test = trimInstanceFromName(name, i)
-Debug("isNameInstanceOf :: test: " .. test)        
+Debug("isGroupNameInstanceOf :: test: " .. test)        
         if test == templateName then
-Debug("isNameInstanceOf :: nisse")        
+Debug("isGroupNameInstanceOf :: nisse")        
             return true, templateName end
+    end
+
+    if i and trimInstanceFromName(name, i) == templateName then
+        return true, templateName
+    end
+    return false
+end
+
+function isUnitNameInstanceOf(name, templateName)
+    if name == templateName then
+        return true end
+
+Debug("isUnitNameInstanceOf :: name: " .. name .. " :: templateName: " .. templateName)        
+    -- check for spawned pattern (eg. "Unit-1#001-1") ...
+    local i = string.find(name, "#%d")
+    if i then
+        local test, instanceElement = trimInstanceFromName(name, i)
+Debug("isUnitNameInstanceOf :: test: " .. test)        
+        if test == templateName then
+Debug("isUnitNameInstanceOf :: nisse")        
+            local counterAt = string.find(instanceElement, "-")
+            if not counterAt then
+                return false end
+
+            local counterElement = string.sub(instanceElement, counterAt)
+            return true, templateName .. counterElement
+        end
     end
 
     if i and trimInstanceFromName(name, i) == templateName then
@@ -93,11 +120,11 @@ function isUnitInstanceOf( unit, unitTemplate )
     if unit.UnitName == unitTemplate.UnitName then
         return true end
 
-    return isNameInstanceOf( unit:GetGroup().GroupName, unitTemplate:GetGroup().GroupName )
+    return isGroupNameInstanceOf( unit:GetGroup().GroupName, unitTemplate:GetGroup().GroupName )
 end
 
 function isGroupInstanceOf( group, groupTemplate )
-    return isNameInstanceOf( group.GroupName, groupTemplate.GroupName )
+    return isGroupNameInstanceOf( group.GroupName, groupTemplate.GroupName )
 end
 
 function swap(a, b)
@@ -134,7 +161,7 @@ function findFirstNonWhitespace( s, start )
     return nil
 end
 
-function copyTo(source, target)
+function tableCopyTo(source, target)
     for k,v in pairs(source) do
         if target[k] == nil then
             if isTable(v) then
@@ -177,6 +204,32 @@ function tableKeyOf( table, item )
             return key
         end
     end
+end
+
+function tableFilter( table, func )
+    if table == nil then
+        return nil, 0 end
+
+    if not isTable(table) then
+        error("tableFilter :: table of unexpected type: " .. type(table)) end
+
+    if func ~= nil and not isFunction(func) then
+        error("tableFilter :: func must be function but is: " .. type(func)) end
+
+    local result = {}
+    local count = 0
+    for k, v in pairs(table) do
+        if func(k, v) then
+            result[k] = v
+            count = count + 1
+        end
+    end
+    return result, count
+end
+
+local next = next 
+function tableIsUnassigned(table)
+    return table == nil or not next(table)
 end
 
 function TraceIgnore(message, ...)
@@ -1539,6 +1592,17 @@ function Stop( ... )
     end
 end
 
+function Resume( ... )
+    for _, controllable in ipairs(arg) do
+        local group = getGroup( controllable )
+        if (group == nil) then
+            Warning("Resume-? :: cannot resolve group "..Dump(controllable) .." :: IGNORES")
+        else
+            group:SetAIOn()
+        end
+    end
+end
+
 function TaskAttackGroup( attacker, target )
 
     local ag = getGroup(attacker)
@@ -1905,12 +1969,26 @@ end
 local _DCAFEvents_lateActivations = {} -- { key = storyline name, value = { -- list of <DCAFEventActivation> } }
 
 DCAFEvents = {
-    OnAircraftLanded = "OnAircraftLanded"
+    OnAircraftLanded = "OnAircraftLanded",
+    OnGroupDiverted = "OnGroupDiverted",
+    OnGroupEntersZone = "OnGroupEntersZone",
+    OnGroupInsideZone = "OnGroupInsideZone",
+    OnGroupLeftZone = "OnGroupLeftZone",
+    OnUnitEntersZone = "OnUnitEntersZone",
+    OnUnitInsideZone = "OnUnitInsideZone",
+    OnUnitLeftZone = "OnUnitLeftZone",
     -- todo add more events ...
 }
 
 local _DCAFEvents = {
-    [DCAFEvents.OnAircraftLanded] = function(func, insertFirst) MissionEvents:OnAircraftLanded(func, insertFirst) end
+    [DCAFEvents.OnAircraftLanded] = function(func, insertFirst) MissionEvents:OnAircraftLanded(func, insertFirst) end,
+    [DCAFEvents.OnGroupDiverted] = function(func, insertFirst) MissionEvents:OnGroupDiverted(func, insertFirst) end,
+    [DCAFEvents.OnGroupEntersZone] = function(func, insertFirst) MissionEvents:OnGroupEntersZone(func, insertFirst) end,
+    [DCAFEvents.OnGroupInsideZone] = function(func, insertFirst) MissionEvents:OnGroupInsideZone(func, insertFirst) end,
+    [DCAFEvents.OnGroupLeftZone] = function(func, insertFirst) MissionEvents:OnGroupLeftZone(func, insertFirst) end,
+    [DCAFEvents.OnUnitEntersZone] = function(func, insertFirst) MissionEvents:OnUnitEntersZone(func, insertFirst) end,
+    [DCAFEvents.OnUnitInsideZone] = function(func, insertFirst) MissionEvents:OnUnitInsideZone(func, insertFirst) end,
+    [DCAFEvents.OnUnitLeftZone] = function(func, insertFirst) MissionEvents:OnUnitLeftZone(func, insertFirst) end,
     -- todo add more events ...
 }
 
@@ -2298,6 +2376,9 @@ function MissionEvents:OnUnitEntersZone( unit, zone, func, continous )
         continous)
     zoneEvent:Insert()
 end
+function MissionEvents:EndOnUnitEntersZone( func ) 
+    -- todo Implement MissionEvents:EndOnUnitEntersZone
+end
 
 function MissionEvents:OnUnitInsideZone( unit, zone, func, continous )
     if unit == nil then
@@ -2315,6 +2396,9 @@ function MissionEvents:OnUnitInsideZone( unit, zone, func, continous )
         continous)
     zoneEvent:Insert()
 end
+function MissionEvents:EndOnUnitInsideZone( func ) 
+    -- todo Implement MissionEvents:EndOnUnitInsideZone
+end
 
 function MissionEvents:OnUnitLeftZone( unit, zone, func, continous )
     if unit == nil then
@@ -2328,6 +2412,9 @@ function MissionEvents:OnUnitLeftZone( unit, zone, func, continous )
         func,
         continous)
     zoneEvent:Insert()
+end
+function MissionEvents:EndOnUnitLeftZone( func ) 
+    -- todo Implement MissionEvents:EndOnUnitLeftZone
 end
 
 function MissionEvents:OnGroupEntersZone( group, zone, func, continous )
@@ -2343,6 +2430,9 @@ function MissionEvents:OnGroupEntersZone( group, zone, func, continous )
             continous)
         zoneEvent:Insert()
     end
+end
+function MissionEvents:EndOnGroupEntersZone( func ) 
+    -- todo Implement MissionEvents:EndOnGroupEntersZone
 end
 
 function MissionEvents:OnGroupInsideZone( group, zone, func, continous )
@@ -2368,6 +2458,9 @@ function MissionEvents:OnGroupInsideZone( group, zone, func, continous )
     end
     zoneEvent:Insert()
 end
+function MissionEvents:EndOnGroupInsideZone( func ) 
+    -- todo Implement MissionEvents:EndOnGroupInsideZone
+end
 
 function MissionEvents:OnGroupLeftZone( group, zone, func, continous )
     if group == nil then
@@ -2382,7 +2475,9 @@ function MissionEvents:OnGroupLeftZone( group, zone, func, continous )
         continous)
     zoneEvent:Insert()
 end
-
+function MissionEvents:EndOnGroupLeftZone( func ) 
+    -- todo Implement MissionEvents:EndOnGroupLeftZone
+end
 
 
 Trace("DCAF.Core was loaded")
