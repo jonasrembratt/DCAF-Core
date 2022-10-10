@@ -161,6 +161,21 @@ function findFirstNonWhitespace( s, start )
     return nil
 end
 
+function concatList(list, separator)
+    if not isString(separator) then
+        separator = ", "
+    end
+    local s = ""
+    local count = 0
+    for _, v in ipairs(list) do
+        if count > 0 then
+            s = s .. separator
+        end
+        s = s .. v:ToString() or tostring(v)
+    end
+    return s
+end
+
 function tableCopyTo(source, target)
     local count = 0
     for k,v in pairs(source) do
@@ -1633,6 +1648,7 @@ local _missionEventsHandlers = {
     _groupSpawnedHandlers = {},
     _unitSpawnedHandlers = {},
     _unitDeadHandlers = {},
+    _unitDestroyedHandlers = {},
     _unitKilledHandlers = {},
     _unitCrashedHandlers = {},
     _playerEnteredUnitHandlers = {},
@@ -1681,6 +1697,7 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
             event.IniUnitName = event.IniUnit.UnitName
             event.IniGroup = event.IniUnit:GetGroup()
             event.IniGroupName = event.IniGroup.GroupName
+            event.IniPlayerName = event.IniUnit:GetPlayerName()
         end
         local dcsTarget = event.target or getTarget(event)
         if event.TgtUnit == nil and dcsTarget ~= nil then
@@ -1700,21 +1717,6 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
         event.PlaceName = event.Place:GetName()
         return event
     end
-
-    -- if (event.id == EVENTS.Birth) then obsolete
-    --     if event.IniGroup and #_missionEventsHandlers._groupSpawnedHandlers > 0 then
-    --         MissionEvents:Invoke( _missionEventsHandlers._groupSpawnedHandlers, event )
-    --     end
-    --     if event.IniUnit then
-    --         if #_missionEventsHandlers._unitSpawnedHandlers > 0 then
-    --             MissionEvents:Invoke( _missionEventsHandlers._unitSpawnedHandlers, event )
-    --         end
-    --         if  event.IniPlayerName then
-    --             MissionEvents:Invoke( _missionEventsHandlers._playerEnteredUnitHandlers, event )
-    --         end
-    --     end
-    --     return
-    -- end
 
     if event.id == world.event.S_EVENT_PLAYER_ENTER_UNIT then --  event
         if not event.initiator then
@@ -1740,38 +1742,52 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
         MissionEvents:Invoke( _missionEventsHandlers._playerLeftUnitHandlers, event )
     end
 
+    local function invokeUnitDestroyed(event)
+        
+    end
+
     if event.id == world.event.S_EVENT_DEAD then
-        if event.IniUnit and #_missionEventsHandlers._unitDeadHandlers > 0 then
-            MissionEvents:Invoke( _missionEventsHandlers._unitDeadHandlers, {
-                IniUnit = event.IniUnit,
-                IniUnitName = event.IniUnit.UnitName,
-                IniGroup = event.IniGroup,
-                IniGroupName = event.IniUnit.GroupName,
-                IniPlayerName = event.IniUnit:GetPlayerName()
-            })
+        if event.IniUnit then
+            event = addInitiatorAndTarget(event)
+            -- local e = {
+            --     id = world.event.S_EVENT_DEAD,
+            --     IniUnit = event.IniUnit,
+            --     IniUnitName = event.IniUnit.UnitName,
+            --     IniGroup = event.IniGroup,
+            --     IniGroupName = event.IniUnit.GroupName,
+            --     IniPlayerName = event.IniUnit:GetPlayerName()
+            -- }
+            if #_missionEventsHandlers._unitDeadHandlers > 0 then
+                MissionEvents:Invoke( _missionEventsHandlers._unitDeadHandlers, event)
+            end
+            invokeUnitDestroyed(event)
         end
         return
     end
 
     if event.id == world.event.S_EVENT_KILL then
-        if #_missionEventsHandlers._unitKilledHandlers > 0 then
-            MissionEvents:Invoke( _missionEventsHandlers._unitKilledHandlers, {
-                IniUnit = UNIT:Find(event.initiator),
-                TgtUnit = UNIT:Find(event.target)
-            })
-        end
-        if #_missionEventsHandlers._unitDeadHandlers > 0 then
-            local unit = UNIT:Find(event.target)
-            local group = unit:GetGroup()
-            _e:onEvent({
-                id = world.event.S_EVENT_DEAD,
-                IniUnit = unit,
-                IniUnitName = unit:GetName(),
-                IniGroup = group,
-                IniGroupName = group.GroupName,
-                IniPlayerName = unit:GetPlayerName()
-            })
-        end
+        -- unit was killed by other unit
+        event = addInitiatorAndTarget(event)
+        MissionEvents:Invoke(_missionEventsHandlers._unitKilledHandlers, event)
+        -- if #_missionEventsHandlers._unitKilledHandlers > 0 then
+        -- MissionEvents:Invoke( _missionEventsHandlers._unitKilledHandlers, {
+        --     IniUnit = UNIT:Find(event.initiator),
+        --     TgtUnit = UNIT:Find(event.target)
+        -- })
+        -- end
+        -- if #_missionEventsHandlers._unitDeadHandlers > 0 then
+        --     local unit = UNIT:Find(event.target)
+        --     local group = unit:GetGroup()
+        --     _e:onEvent({
+        --         id = world.event.S_EVENT_DEAD,
+        --         IniUnit = unit,
+        --         IniUnitName = unit:GetName(),
+        --         IniGroup = group,
+        --         IniGroupName = group.GroupName,
+        --         IniPlayerName = unit:GetPlayerName()
+        --     })
+        -- end
+        invokeUnitDestroyed(event)
         return
     end
 
@@ -1781,7 +1797,9 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
     end
 
     if event.id == world.event.S_EVENT_CRASH then
+        event = addInitiatorAndTarget(event)
         MissionEvents:Invoke( _missionEventsHandlers._unitCrashedHandlers, event)
+        invokeUnitDestroyed(event)
         return
     end
 
@@ -1813,7 +1831,6 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
 
     if event.id == world.event.S_EVENT_LAND then
         addInitiatorAndTarget(addPlace(event))
--- Debug("nisse - #_missionEventsHandlers._aircraftLandedHandlers: " .. tostring(#_missionEventsHandlers._aircraftLandedHandlers))
         MissionEvents:Invoke(_missionEventsHandlers._aircraftLandedHandlers, addInitiatorAndTarget(addPlace(event)))
         return
     end
@@ -1894,6 +1911,14 @@ function MissionEvents:EndOnAircraftLanded( func ) MissionEvents:RemoveListener(
 
 
 --- CUSTOM EVENTS
+--- A "collective" event to capture a unit getting destroyed, regardless of how it happened
+-- @param #function fund The event handler function
+-- @param #boolean Specifies whether to insert the event handler at the front, ensuring it will get invoked first
+function MissionEvents:OnUnitDestroyed( func, insertFirst )
+    MissionEvents:AddListener(_missionEventsHandlers._unitDestroyedHandlers, func, nil, insertFirst) 
+end
+function MissionEvents:EndOnUnitDestroyed( func ) MissionEvents:RemoveListener(_missionEventsHandlers._unitDestroyedHandlers, func) end
+
 function MissionEvents:OnPlayerEnteredAirplane( func, insertFirst ) 
     MissionEvents:AddListener(_missionEventsHandlers._playerEnteredUnitHandlers, 
         function( event )

@@ -773,13 +773,13 @@ function Storyline:_endOnCondition(now)
 end
 
 local function validateItemGroupControl(item, group, errorPrefix, action)
-    -- todo ensure group scope is honored
+    -- ensure group scope is honored ...
     if group == nil then
-        error(errorPrefix .. " :: group was unassigned") end
+        errorOnDebug(errorPrefix .. " :: group was unassigned") end
 
     group = getGroup(group)
     if group == nil then
-        error(errorPrefix .. " :: group cannot be resolved from: " .. Dump(group)) end
+        errorOnDebug(errorPrefix .. " :: group cannot be resolved from: " .. Dump(group)) end
 
     local scope = item:GetGroupScope()
     if item._type == Type.Storyline and scope == StoryScope.Storyline then
@@ -789,9 +789,11 @@ local function validateItemGroupControl(item, group, errorPrefix, action)
             if countControllers == 1 then
                 msg = "group that are controlled by another storyline ('" .. otherControllers[1] .. "')"
             else
-                msg = "group that are also controlled by other storylines (there are " .. countControllers .. " storyines controlling)"
+                otherControllers[2] = "Test storyline 2"
+                otherControllers[3] = "Test storyline 2"
+                msg = "group that are also controlled by other storylines. Groups is controlled by these storylines: \n   -" ..concatList(otherControllers, "\n   -")
             end
-            error(errorPrefix  .. " :: " .. item._type .. " '" .. item.Name .. "' cannot " .. action .. " " .. msg .. " (see storyline's Scope.Group configuration)")  
+            errorOnDebug(errorPrefix  .. " :: " .. item._type .. " '" .. item.Name .. "' cannot " .. action .. " " .. msg .. " (see storyline's Scope.Group configuration)")  
         end
     end
 
@@ -802,9 +804,9 @@ local function validateItemGroupControl(item, group, errorPrefix, action)
             if countControllers == 1 then
                 msg = "group that are controlled by another story ('" .. otherControllers[1] .. "')"
             else
-                msg = "group that are also controlled by other stories (there are " .. countControllers .. " stories controlling)"
+                msg = "group that are also controlled by other stories. Group is controlled by these stories: \n   -" ..concatList(otherControllers, "\n   -")
             end
-            error(errorPrefix  .. " :: " .. item._type .. " '" .. item.Name .. "' cannot " .. action .. " " .. msg .. " (see story's Scope.Group configuration)")  
+            errorOnDebug(errorPrefix  .. " :: " .. item._type .. " '" .. item.Name .. "' cannot " .. action .. " " .. msg .. " (see story's Scope.Group configuration)")  
         end
     end
 
