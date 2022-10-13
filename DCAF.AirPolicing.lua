@@ -1612,7 +1612,6 @@ function policeGroup:isPoliceUnit(unit)
 end
 
 function policeGroup:register(pg)
-Debug("nisse - policeGroup:register :: pg: " .. DumpPretty(pg))
     local coalition = pg.group:GetCoalition()
     local coalitionPolicing = _policingGroups[coalition]
     if (coalitionPolicing == nil) then
@@ -2364,7 +2363,6 @@ end
 function policeGroup:AddPoliceUnit(unit, options)
     local group = unit:GetGroup()
     local isPg, pg = policeGroup:isPolicing(group)
---Debug("nisse - policeGroup:AddPoliceUnit :: pg: " .. DumpPretty(pg))
     if not isPg then
         pg = routines.utils.deepCopy(policeGroup)
         pg.group = group
@@ -2594,7 +2592,6 @@ function EnableAirPolicing( options ) -- todo consider allowing filtering which 
     end)
 
     MissionEvents:OnEjection(function( event )
-Debug("nisse - MissionEvents:OnEjected :: event: " .. DumpPretty(event))      
         if not event.IniUnit then
             return end
 
@@ -2805,16 +2802,6 @@ end
 ----------------------- END -----------------------
 
 Trace("DCAF.AirPolicing was loaded")
-
-
-
-MissionEvents:OnWeaponFired(function(event) -- nisse
-    Debug("nisse - MissionEvents:OnWeaponFired :: event: " .. DumpPretty(event))
-end)
-
-
-
-
 
 --[[
     todo:

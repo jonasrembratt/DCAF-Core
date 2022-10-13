@@ -51,6 +51,29 @@ function isUnit( value ) return isClass(value, "UNIT") end
 function isGroup( value ) return isClass(value, "GROUP") end
 function isZone( value ) return isClass(value, "ZONE") end
 
+function getTableType(table)
+    if not isTable(table) then
+        return end
+
+    for k, v in pairs(table) do
+        if isString(k) then
+            return "dictionary"
+        elseif isNumber(k) then
+            return "list"
+        end
+    end
+end
+
+function isList( value ) 
+    local tableType = getTableType(value)
+    return tableType == "list"
+end
+
+function isDictionary( value ) 
+    local tableType = getTableType(value)
+    return tableType == "dictionary"
+end
+
 function isAssignedString( value )
     if not isString(value) then
         return false end
@@ -72,14 +95,14 @@ function isGroupNameInstanceOf( name, templateName )
     if name == templateName then
         return true end
 
-Debug("isGroupNameInstanceOf :: name: " .. name .. " :: templateName: " .. templateName)        
+-- Debug("isGroupNameInstanceOf :: name: " .. name .. " :: templateName: " .. templateName)        
     -- check for spawned pattern (eg. "Unit-1#001-1") ...
     local i = string.find(name, "#%d")
     if i then
         local test = trimInstanceFromName(name, i)
-Debug("isGroupNameInstanceOf :: test: " .. test)        
+-- Debug("isGroupNameInstanceOf :: test: " .. test)        
         if test == templateName then
-Debug("isGroupNameInstanceOf :: nisse")        
+-- Debug("isGroupNameInstanceOf :: nisse")        
             return true, templateName end
     end
 
@@ -87,6 +110,18 @@ Debug("isGroupNameInstanceOf :: nisse")
         return true, templateName
     end
     return false
+end
+
+function isGroupInstanceOf(group, groupTemplate)
+    group = getGroup(group)
+    if not group then
+        return error("isGroupInstanceOf :: cannot resolve group from: " .. Dump(group)) end
+        
+        groupTemplate = getGroup(groupTemplate)
+    if not groupTemplate then
+        return error("isGroupInstanceOf :: cannot resolve group template from: " .. Dump(groupTemplate)) end
+            
+    return isGroupNameInstanceOf(group.GroupName, groupTemplate.GroupName)
 end
 
 function isUnitNameInstanceOf(name, templateName)
@@ -117,6 +152,14 @@ Debug("isUnitNameInstanceOf :: nisse")
 end
 
 function isUnitInstanceOf( unit, unitTemplate )
+    unit = getUnit(unit)
+    if not unit then
+        return error("isUnitInstanceOf :: cannot resolve unit from: " .. Dump(unit)) end
+    
+    unitTemplate = getUnit(unitTemplate)
+    if not unitTemplate then
+        return error("isUnitInstanceOf :: cannot resolve unit template from: " .. Dump(unitTemplate)) end
+
     if unit.UnitName == unitTemplate.UnitName then
         return true end
 
@@ -161,7 +204,7 @@ function findFirstNonWhitespace( s, start )
     return nil
 end
 
-function concatList(list, separator)
+function concatList(list, separator, itemSerializeFunc)
     if not isString(separator) then
         separator = ", "
     end
@@ -171,7 +214,11 @@ function concatList(list, separator)
         if count > 0 then
             s = s .. separator
         end
-        s = s .. v:ToString() or tostring(v)
+        if itemSerializeFunc then
+            s = s .. itemSerializeFunc(v)
+        else
+            s = s .. v:ToString() or tostring(v)
+        end
     end
     return s
 end
@@ -270,31 +317,6 @@ function errorOnDebug(message)
     else
         Error(message)
     end
-end
-
-function activateNow( source )
-    local group = getGroup( source )
-    if not group then
-        return exitWarning("activateNow :: cannot resolve group from " .. Dump(source))
-    end
-    if not group:IsActive() then
-        group:Activate()
-    end
-    return group
-end
-
-function spawnNow( source )
-    local name = nil
-    if isGroup(source) then
-        name = source.GroupName
-    elseif isString(source) then
-        name = source
-    else
-        error("spawnNow :: source is unexpected type: " .. type(source)) end
-
-    local group = SPAWN:New( name ):Spawn()
-    activateNow( group ) -- hack. Not sure why the spawned group is not active but this fixes that
-    return group
 end
 
 function Delay( seconds, userFunction, data )
@@ -400,7 +422,51 @@ function files.exists( path )
 end
 
 ------------------------------------------------------------------
-  
+Coalition = {
+    Blue = "blue",
+    Red = "red",
+    Neutral = "neutral"
+}
+
+GroupType = {
+    Air = "Air",
+    Airplane = "Airplane",
+    Helicopter = "Helicopter",
+    Ship = "Ship",
+    Ground = "Ground",
+    Structure = "Structure",
+}
+
+function Coalition.IsValid(value)
+    if isString(value) then
+        return value == Coalition.Blue 
+            or value == Coalition.Red
+            or value == Coalition.Neutral
+    elseif isList(value) then
+        for _, v in ipairs(value) do
+            if not Coalition.IsValid(v) then
+                return false end
+        end
+        return true
+    end
+end
+
+function GroupType.IsValid(value)
+    if isString(value) then
+        return value == GroupType.Air
+            or value == GroupType.Airplane
+            or value == GroupType.Ground
+            or value == GroupType.Ship
+            or value == GroupType.Structure
+    elseif isList(value) then
+        for _, v in ipairs(value) do
+            if not GroupType.IsValid(v) then
+                return false end
+        end
+        return true
+    end
+end
+
 
 --[[
 Resolves a UNIT from an arbitrary source
@@ -434,6 +500,32 @@ function getGroup( source )
         return unit:GetGroup() 
     end
 end
+
+function activateNow( source )
+    local group = getGroup( source )
+    if not group then
+        return exitWarning("activateNow :: cannot resolve group from " .. Dump(source))
+    end
+    if not group:IsActive() then
+        group:Activate()
+    end
+    return group
+end
+
+function spawnNow( source )
+    local name = nil
+    if isGroup(source) then
+        name = source.GroupName
+    elseif isString(source) then
+        name = source
+    else
+        error("spawnNow :: source is unexpected type: " .. type(source)) end
+
+    local group = SPAWN:New( name ):Spawn()
+    activateNow( group ) -- hack. Not sure why the spawned group is not active but this fixes that
+    return group
+end
+
   
 function isSameHeading( group1, group2 ) 
 --Debug("isSameHeading :: g1.heading: " .. tostring(group1:GetHeading() .. " :: g2.heading: " .. tostring(group2:GetHeading())))
@@ -1684,11 +1776,12 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
         return
     end
 
-    local function getTarget(event)
+    local function getDCSTarget(event)
         local dcsTarget = event.target 
         if not dcsTarget and event.weapon then
             dcsTarget = event.weapon:getTarget()
         end
+        return dcsTarget
     end
 
     local function addInitiatorAndTarget( event )
@@ -1696,14 +1789,33 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
             event.IniUnit = UNIT:Find(event.initiator)
             event.IniUnitName = event.IniUnit.UnitName
             event.IniGroup = event.IniUnit:GetGroup()
+if not event.IniGroup then
+local nisse = event.IniUnit:getGroup():getName()
+Debug("_e:onEvent :: nisse: " .. DumpPrettyDeep(nisse))
+end
             event.IniGroupName = event.IniGroup.GroupName
             event.IniPlayerName = event.IniUnit:GetPlayerName()
         end
-        local dcsTarget = event.target or getTarget(event)
+        local dcsTarget = getDCSTarget(event)
         if event.TgtUnit == nil and dcsTarget ~= nil then
             event.TgtUnit = UNIT:Find(dcsTarget)
+            if not event.TgtUnit then
+                Warning("_e:onEvent :: event: " .. Dump(event.id) .. " :: could not resolve TgtUnit from DCS object" )
+                return event
+            end
             event.TgtUnitName = event.TgtUnit.UnitName
+            -- if DCSUnit then
+            --   local UnitGroup = GROUP:FindByName( dcsTarget:getGroup():getName() )
+            --   return UnitGroup
+            -- end
             event.TgtGroup = event.TgtUnit:GetGroup()
+-- nisse
+local nisse = dcsTarget:getGroup():getName()
+            if not event.TgtGroup then
+Debug("_e:onEvent :: nisse: " .. DumpPrettyDeep(nisse))
+                Warning("_e:onEvent :: event: " .. Dump(event.id) .. " :: could not resolve TgtGroup from UNIT:GetGroup()" )
+                return event
+            end            
             event.TgtGroupName = event.TgtGroup.GroupName
         end
         return event
@@ -1743,20 +1855,22 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
     end
 
     local function invokeUnitDestroyed(event)
-        
+        if event.TgtUnit then
+            local source = event
+            event.RootEvent = event
+            event = {
+                IniUnit = source.TgtUnit,
+                IniUnitName = source.TgtUnitName,
+                IniGroup = source.TgtGroup,
+                IniGroupName = source.TgtGroupName
+            }
+        end
+        MissionEvents:Invoke(_missionEventsHandlers._unitDestroyedHandlers, event)
     end
 
     if event.id == world.event.S_EVENT_DEAD then
         if event.IniUnit then
             event = addInitiatorAndTarget(event)
-            -- local e = {
-            --     id = world.event.S_EVENT_DEAD,
-            --     IniUnit = event.IniUnit,
-            --     IniUnitName = event.IniUnit.UnitName,
-            --     IniGroup = event.IniGroup,
-            --     IniGroupName = event.IniUnit.GroupName,
-            --     IniPlayerName = event.IniUnit:GetPlayerName()
-            -- }
             if #_missionEventsHandlers._unitDeadHandlers > 0 then
                 MissionEvents:Invoke( _missionEventsHandlers._unitDeadHandlers, event)
             end
@@ -1769,24 +1883,7 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
         -- unit was killed by other unit
         event = addInitiatorAndTarget(event)
         MissionEvents:Invoke(_missionEventsHandlers._unitKilledHandlers, event)
-        -- if #_missionEventsHandlers._unitKilledHandlers > 0 then
-        -- MissionEvents:Invoke( _missionEventsHandlers._unitKilledHandlers, {
-        --     IniUnit = UNIT:Find(event.initiator),
-        --     TgtUnit = UNIT:Find(event.target)
-        -- })
-        -- end
-        -- if #_missionEventsHandlers._unitDeadHandlers > 0 then
-        --     local unit = UNIT:Find(event.target)
-        --     local group = unit:GetGroup()
-        --     _e:onEvent({
-        --         id = world.event.S_EVENT_DEAD,
-        --         IniUnit = unit,
-        --         IniUnitName = unit:GetName(),
-        --         IniGroup = group,
-        --         IniGroupName = group.GroupName,
-        --         IniPlayerName = unit:GetPlayerName()
-        --     })
-        -- end
+Debug("_e:onEvent :: S_EVENT_KILL")        
         invokeUnitDestroyed(event)
         return
     end
@@ -1991,6 +2088,7 @@ end
     func = nil,              -- event handler function
     notifyFunc = nil,        -- (optional) callback handler, for notifying the event was activated
     insertFirst = nil,       -- boolean; passed to event delegate registration (see StorylineEventDelegate:ActivateFor)
+    args = nil                -- (optional) arbitrary arguments with contextual meaning
 }
 
 local _DCAFEvents_lateActivations = {} -- { key = storyline name, value = { -- list of <DCAFEventActivation> } }
@@ -2004,26 +2102,30 @@ DCAFEvents = {
     OnUnitEntersZone = "OnUnitEntersZone",
     OnUnitInsideZone = "OnUnitInsideZone",
     OnUnitLeftZone = "OnUnitLeftZone",
+    OnUnitDestroyed = "OnUnitDestroyed",
     -- todo add more events ...
 }
 
 local _DCAFEvents = {
     [DCAFEvents.OnAircraftLanded] = function(func, insertFirst) MissionEvents:OnAircraftLanded(func, insertFirst) end,
     [DCAFEvents.OnGroupDiverted] = function(func, insertFirst) MissionEvents:OnGroupDiverted(func, insertFirst) end,
-    [DCAFEvents.OnGroupEntersZone] = function(func, insertFirst) MissionEvents:OnGroupEntersZone(func, insertFirst) end,
-    [DCAFEvents.OnGroupInsideZone] = function(func, insertFirst) MissionEvents:OnGroupInsideZone(func, insertFirst) end,
-    [DCAFEvents.OnGroupLeftZone] = function(func, insertFirst) MissionEvents:OnGroupLeftZone(func, insertFirst) end,
-    [DCAFEvents.OnUnitEntersZone] = function(func, insertFirst) MissionEvents:OnUnitEntersZone(func, insertFirst) end,
-    [DCAFEvents.OnUnitInsideZone] = function(func, insertFirst) MissionEvents:OnUnitInsideZone(func, insertFirst) end,
-    [DCAFEvents.OnUnitLeftZone] = function(func, insertFirst) MissionEvents:OnUnitLeftZone(func, insertFirst) end,
+    [DCAFEvents.OnUnitDestroyed] = function(func, insertFirst) MissionEvents:OnUnitDestroyed(func, insertFirst) end,
+    -- zone events
+    [DCAFEvents.OnGroupEntersZone] = function(func, insertFirst, args) MissionEvents:OnGroupEntersZone(args.Item, args.Zone, func, args.Continous, args.Filter) end,
+    [DCAFEvents.OnGroupInsideZone] = function(func, insertFirst, args) MissionEvents:OnGroupInsideZone(args.Item, args.Zone, func, args.Continous, args.Filter) end,
+    [DCAFEvents.OnGroupLeftZone] = function(func, insertFirst, args) MissionEvents:OnGroupLeftZone(args.Item, args.Zone, func, args.Continous, args.Filter) end,
+    [DCAFEvents.OnUnitEntersZone] = function(func, insertFirst, args) MissionEvents:OnUnitEntersZone(args.Item, args.Zone, func, args.Continous, args.Filter) end,
+    [DCAFEvents.OnUnitInsideZone] = function(func, insertFirst, args) MissionEvents:OnUnitInsideZone(args.Item, args.Zone, func, args.Continous, args.Filter) end,
+    [DCAFEvents.OnUnitLeftZone] = function(func, insertFirst, args) MissionEvents:OnUnitLeftZone(args.Item, args.Zone, func, args.Continous, args.Filter) end,
     -- todo add more events ...
 }
 
 function _DCAFEvents:Activate(activation)
     local activator = _DCAFEvents[activation.eventName]
     if activator then
+-- Debug("nisse - DCAFEvents:Activate :: activation: " .. DumpPrettyDeep(activation))
 -- Debug("nisse - DCAFEvents:Activate :: activator: " .. DumpPretty(activator))
-        activator(activation.func, activation.insertFirst)
+        activator(activation.func, activation.insertFirst, activation.args)
 
         -- notify event activation, if callback func is registered ...
         if activation.notifyFunc then
@@ -2039,19 +2141,19 @@ function _DCAFEvents:Activate(activation)
 end
 
 function _DCAFEvents:ActivateFor(source)
---Debug("nisse - _DCAFEvents:ActivateFor :: source:" .. Dump(source) .. " :: _DCAFEvents_lateActivations: " .. DumpPrettyDeep(_DCAFEvents_lateActivations))
+-- Debug("nisse - _DCAFEvents:ActivateFor :: source:" .. Dump(source) .. " :: _DCAFEvents_lateActivations: " .. DumpPrettyDeep(_DCAFEvents_lateActivations))
     local activations = _DCAFEvents_lateActivations[source]
     if not activations then
         return
     end
---Debug("nisse - _DCAFEvents:ActivateFor :: #activations: " .. DumpPrettyDeep(#activations) .. " :: (1 expected)")
+-- Debug("nisse - _DCAFEvents:ActivateFor :: #activations: " .. DumpPrettyDeep(#activations) .. " :: (1 expected)")
     _DCAFEvents_lateActivations[source] = nil
     for _, activation in ipairs(activations) do
         _DCAFEvents:Activate(activation)
     end
 end
 
-function DCAFEvents:PreActivate(source, eventName, func, onActivateFunc)
+function DCAFEvents:PreActivate(source, eventName, func, onActivateFunc, args)
     if source == nil then
         error("DCAFEvents:LateActivate :: unassigned source") end
 
@@ -2065,6 +2167,7 @@ function DCAFEvents:PreActivate(source, eventName, func, onActivateFunc)
     activation.eventName = eventName
     activation.func = func
     activation.onActivateFunc = onActivateFunc
+    activation.args = args
     local activations = _DCAFEvents_lateActivations[source]
     if not activations then
         activations = {}
@@ -2096,11 +2199,60 @@ local ZoneEventType = {
     Left = 'left'
 }
 
+function ZoneEventType.isValid(value)
+    return value == ZoneEventType.Enter 
+        or value == ZoneEventType.Inside
+        or value == ZoneEventType.Left
+end
+
 local ZoneEventObjectType = {
     Any = 'any',
     Group = 'group',
     Unit = 'unit'
 }
+
+-- local ObjectZoneState = { -- keeps track of all groups/units state in relation to zones
+--     Outside = "outside",
+--     Inside = "inside",
+--     Records = {
+--         -- key = group/unit name, value = {
+--         --   key = zone name, value = <ZoneEventType>
+--         -- }
+--     }
+    
+-- }
+
+-- function ObjectZoneState:Set(object, zone, state)
+--     local name = nil
+--     if isGroup(object) then
+--         name = object.GroupName
+--     else
+--         name = object.UnitName
+--     end
+--     local record = ObjectZoneState.Records[name]
+--     if not record then
+--         record = {}
+--         ObjectZoneState.Records[name] = state
+--         record[zone.Name] = state
+--         return
+--     end
+--     record[zone.Name] = state
+-- end
+
+-- function ObjectZoneState:Get(object, zone)
+--     local name = nil
+--     if isGroup(object) then
+--         name = object.GroupName
+--     else
+--         name = object.UnitName
+--     end
+--     local record = ObjectZoneState.Records[name]
+--     if not record then
+--         return ObjectZoneState.Outside
+--     end
+--     local state = record[zone.Name]
+--     return state or ObjectZoneState.Outside
+-- end
 
 local ZoneEvent = {
     objectName = nil,                -- string; name of group / unit (nil if objectType = 'any')
@@ -2113,36 +2265,131 @@ local ZoneEvent = {
     state = ZoneEventState.Outside,  -- <MonitoredZoneEventState>
     isZoneCentered = false,          -- when set, the ZoneEvent:EvaluateForZone() functon is invoked; otherwise ZoneEvent:EvaluateForObject()
     continous = false,               -- when set, the event is not automatically removed when triggered
+    filter = nil,                    -- 
 }
 
-local ZoneCentricZoneEventInfo = {
+local ConsolidatedZoneCentricZoneEventsInfo = {
     zone = nil,                      -- the monitored zone
     zoneEvents = {},                 -- list of <ZoneEvent>
 }
 
 local ObjectCentricZoneEvents = { 
-    -- list of <MonitoredZoneEvent>
+    -- list of <ZoneEvent>
 }
 
-local ZoneCentricZoneEvents = {
+local FilterCentricZoneEvents = { -- events with Filter (must be resolved individually)
+    -- list of <ZoneEvent>
+}
+
+local ConsolidatedZoneCentricZoneEvents = { -- events with no Filter attached (can be consolidated for same zone)
     -- key = zoneName, 
-    -- value = <ZoneCentricZoneEventInfo>
+    -- value = <ConsolidatedZoneCentricZoneEventsInfo>
 }
 
 local ZoneEventArgs = {
-    EventType = nil,                 -- <ZoneEventType>
-    ZoneName = nil,                  -- string
+    EventType = nil,          -- <ZoneEventType>
+    ZoneName = nil,           -- string
 }
 
-function ZoneCentricZoneEventInfo:New(zone, zoneName)
-    local info = routines.utils.deepCopy(ZoneCentricZoneEventInfo)
+ZoneFilter = {
+    _type = "ZoneEventArgs",
+    _template = true,
+    Item = nil,
+    Coalitiona = nil,         -- (optional) one or more <Coalition>
+    GroupTypes = nil,         -- (optional) one or more <GroupType>
+    Continous = nil,
+}
+
+function ZoneFilter:Ensure()
+    if not self._template then
+        return self end
+
+    local filter = DCAF.clone(ZoneFilter)
+    filter._template = nil
+    return filter
+end
+
+local function addTypesToZoneFilter(filter, item)
+    if item == nil then
+        return filter
+    end
+    if item:IsAirPlane() then
+        filter.Type = GroupType.Airplane
+    elseif item:IsHelicopter() then
+        filter.Type = GroupType.Helicopter
+    elseif item:IsShip() then
+        filter.Type = GroupType.Ship
+    elseif item:IsGround() then
+        filter.Type = GroupType.Ground
+    end
+    return filter
+end
+
+function ZoneFilter:Group(group)
+    local filter = self:Ensure()
+    if group == nil then
+        return filter
+    end
+    filter.Item = getGroup(group)
+    if not filter.Item then
+        error("ZoneFilter:Group :: cannot resolve group from " .. Dump(group)) end
+
+    return addTypesToZoneFilter(filter, filter.Item)
+end
+
+function ZoneFilter:Unit(unit)
+    local filter = self:Ensure()
+    if unit == nil then
+        return filter
+    end
+    filter.Item = unit
+    if not filter.Item then
+        error("ZoneFilter:Unit :: cannot resolve unit from " .. Dump(unit)) end
+
+    return addTypesToZoneFilter(filter, filter.Item)
+end
+
+function ZoneFilter:Coalitions(...)
+    local coalitions = {}
+    for i = 1, select("#", ...) do
+        local v = select(i, ...)
+        if v ~= nil then
+            if not Coalition.IsValid(v) then
+                error("ZoneOptions:Coalitions :: invalid coalition: " .. Dump(v)) 
+            end
+            table.insert(coalitions, v)
+        end
+    end
+
+    if #coalitions == 0 then
+        error("ZoneFilter:Coalitions :: no coalition(s) specified") end
+
+    local filter = self:Ensure()
+    filter.Coalitions = coalitions
+    return filter
+end
+
+function ZoneFilter:GroupType(type)
+    if not isAssignedString(type) then
+        error("ZoneFilter:GroupType :: group type was unassigned")  end
+        
+    if not GroupType.IsValid(type) then
+        error("ZoneFilter:GroupType :: invalid group type: " .. Dump(v))  end
+
+    local filter = self:Ensure()
+    filter.GroupType = type
+    filter.Item = nil
+    return filter
+end
+
+function ConsolidatedZoneCentricZoneEventsInfo:New(zone, zoneName)
+    local info = DCAF.clone(ConsolidatedZoneCentricZoneEventsInfo)
     info.zone = zone
-    ZoneCentricZoneEvents[zoneName] = info
     ZoneEventState._countZoneEventZones = ZoneEventState._countZoneEventZones + 1
     return info
 end
 
-function ZoneCentricZoneEventInfo:Scan()
+function ConsolidatedZoneCentricZoneEventsInfo:Scan()
     local setGroup = SET_GROUP:New():FilterZones({ self.zone }):FilterActive():FilterOnce()
     local groups = {}
     setGroup:ForEachGroup(
@@ -2166,7 +2413,7 @@ function ZoneEventArgs:End()
 end
 
 local function stopMonitoringZoneEventsWhenEmpty()
-    if ZoneEventState._timer ~= nil and #ObjectCentricZoneEvents == 0 and ZoneEventState._countZoneEventZones == 0 then
+    if ZoneEventState._timer ~= nil and #ObjectCentricZoneEvents == 0 and #FilterCentricZoneEvents == 0 and ZoneEventState._countZoneEventZones == 0 then
         Trace("stopMonitoringZoneEventsWhenEmpty :: mission zone events monitoring stopped")
         ZoneEventState._timer:Stop()
         ZoneEventState._timer = nil
@@ -2176,43 +2423,54 @@ end
 local function startMonitorZoneEvents()
     local function monitor()
 
-        -- zone object events ...
-        local removeZoneObjectEvents = {}
+        -- object-centric zone events ...
+        local removeZoneEvents = {}
         for _, zoneEvent in ipairs(ObjectCentricZoneEvents) do
             if zoneEvent:EvaluateForObject() then
-                table.insert(removeZoneObjectEvents, zoneEvent)
+                table.insert(removeZoneEvents, zoneEvent)
             end
         end
-        for _, zoneEvent in ipairs(removeZoneObjectEvents) do
+        for _, zoneEvent in ipairs(removeZoneEvents) do
             zoneEvent:Remove()
         end
 
-        -- zone 'all objects' events ...
-        local removeZoneEvents = {}
-        for zoneName, zesg in pairs(ZoneCentricZoneEvents) do
-            local groups = zesg:Scan()
+        -- filter-cenric zone events ...
+        removeZoneEvents = {}
+        for _, zoneEvent in ipairs(FilterCentricZoneEvents) do
+            if zoneEvent:EvaluateForFilter() then               
+                table.insert(removeZoneEvents, zoneEvent)
+            end
+        end
+        for _, zoneEvent in ipairs(removeZoneEvents) do
+            zoneEvent:Remove()
+        end
+
+        -- zone-centric zone events ...
+        removeZoneEvents = {}
+        for zoneName, zcEvent in pairs(ConsolidatedZoneCentricZoneEvents) do
+            local groups = zcEvent:Scan()
             if #groups > 0 then
-                for _, zoneEvent in ipairs(zesg.zoneEvents) do
-                    if zoneEvent:EvaluateForZone(zesg) then
+                for _, zoneEvent in ipairs(zcEvent.zoneEvents) do
+                    if zoneEvent:TriggerMultipleGroups(groups) then
                         table.insert(removeZoneEvents, zoneEvent)
                     end
                 end
             end
             for _, zoneEvent in ipairs(removeZoneEvents) do
-                local index = tableIndexOf(zesg.zoneEvents, zoneEvent)
+                local index = tableIndexOf(zcEvent.zoneEvents, zoneEvent)
                 if index < 1 then
-                    error("startMonitorZoneEvents_monitor :: cannot remove zone event :: event was not found in the internal ZESG") end
+                    error("startMonitorZoneEvents_monitor :: cannot remove zone event :: event was not found in the internal list") end
                 
-                table.remove(zesg.zoneEvents, index)
-                if #zesg.zoneEvents == 0 then
-                    ZoneCentricZoneEvents[zoneName] = nil
+                table.remove(zcEvent.zoneEvents, index)
+                if #zcEvent.zoneEvents == 0 then
+                    ConsolidatedZoneCentricZoneEvents[zoneName] = nil
                     ZoneEventState._countZoneEventZones = ZoneEventState._countZoneEventZones - 1
                 end
             end
         end
         stopMonitoringZoneEventsWhenEmpty()
     end
-    -- todo consider monitoring zones for 'any' object
+
     if not ZoneEventState._timer then
         ZoneEventState._timer = TIMER:New(monitor):Start(1, 1)
     end
@@ -2233,9 +2491,16 @@ function ZoneEvent:Trigger(object, objectName)
     return not self.continous or event._terminateEvent
 end
 
-function ZoneEvent:TriggerMultiple(groups)
+function ZoneEvent:TriggerMultipleGroups(groups)
     local event = ZoneEventArgs:New(self)
     event.IniGroups = groups
+    self.func(event)
+    return not self.continous or event._terminateEvent
+end
+
+function ZoneEvent:TriggerMultipleUnits(units)
+    local event = ZoneEventArgs:New(self)
+    event.IniUnits = units
     self.func(event)
     return not self.continous or event._terminateEvent
 end
@@ -2250,9 +2515,15 @@ local function isAnyGroupUnitInZone(group, zone)
     return false
 end
 
-function ZoneEvent:EvaluateForZone(groups)
-    -- 'zone perspective'; use <zone> to check event ...
-    return self:TriggerMultiple(groups)
+local function getGrupsInZone(group, zone, filter)
+    -- todo
+    -- local units = group:GetUnits()
+    -- for _, unit in ipairs(units) do
+    --     if unit:IsInZone(zone) then
+    --         return true
+    --     end
+    -- end
+    -- return false
 end
 
 function ZoneEvent:EvaluateForObject()
@@ -2299,35 +2570,108 @@ function ZoneEvent:EvaluateForObject()
     return false
 end
 
+function ZoneEvent:EvaluateForFilter()
+    -- 'filter perspective'; use filtered SET_GROUP or SET_UNIT to check zone event ...
+    local set = nil
+    if self.objectType == ZoneEventObjectType.Group then
+        set  = SET_GROUP:New():FilterZones({ self.zone })
+    else
+        set  = SET_UNIT:New():FilterZones({ self.zone })
+    end
+
+    -- filter coalitions ...
+    if self.filter.Coalitions then
+        set:FilterCoalitions(self.filter.Coalitions)
+    end
+
+    -- filter group type ...
+    local type = self.filter.GroupType
+    if type == GroupType.Air then
+        set:FilterCategoryAirplane()
+        set:FilterCategoryHelicopter()
+    elseif type == GroupType.Airplane then
+        set:FilterCategoryAirplane()
+    elseif type == GroupType.Helicopter then
+        set:FilterCategoryHelicopter()
+    elseif type == GroupType.Ship then
+        set:FilterCategoryShip()
+    elseif type == GroupType.Ground then
+        set:FilterCategoryGround()
+    elseif type == GroupType.Structure then
+        set:FilterCategoryStructure()
+    end
+
+    -- scan and trigger events if groups/units where found ...
+    set:FilterActive():FilterOnce()
+    if self.objectType == ZoneEventObjectType.Group then
+        local groups = {}
+        set:ForEachGroupAlive(function(group) table.insert(groups, group) end)
+        if #groups > 0 then
+            return self:TriggerMultipleGroups(groups)
+        end
+    elseif self.objectType == ZoneEventObjectType.Unit then
+        local units = {}
+        set:ForEachUnitAlive(function(group)
+            table.insert(units, group)
+        end)
+        if #units > 0 then
+            return self:TriggerMultipleUnits(units)
+        end
+    end
+    return false
+end
+
+function ZoneEvent:IsFiltered()
+    return self.filter ~= nil
+end
+
 function ZoneEvent:Insert()
     if self.isZoneCentered then
-        local info = ZoneCentricZoneEvents[self.zoneName]
-        if not info then
-            info = ZoneCentricZoneEventInfo:New(self.zone, self.zoneName)
+        if self:IsFiltered() then
+            self._eventList = FilterCentricZoneEvents
+            table.insert(FilterCentricZoneEvents, self)
+        else
+            local info = ConsolidatedZoneCentricZoneEvents[self.zoneName]
+            if not info then
+                info = ConsolidatedZoneCentricZoneEventsInfo:New(self.zone, self.zoneName)
+                ConsolidatedZoneCentricZoneEvents[self.zoneName] = info
+            end
+            self._eventList = FilterCentricZoneEvents
+            table.insert(info.zoneEvents, self)
         end
-        table.insert(info.zoneEvents, self)
     else
+        self._eventList = ObjectCentricZoneEvents
         table.insert(ObjectCentricZoneEvents, self)
     end
+-- Debug("ZoneEvent:Insert :: #FilterCentricZoneEvents: " .. Dump(#FilterCentricZoneEvents))
+-- Debug("ZoneEvent:Insert :: #ObjectCentricZoneEvents: " .. Dump(#ObjectCentricZoneEvents))
+-- Debug("ZoneEvent:Insert :: #ConsolidatedZoneCentricZoneEvents: " .. Dump(#ConsolidatedZoneCentricZoneEvents))
     startMonitorZoneEvents()
 end
     
 function ZoneEvent:Remove()
-    if self.objectType ~= ZoneEventObjectType.Any then
-        local index = tableIndexOf(ObjectCentricZoneEvents, self)
-        if index < 1 then
+    if self._eventList then
+        local index = tableIndexOf(self._eventList, self)
+        if not index then
             error("ZoneEvent:Remove :: cannot find zone event")
         end
-        table.remove(ObjectCentricZoneEvents, index)
+        table.remove(self._eventList, index)
     end
+    -- if self.objectType ~= ZoneEventObjectType.Any then
+    --     local index = tableIndexOf(ObjectCentricZoneEvents, self) obsolete
+    --     if not index then
+    --         error("ZoneEvent:Remove :: cannot find zone event")
+    --     end
+    --     table.remove(ObjectCentricZoneEvents, index)
+    -- end
     stopMonitoringZoneEventsWhenEmpty()
 end
 
-function ZoneEvent:NewForZone(objectType, eventType, zone, func, continous, makeZest)
-    local zoneEvent = routines.utils.deepCopy(ZoneEvent)
+function ZoneEvent:NewForZone(objectType, eventType, zone, func, continous, filter--[[ , makeZczes ]])
+    local zoneEvent = DCAF.clone(ZoneEvent)
     zoneEvent.isZoneCentered = true
     zoneEvent.objectType = objectType
-    if eventType ~= 'enter' and eventType ~= 'inside' and eventType ~= 'left' then
+    if not ZoneEventType.isValid(eventType) then
         error("MonitoredZoneEvent:New :: unexpected event type: " .. Dump(eventType))
     end
     zoneEvent.eventType = eventType
@@ -2336,6 +2680,9 @@ function ZoneEvent:NewForZone(objectType, eventType, zone, func, continous, make
         error("MonitoredZoneEvent:New :: unexpected/unassigned zone: " .. Dump(zone))
     end
     zoneEvent.zone = ZONE:FindByName(zone)
+    if not zoneEvent.zone then
+        error("MonitoredZoneEvent:New :: unknown zone: " .. Dump(zone))
+    end
     zoneEvent.zoneName = zone
 
     if not isFunction(func) then
@@ -2350,20 +2697,21 @@ function ZoneEvent:NewForZone(objectType, eventType, zone, func, continous, make
         continous = false
     end
     zoneEvent.continous = continous
+    zoneEvent.filter = filter
 
-    if makeZest then
-        local info = ZoneCentricZoneEvents[zoneEvent.zoneName]
-        if not info then
-            info = ZoneCentricZoneEventInfo:New(zoneEvent.zone)
-            ZoneCentricZoneEvents[zoneEvent.zoneName] = info
-        end
-        info:AddEvent()
-    end
+    -- if makeZczes then
+    --     local info = ZoneCentricZoneEvents[zoneEvent.zoneName]
+    --     if not info then
+    --         info = ZoneCentricZoneEventInfo:New(zoneEvent.zone)
+    --         ZoneCentricZoneEvents[zoneEvent.zoneName] = info
+    --     end
+    --     info:AddEvent()
+    -- end
     return zoneEvent
 end
 
 function ZoneEvent:NewForObject(object, objectType, eventType, zone, func, continous)
-    local zoneEvent = ZoneEvent:NewForZone(eventType, zone, func, continous, false)
+    local zoneEvent = ZoneEvent:NewForZone(objectType, eventType, zone, func, continous, nil, false)
     zoneEvent.isZoneCentered = false
     if objectType == 'unit' then
         zoneEvent.object = getUnit(object)
@@ -2444,9 +2792,10 @@ function MissionEvents:EndOnUnitLeftZone( func )
     -- todo Implement MissionEvents:EndOnUnitLeftZone
 end
 
-function MissionEvents:OnGroupEntersZone( group, zone, func, continous )
+function MissionEvents:OnGroupEntersZone( group, zone, func, continous, filter )
+    local zoneEvent = nil
     if group == nil then
-        MissionEvents:OnGroupInsideZone( nil, zone, func )
+        MissionEvents:OnGroupInsideZone(group, zone, func, continous, filter)
     else
         local zoneEvent = ZoneEvent:NewForObject(
             group, 
@@ -2462,7 +2811,8 @@ function MissionEvents:EndOnGroupEntersZone( func )
     -- todo Implement MissionEvents:EndOnGroupEntersZone
 end
 
-function MissionEvents:OnGroupInsideZone( group, zone, func, continous )
+function MissionEvents:OnGroupInsideZone( group, zone, func, continous, filter )
+Debug("MissionEvents:OnGroupInsideZone :: filter: " .. DumpPrettyDeep(filter))
     if not isBoolean(continous) then
         continous = true
     end
@@ -2481,7 +2831,8 @@ function MissionEvents:OnGroupInsideZone( group, zone, func, continous )
             ZoneEventType.Inside, 
             zone, 
             func,
-            continous)
+            continous, 
+            filter)
     end
     zoneEvent:Insert()
 end

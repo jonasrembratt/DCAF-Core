@@ -2,7 +2,7 @@
 
 local ModuleName = "DCAF Narrator"
 
-local GroupInfo = {     -- used for keeping track of a GROUPs and how it relate to stories/storylines
+local GroupInfo = {           -- used for keeping track of a GROUPs and how it relate to stories/storylines
     GroupName = nil,          -- string; name of group
     Group = nil,              -- <GROUP> (MOOSE object)
     Stories = {},             -- list of stories that control this group; key = story name, value = <Story> 
@@ -294,7 +294,7 @@ function StoryDB:AssociateGroupsWith(item, ...)
     for _, group in ipairs(arg) do
         local g = getGroup(group)
         if not g then
-            error("Cannot add groups to " .. item:ToString() .. " :: group cannot be resolved from: " .. Dump(group)) end
+            error("Cannot add groups to " .. item:ToString() .. " :: group cannot be resolved from: '" .. Dump(group) .. "'") end
 
         local groupInfo = StoryDB.Groups[g.GroupName]
         if not groupInfo then
@@ -515,7 +515,7 @@ function Storyline:NewIdle(name, description)
 end
 
 function Storyline:ToString()
-    return self.Name .. " (storyline)"
+    return string.format("'%s' (%s)", self.Name, self._type)
 end
 
 function Storyline:GetGroupScope()
@@ -630,6 +630,7 @@ function Storyline:Run()
     end
     self._isIdle = false
     StoryDB:SetState(self, StoryState.Running)
+Debug("Storyline:Run :: '" .. self.Name .. "'")    
     DCAFEvents:ActivateFor(self.Name)
     if self.OnStartedFunc ~= nil then
         self.OnStartedFunc(StoryEventArgs:New(self))
@@ -698,6 +699,10 @@ end
 
 function StoryEventArgs:EndStory()
     StoryDB:GetStory(self.Story):End()
+end
+
+function StoryEventArgs:LaunchGroups(...)
+    return StoryDB:GetStoryline(self.Storyline):LaunchGroups(...)
 end
 
 function StoryEventArgs:DestroyStoryGroups(...)
@@ -813,6 +818,22 @@ local function validateItemGroupControl(item, group, errorPrefix, action)
     return group
 end
 
+function Storyline:LaunchGroups(...)
+    local namedGroups = {}
+    for i = 1, select("#", ...) do
+        local v = select(i, ...)
+        if v ~= nil then
+            local group = validateItemGroupControl(self, v, "Storyline:LaunchGroups", "launch")
+            table.insert( namedGroups, group.GroupName)
+        end
+    end
+    local groupInfos = StoryDB:GetStorylineGroups(self, namedGroups)
+    for _, groupInfo in pairs(groupInfos) do
+        groupInfo:RunBy(self)
+    end
+    return self
+end
+
 function Storyline:DestroyGroup(group)
     group = validateItemGroupControl(self, group, "Storyline:DestroyGroup", "destroy")
     local sg = StoryDB:GetGroup(group.GroupName)
@@ -891,39 +912,17 @@ function Storyline:OnStoryEnded(func)
     return self
 end
 
---  todo For events, consider pre-registering the handler without calling MissionEvent:... until Storyline runs
-
-local function isStorylineEventUnit(storyline, expectedUnit, eventUnit)
-    if expectedUnit.UnitName == eventUnit.UnitName then
-        if storyline:FindUnit(eventUnit.UnitName) then
-            return true 
-        else
-            return false
-        end
-    end
-
-    -- check whether the event unit was spawned from storyline group ...
-    local isInstance, name = isUnitInstanceOf(eventUnit, expectedUnit)
-    if not isInstance then
-        return false end
-
-    if storyline:FindUnit(eventUnit.UnitName) then
-        return true
-    else
-        return false
-    end
-end
-
 function Storyline:OnAircraftLanded(aircraft, func)
     if aircraft ~= nil then
-        aircraft = getUnit(aircraft)
-        if aircraft then
-            if not self:FindUnit(aircraft.UnitName) then
-                error("Storyline:OnAircraftLanded :: aircraft '" .. aircraft.UnitName .. "' is not in storyline '"..self:FullName() .. "'")
+        local testAircraft = getUnit(aircraft)
+        if testAircraft then
+            if not self:FindUnit(testAircraft.UnitName) then
+                error("Storyline:OnAircraftLanded :: aircraft '" .. testAircraft.UnitName .. "' is not in storyline '"..self:FullName() .. "'")
             end
         else
             error("Storyline:OnAircraftLanded :: cannot resolve aircraft from: " .. Dump(aircraft))
         end
+        aircraft = testAircraft
     end
     if not isFunction(func) then
         error("Storyline:OnAircraftLanded :: unexpected function type: " .. type(func)) end
@@ -934,8 +933,9 @@ function Storyline:OnAircraftLanded(aircraft, func)
             return end
 
         -- only trigger for specified aircraft ...
-        local testUnitName = event.IniGroupName 
-        if aircraft and not isStorylineEventUnit(self, aircraft, event.IniUnit) then
+        if aircraft and not isGroupInstanceOf(aircraft, event.IniGroup) then
+            return end
+        if not self:FindGroup(event.IniGroupName) then
             return end
 
         -- this is a one-time event ... 
@@ -978,7 +978,7 @@ function Storyline:OnGroupDiverted(group, func)
             return end
 
         -- only trigger for specified group or groups in storyline ...
-        if group and group.GroupName ~= event.IniGroupName then
+        if group and not isGroupInstanceOf(group, event.IniGroup) then
             return end
         if not self:FindGroup(event.IniGroupName) then
             return end
@@ -1004,20 +1004,47 @@ function Storyline:OnGroupDiverted(group, func)
     return self
 end
 
-function Storyline:OnGroupEntersZone(group, zone, func, continous)
+--------------------------------------------- [ ZONE EVENTS ] ---------------------------------------------
 
+function Storyline:OnGroupEntersZone(zone, group, func, filter, continous)
+
+    if not isAssignedString(zone) then
+        error("Storyline:OnGroupEntersZone :: zone was not correctly specified") end
     if not isFunction(func) then
         error("Storyline:OnGroupEntersZone :: unexpected function type: " .. type(func)) end
-
+    
     local eventFunc = nil
     eventFunc = function(event)
+Debug("Storyline:OnGroupEntersZone :: triggered :: event: " .. DumpPrettyDeep(event))
         if not self:IsRunning() then
             return end
 
+        local function isValidGroup( eventGroup )
+            if group ~= nil and not isGroupInstanceOf(eventGroup, group) then
+                Debug("Storyline:OnGroupEntersZone :: aaaa")
+                return false 
+            end
+            if not self:FindGroup(eventGroup) then
+                Debug("Storyline:OnGroupEntersZone :: bbbb")
+                return false 
+            end
+            return true
+        end
+    
+        local function isValidObjects()
+            if event.IniGroups then
+                for _, g in ipairs(event.IniGroups) do
+                    if isValidGroup(g) then 
+                        return true end
+                end
+            elseif event.IniGroup then
+                return isValidGroup(event.IniGroup) 
+            end
+        end
+
         -- only trigger for specified group or groups in storyline ...
-        if group and group.GroupName ~= event.IniGroupName then
-            return end
-        if not self:FindGroup(event.IniGroupName) then
+        if not isValidObjects() then
+Debug("Storyline:OnGroupEntersZone :: cccc")
             return end
 
         event = tableCopyTo(StoryEventArgs:New(self), event)
@@ -1026,18 +1053,19 @@ function Storyline:OnGroupEntersZone(group, zone, func, continous)
 
     -- pre-register event if Pending; otherwise, just add it ...
     if self:IsPending() then
+        filter = filter:Ensure():Group(group)
         DCAFEvents:PreActivate(self.Name, DCAFEvents.OnGroupEntersZone, eventFunc, function() 
             self:OnStoryEnded(function(story)
                 MissionEvents:EndOnGroupEntersZone(eventFunc)
             end)
-        end)
+        end, { Zone = zone, Filter = filter, Continous = continous or false })
     else
         MissionEvents:OnGroupEntersZone(eventFunc)
     end
     return self
 end
 
-function Storyline:OnGroupInsideZone(group, zone, func, continous)
+function Storyline:OnGroupInsideZone(zone, group, func, filter, continous)
     if not isFunction(func) then
         error("Storyline:OnGroupInsideZone :: unexpected function type: " .. type(func)) end
 
@@ -1047,31 +1075,30 @@ function Storyline:OnGroupInsideZone(group, zone, func, continous)
             return end
 
         -- only trigger for specified group or groups in storyline ...
-        if group and group.GroupName ~= event.IniGroupName then
+        if group and not isGroupInstanceOf(group, event.IniGroup) then
+            return end
+        if not self:FindGroup(event.IniGroupName) then
             return end
 
-        if not self:FindGroup(event.IniGroupName) then
-            error("Storyline:OnGroupInsideZone :: group is not part of storyline '" .. self.Name .. "': " .. event.IniGroupName)
-            return 
-        end
         event = tableCopyTo(StoryEventArgs:New(self), event)
         func(event)
     end
 
     -- pre-register event if Pending; otherwise, just add it ...
     if self:IsPending() then
+        filter = filter:Ensure():Group(group)
         DCAFEvents:PreActivate(self.Name, DCAFEvents.OnGroupInsideZone, eventFunc, function() 
             self:OnStoryEnded(function(story)
                 MissionEvents:EndOnGroupInsideZone(eventFunc)
             end)
-        end)
+        end, { Zone = zone, Filter = filter, Continous = continous })
     else
-        MissionEvents:OnGroupInsideZone(eventFunc)
+        MissionEvents:OnGroupInsideZone(group, zone, eventFunc, continous)
     end
     return self
 end
 
-function Storyline:OnGroupLeftZone(group, zone, func, continous)
+function Storyline:OnGroupLeftZone(zone, group, func, filter, continous)
     if not isFunction(func) then
         error("Storyline:OnGroupLeftZone :: unexpected function type: " .. type(func)) end
 
@@ -1081,9 +1108,8 @@ function Storyline:OnGroupLeftZone(group, zone, func, continous)
             return end
 
         -- only trigger for specified group or groups in storyline ...
-        if group and group.GroupName ~= event.IniGroupName then
+        if group and not isGroupInstanceOf(group, event.IniGroup) then
             return end
-
         if not self:FindGroup(event.IniGroupName) then
             return end
 
@@ -1093,18 +1119,19 @@ function Storyline:OnGroupLeftZone(group, zone, func, continous)
 
     -- pre-register event if Pending; otherwise, just add it ...
     if self:IsPending() then
+        filter = filter:Ensure():Group(group)
         DCAFEvents:PreActivate(self.Name, DCAFEvents.OnGroupLeftZone, eventFunc, function() 
             self:OnStoryEnded(function(story)
                 MissionEvents:EndOnGroupLeftZone(eventFunc)
             end)
-        end)
+        end, { Zone = zone, Filter = filter, Continous = continous })
     else
-        MissionEvents:OnGroupLeftZone(eventFunc)
+        MissionEvents:OnGroupLeftZone(group, zone, eventFunc, continous)
     end
     return self
 end
 
-function Storyline:OnUnitEntersZone(unit, zone, func, continous)
+function Storyline:OnUnitEntersZone(zone, unit, func, filter, continous)
     if not isFunction(func) then
         error("Storyline:OnUnitEntersZone :: unexpected function type: " .. type(func)) end
 
@@ -1114,9 +1141,8 @@ function Storyline:OnUnitEntersZone(unit, zone, func, continous)
             return end
 
         -- only trigger for specified unit or units in storyline ...
-        if unit and unit.UnitName ~= event.IniUnitName then
+        if unit and not isUnitInstanceOf(unit.UnitName, event.IniUnitName) then
             return end
-
         if not self:FindUnit(event.IniUnitName) then
             return end
 
@@ -1126,18 +1152,19 @@ function Storyline:OnUnitEntersZone(unit, zone, func, continous)
 
     -- pre-register event if Pending; otherwise, just add it ...
     if self:IsPending() then
+        filter = filter:Ensure():Unit(unit)
         DCAFEvents:PreActivate(self.Name, DCAFEvents.OnUnitEntersZone, eventFunc, function() 
             self:OnStoryEnded(function(story)
                 MissionEvents:EndOnUnitEntersZone(eventFunc)
             end)
-        end)
+        end, { Zone = zone, Filter = filter, Continous = continous })
     else
-        MissionEvents:OnUnitEntersZone(eventFunc)
+        MissionEvents:OnUnitEntersZone(unit, zone, eventFunc, continous)
     end
     return self
 end
 
-function Storyline:OnUnitInsideZone(unit, zone, func, continous)
+function Storyline:OnUnitInsideZone(zone, unit, func, filter, continous)
     if not isFunction(func) then
         error("Storyline:OnUnitInsideZone :: unexpected function type: " .. type(func)) end
 
@@ -1147,9 +1174,8 @@ function Storyline:OnUnitInsideZone(unit, zone, func, continous)
             return end
 
         -- only trigger for specified unit or units in storyline ...
-        if unit and unit.UnitName ~= event.IniUnitName then
+        if unit and not isUnitInstanceOf(unit.UnitName, event.IniUnitName) then
             return end
-
         if not self:FindUnit(event.IniUnitName) then
             return end
 
@@ -1159,18 +1185,19 @@ function Storyline:OnUnitInsideZone(unit, zone, func, continous)
     
     -- pre-register event if Pending; otherwise, just add it ...
     if self:IsPending() then
+        filter = filter:Ensure():Unit(unit)
         DCAFEvents:PreActivate(self.Name, DCAFEvents.OnUnitInsideZone, eventFunc, function() 
             self:OnStoryEnded(function(story)
                 MissionEvents:EndOnUnitInsideZone(eventFunc)
             end)
-        end)
+        end, { Zone = zone, Filter = filter, Continous = continous })
     else
-        MissionEvents:OnUnitInsideZone(eventFunc)
+        MissionEvents:OnUnitInsideZone(unit, zone, eventFunc, continous)
     end
     return self
 end
 
-function Storyline:OnUnitLeftZone(unit, zone, func, continous)
+function Storyline:OnUnitLeftZone(zone, unit, func, filter, continous)
     if not isFunction(func) then
         error("Storyline:OnUnitLeftZone :: unexpected function type: " .. type(func)) end
 
@@ -1180,10 +1207,9 @@ function Storyline:OnUnitLeftZone(unit, zone, func, continous)
             return end
 
         -- only trigger for specified unit or units in storyline ...
-        if unit and unit.UnitName ~= event.IniUnitName then
+        if unit and not isUnitInstanceOf(unit.UnitName, event.IniUnitName) then
             return end
-
-        if not self:FindGroup(event.IniUnitName) then
+        if not self:FindUnit(event.IniUnitName) then
             return end
 
         event = tableCopyTo(StoryEventArgs:New(self), event)
@@ -1192,31 +1218,109 @@ function Storyline:OnUnitLeftZone(unit, zone, func, continous)
         
     -- pre-register event if Pending; otherwise, just add it ...
     if self:IsPending() then
+        filter = filter:Ensure():Unit(unit)
         DCAFEvents:PreActivate(self.Name, DCAFEvents.OnUnitInsideZone, eventFunc, function() 
             self:OnStoryEnded(function(story)
                 MissionEvents:EndOnUnitInsideZone(eventFunc)
-            end)
+            end, { Zone = zone, Filter = filter, Continous = continous })
         end)
     else
-        MissionEvents:OnUnitInsideZone(eventFunc)
+        MissionEvents:OnUnitInsideZone(unit, zone, eventFunc, continous)
     end
     return self
 end
 
--- function Storyline:OnUnitDestroyed(func) obsolete - feltänkt
---     if not isFunction(func) then
---         error("Storyline:OnUnitDestroyed :: unexpected function type: " .. type(func)) end
+function Storyline:OnUnitDestroyed(unit, func)
+    if not isFunction(func) then
+        error("Storyline:OnUnitDestroyed :: unexpected function type: " .. type(func)) end
+    
+    local unitDict = nil
+    if unit ~= nil then
+        local function validate(unit)
+            local testUnit = getUnit(unit)
+            if not testUnit then
+                error("Storyline:OnUnitDestroyed :: cannot resolve unit from : " .. DumpPretty(unit)) end
 
---     Storyline._onUnitDeadFunc = function(event)
---         for _, sg in ipairs(self.Groups) do 
---             if sg.UnitName == event.IniUnitName then
---                 func( event, StoryEventArgs:New(self) )
---             end
---         end
---     end
---     MissionEvents:OnUnitDead(self._onUnitDeadFunc)
---     return self
--- end
+            if not self:FindUnit(testUnit.UnitName) then
+                error("Storyline:OnUnitDestroyed :: unit is out of storyline's scope: " .. Dump(testUnit.UnitName)) end
+
+            return testUnit
+        end
+        if isList(unit) then
+            unitDict = {}
+            for _, u in ipairs(unit) do
+                local validUnit = validate(u)
+                unitDict[validUnit.UnitName] = validUnit
+            end
+        else
+            unit = validate(unit)
+        end
+    end
+
+    local eventFunc = nil
+    eventFunc = function(event)
+        if not self:IsRunning() then
+            return end
+
+Debug("nisse - Storyline:OnUnitDestroyed :: unit: " .. DumpPrettyDeep(unit))
+Debug("nisse - Storyline:OnUnitDestroyed :: event: " .. DumpPrettyDeep(event))
+
+        -- only trigger for specified unit or units in storyline ...
+        if not self:FindUnit(event.IniUnitName) then
+Debug("nisse - Storyline:OnUnitDestroyed :: aaaa :: unit out of scope: " .. event.IniUnitName)
+            return end
+
+        local function isApplicable()
+            if unitDict then
+                for k, v in pairs(unitDict) do
+Debug("nisse - Storyline:OnUnitDestroyed :: bbbb")
+                    if isUnitInstanceOf(event.IniUnit, v) then
+                        return true end
+                end
+            else
+Debug("nisse - Storyline:OnUnitDestroyed :: cccc")
+                return isUnitInstanceOf(event.IniUnit, unit)
+            end
+        end
+
+        if not isApplicable() then
+Debug("nisse - Storyline:OnUnitDestroyed :: dddd")
+            return end
+
+        event = tableCopyTo(StoryEventArgs:New(self), event)
+        func(event)
+    end
+        
+    -- pre-register event if Pending; otherwise, just add it ...
+    if self:IsPending() then
+        DCAFEvents:PreActivate(self.Name, DCAFEvents.OnUnitDestroyed, eventFunc, function() 
+            self:OnStoryEnded(function(story)
+                MissionEvents:EndOnUnitDestroyed(eventFunc)
+            end)
+        end)
+    else
+        MissionEvents:OnUnitDestroyed(eventFunc)
+    end
+    return self
+end
+
+function Storyline:OnUnitInGroupDestroyed(group, func)
+    if not isAssignedString(group) and not isGroup(group) then
+        error("Storyline:OnUnitInGroupDestroyed :: group was unspecified") end
+    if not isFunction(func) then
+        error("Storyline:OnUnitInGroupDestroyed :: unexpected function type: " .. type(func)) end
+    local testGroup = getGroup(group)
+    if not testGroup then
+        error("Storyline:OnUnitInGroupDestroyed :: cannot resolve group from: " .. Dump(group)) end
+    if not self:FindGroup(testGroup.GroupName) then
+        error("Storyline:OnUnitInGroupDestroyed :: group is out of storyline's scope: " .. Dump(testGroup.GroupName)) end
+
+    group = testGroup
+    local units = group:GetUnits()
+Debug("Storyline:OnUnitInGroupDestroyed :: units: " .. DumpPrettyDeep(units))
+    return self:OnUnitDestroyed(units, func)
+end
+
 
 ------------------------------- [ STORY ] -------------------------------
 
@@ -1245,7 +1349,7 @@ function Story:New(name, ...)
 end
 
 function Story:ToString()
-    return self.Name .. " (story)"
+    return string.format("'%s' (%s)", self.Name, self._type)
 end
 
 function Story:GetStorylines()
