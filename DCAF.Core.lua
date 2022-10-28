@@ -661,6 +661,14 @@ local function isEscortingFromTask( escortGroup, clientGroup )
     end
 end
 
+--- Retrieves the textual form of MOOSE's 
+function CALLSIGN.Tanker:ToString(nCallsign)
+    if     nCallsign == CALLSIGN.Tanker.Arco then return "Arco"
+    elseif nCallsign == CALLSIGN.Tanker.Shell then return "Shell"
+    elseif nCallsign == CALLSIGN.Tanker.Texaco then return "Texaco"
+    end
+end
+
 -- getEscortingGroup :: Resolves one or more GROUPs that is escorting a specified (arbitrary) source
 -- @param source 
 
@@ -1127,11 +1135,17 @@ function DistanceToStringA2A( meters, estimated )
         return tostring( nm ) .. " miles"
 end
   
-function GetAltitudeAsAngelsOrCherubs( coordinate ) 
-    -- controllable = getControllable( controllable )
-    -- if (controllable == nil) then error( "Could not resolve controllable from " .. Dump(controllable) ) end
-    -- local coordinate = controllable:GetCoordinate()
-    local feet = UTILS.MetersToFeet( coordinate.y )
+function GetAltitudeAsAngelsOrCherubs( value ) 
+    local feet
+    if isTable(value) and value.ClassName == "COORDINATE" then
+        feet = UTILS.MetersToFeet( value.y )
+    elseif isNumber( value ) then
+        feet = UTILS.MetersToFeet( value )
+    elseif isAssignedString( value ) then
+        feet = UTILS.MetersToFeet( tonumber(value) )
+    else
+        error("GetAltitudeAsAngelsOrCherubs :: unexpected value: " .. DumpPretty(value) )
+    end
     if (feet >= 1000) then
         local angels = feet / 1000
         return "angels " .. tostring(UTILS.Round( angels, 0 ))
@@ -1994,10 +2008,6 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
             event.IniUnit = UNIT:Find(event.initiator)
             event.IniUnitName = event.IniUnit.UnitName
             event.IniGroup = event.IniUnit:GetGroup()
-if not event.IniGroup then
-local nisse = event.IniUnit:getGroup():getName()
-Debug("_e:onEvent :: nisse: " .. DumpPrettyDeep(nisse))
-end
             event.IniGroupName = event.IniGroup.GroupName
             event.IniPlayerName = event.IniUnit:GetPlayerName()
         end
@@ -3112,16 +3122,24 @@ local DCAF_ICLS = {
     Ident = nil,          -- #string (eg. 'C73')
 }
 
-local DCAF_RecoveryTankerInfo = {
-    Tanker = nil,         -- 
-    Group = nil,          -- #GROUP
-    TACAN = nil,          -- #DCAF_TACAN
-    Frequency = nil,      -- #number
-    Callsign = nil,
-    CallsignNumber = nil,
-    Speed = nil,
-    Altitude = nil,
-    OnLaunchedFunc = nil  -- #function; invoked when tanker gets launched
+local DCAF_RecoveryTankerState = {
+    Parked = "Parked",
+    Launched = "Launched",
+    RendezVous = "RendezVous",
+    RTB = "RTB"
+}
+
+local DCAF_RecoveryTanker = {
+    Tanker = nil,         -- #RECOVERYTANKER (MOOSE)
+    Group = nil,          -- #GROUP (MOOSE)
+    IsLaunched = nil,     -- #boolean; True if tanbker has been launched
+    OnLaunchedFunc = nil, -- #function; invoked when tanker gets launched
+    State = DCAF_RecoveryTankerState.Parked,
+    GroupMenus = {
+        -- dictionary
+        --    key = group name
+        --    value = #MENU_GROUP_COMMAND (MOOSE)
+    }
 }
 
 function DCAF.Carrier:New(group, nsUnit, sDisplayName)
@@ -3273,7 +3291,7 @@ function DCAF.Carrier:SetICLSInactive(nChannel, sIdent)
     self.ICLS.Unit = self.Unit
     self.ICLS.Channel = nChannel
     self.ICLS.Ident = sIdent
-    return self
+    return self 
 end
 
 function DCAF.Carrier:SetICLS(nChannel, sIdent, nActivateDelay)
@@ -3287,6 +3305,179 @@ function DCAF.Carrier:SetICLS(nChannel, sIdent, nActivateDelay)
     end
     return self
 end
+
+function DCAF.Carrier:WithRescueHelicopter(chopper)
+
+    local rescueheli
+    if isAssignedString(chopper) then
+        rescueheli = RESCUEHELO:New(self.Unit, chopper)
+    elseif isTable(chopper) and chopper.ClassName == "RESCUEHELO" then
+        rescueheli = chopper
+    end
+
+    if not rescueheli then
+        error("DCAF.Carrier:WithResuceHelicopter :: could not resolve a rescue helicopter from '" .. DumpPretty(chopper)) end
+
+    rescueheli:Start()
+    return self
+end
+
+function DCAF_RecoveryTanker:ToString(bFrequency, bTacan, bAltitude, bSpeed)
+    local message = CALLSIGN.Tanker:ToString(self.Tanker.callsignname) .. " " .. tostring(self.Tanker.callsignnumber)
+
+    local isSeparated
+
+    local function separate()
+        if isSeparated then
+            message = message .. ", "
+            return end
+
+        isSeparated = true
+        message = message .. " - "
+    end
+
+    if bFrequency then
+        separate()
+        message = message .. string.format("%.3f %s", self.Tanker.RadioFreq, self.Tanker.RadioModu)
+    end
+    if bTacan then
+        separate()
+        message = message .. tostring(self.Tanker.TACANchannel) .. self.Tanker.TACANmode
+    end
+    if bAltitude then
+        separate()
+        message = message .. GetAltitudeAsAngelsOrCherubs(self.Tanker.altitude)
+    end
+    if bSpeed then
+        separate()
+        message = message .. tostring(UTILS.MpsToKnots(self.Tanker.speed))
+    end
+    return message
+end
+
+function DCAF_RecoveryTanker:Launch()
+    self.Tanker:Start()
+    self.State = DCAF_RecoveryTankerState.Launched
+end
+
+function DCAF_RecoveryTanker:RTB()
+    -- self.Tanker:_TaskRTB()
+    -- todo - refresh all group's menus
+    error("todo :: DCAF_RecoveryTanker:RTB")
+end
+
+function DCAF_RecoveryTanker:RendezVous(group)
+    -- error("todo :: DCAF_RecoveryTanker:RendezVous")
+    self.State = DCAF_RecoveryTankerState.RendezVous
+    self.RendezVousGroup = group
+end
+
+local function makeRecoveryTanker(carrierUnit, tanker, nTacanChannel, sTacanMode, sTacanIdent, nRadioFreq, nAltitude, sCallsign, nCallsignNumber, nTakeOffType)
+    local recoveryTanker
+    if isAssignedString(tanker) then
+        recoveryTanker = RECOVERYTANKER:New(carrierUnit, tanker)
+        if isNumber(nTacanChannel) then
+            if not isAssignedString(sTacanMode) then
+                sTacanMode = 'Y'
+            end
+            nTacanChannel, sTacanMode, sTacanIdent = validateTACAN(nTacanChannel, sTacanMode)
+            recoveryTanker:SetTACAN(37, sTacanIdent)
+            recoveryTanker.TACANmode = sTacanMode
+        end
+        if isNumber(nRadioFreq) then
+            recoveryTanker:SetRadio(nRadioFreq)
+        end
+        if isNumber(nAltitude) then
+            recoveryTanker:SetAltitude(nAltitude)
+        end
+        if not isAssignedString(sCallsign) then
+            sCallsign = CALLSIGN.Tanker.Arco
+        end
+        if not isNumber(nCallsignNumber) then
+            nCallsignNumber = 1
+        end
+        recoveryTanker:SetCallsign(sCallsign, nCallsignNumber)
+        if isNumber(nTakeOffType) then
+            recoveryTanker:SetTakeoff(nTakeOffType)
+        end
+    elseif isTable(tanker) and tanker.ClassName == "RECOVERYTANKER" then
+        recoveryTanker = tanker
+    end
+    if not recoveryTanker then
+        error("cannot resolve recovery tanker from " .. DumpPretty(tanker)) end
+
+    local info = DCAF.clone(DCAF_RecoveryTanker)
+    info.Tanker = recoveryTanker
+    return info
+end
+
+local DCAF_ArcosInfo = {
+    [1] = {
+        TacanChannel = 37,
+        TacanMode = 'Y',
+        TacanIdent = 'ACA',
+        Frequency = 290,
+        Altitude = 8000
+    },
+    [2] = {
+        TacanChannel = 38,
+        TacanMode = 'Y',
+        TacanIdent = 'ACB',
+        Frequency = 290.25,
+        Altitude = 10000
+    }
+}
+
+function DCAF.Carrier:WithArco1(sGroupName, nTakeOffType, bLaunchNow, nAltitudeFeet)
+    if not isNumber(nAltitudeFeet) then
+        nAltitudeFeet = DCAF_ArcosInfo[1].Altitude
+    end
+    local tanker = makeRecoveryTanker(
+        self.Unit,
+        sGroupName,
+        DCAF_ArcosInfo[1].TacanChannel,
+        DCAF_ArcosInfo[1].TacanMode,
+        DCAF_ArcosInfo[1].TacanIdent,
+        DCAF_ArcosInfo[1].Frequency,
+        nAltitudeFeet,
+        CALLSIGN.Tanker.Arco, 1, 
+        nTakeOffType)
+    table.insert(self.RecoveryTankers, tanker)
+    if bLaunchNow then
+        tanker:Launch()
+    end
+    return self
+end
+
+function DCAF.Carrier:WithArco2(sGroupName, nTakeOffType, bLaunchNow, nAltitudeFeet)
+    if not isNumber(nAltitudeFeet) then
+        nAltitudeFeet = DCAF_ArcosInfo[1].Altitude
+    end
+    local tanker = makeRecoveryTanker(
+        self.Unit,
+        sGroupName,
+        DCAF_ArcosInfo[2].TacanChannel,
+        DCAF_ArcosInfo[2].TacanMode,
+        DCAF_ArcosInfo[2].TacanIdent,
+        DCAF_ArcosInfo[2].Frequency,
+        nAltitudeFeet,
+        CALLSIGN.Tanker.Arco, 2, 
+        nTakeOffType)
+    table.insert(self.RecoveryTankers, tanker)
+    if bLaunchNow then
+        tanker:Launch()
+    end
+    return self
+end
+
+--[[
+        RECOVERYTANKER:New(usCarrierUnit, "NAV US CVN-73 TKR-1 DCAF")
+                  :SetTACAN(37, "ACA")
+                  :SetRadio(290)
+                  :SetAltitude(7000)
+                  :SetCallsign(CALLSIGN.Tanker.Arco, 1)
+                  :Start()
+]]
 
 local DCAFNavyF10Menus = {
     -- dicionary
@@ -3310,10 +3501,6 @@ local DCAFNavyPlayerCarrierMenus = {
     SubMenuActivateSystems = nil, -- #MENU_GROUP_COMMAND  eg. "F10 >> Carriers >> CVN-73 Washington >> Activate systems"
 }
 
-function DCAFNavyPlayerCarrierMenus:New(carrier, playerUnit)
-    
-end
-
 --[[
 local DCAFCarriers = {
     Count = 0,
@@ -3330,18 +3517,59 @@ DCAF.Carrier = {
     TACAN = nil,              -- #DCAF_TACAN; represents the carrier's TACAN (beacon)
     ICLS = nil,               -- #DCAF_ICLS; represents the carrier's ICLS system
     RecoveryTankers = {},     -- { list of #DCAF_RecoveryTankerInfo (not yet activated) }
-    -- Menus = {
-    --     main = nil,
-    --     carrierSystemActivate = nil,
-    --     launchArco1 = nil,
-    --     launchArco2 = nil,
-    --     _groupName = nil,
-    --     _navalMenus = {}
-    -- },             
 }
 ]]
 
+local function getTankerMenuData(tanker, group)
+    if tanker.State ==  DCAF_RecoveryTankerState.Parked then
+        return "Launch " .. tanker:ToString(), function()
+            tanker:Launch()
+            tanker:RefreshGroupMenus(group)
+        end
+    elseif tanker.State == DCAF_RecoveryTankerState.Launched then
+        return tanker:ToString() .. " (launched)", function()
+                MessageTo(group, tanker:ToString(true, true, true))
+            end
+        -- experimental:
+--         return "Send " .. tanker:ToString() .. " to me", function()
+-- Debug("nisse - getTankerMenuData / DCAF_RecoveryTankerState.Launched ==> RendezVous with " .. group.GroupName)            
+--             tanker:RendezVous(group)
+--             tanker:RefreshGroupMenus(group)
+--             MessageTo(group, tanker:ToString() .. " is on its way")
+--         end
+    elseif tanker.State ==  DCAF_RecoveryTankerState.RTB then
+        return "(" .. tanker:ToString() .. " is RTB)", function() 
+            MessageTo(group, tanker:ToString() .. " is RTB")
+        end
+    elseif tanker.State ==  DCAF_RecoveryTankerState.RendezVous then
+        return "(" .. tanker:ToString() .. " is rendezvousing with " .. tanker.RendezVousGroup.GroupName .. ")", function() 
+            MessageTo(group, tanker:ToString() .. " is rendezvousing with " .. tanker.RendezVousGroup.GroupName)
+        end
+    end
+end
+
+function DCAF_RecoveryTanker:RefreshGroupMenus(group)
+    local menuText, menuFunc = getTankerMenuData(self, group)
+    for groupName, menu in pairs(self.GroupMenus) do
+        local parentMenu = menu.ParentMenu
+        menu:Remove()
+        menu = MENU_GROUP_COMMAND:New(group, menuText, parentMenu, menuFunc)
+    end
+end
+
 function DCAFNavyF10Menus:Build(group)
+
+    local function buildRecoveryTankersMenu(parentMenu)
+        for _, carrier in pairs(DCAFCarriers.Carriers) do
+            for _, tanker in ipairs(carrier.RecoveryTankers) do
+                local menuText, menuFunc = getTankerMenuData(tanker, group)
+-- Debug("carrier: " .. carrier.Unit.UnitName .. " / " .. tanker.Tanker.tankergroupname)
+Debug(menuText)
+                local menu = MENU_GROUP_COMMAND:New(group, menuText, parentMenu, menuFunc)
+                tanker.GroupMenus[group.GroupName] = menu
+            end
+        end
+    end
 
     local function buildCarrierMenu(group, carrier, parentMenu)
         if carrier.TACAN or carrier.ICLS then
@@ -3352,7 +3580,6 @@ function DCAFNavyF10Menus:Build(group)
         end
     end
 
-    -- local function buildMenuBaseStructure(group)
     -- remove existing menus
     local menus = DCAFNavyF10Menus[group.GroupName]
     if menus then
@@ -3370,20 +3597,19 @@ function DCAFNavyF10Menus:Build(group)
         -- just use a single 'Carriers' F10 menu (no individual carriers sub menus) ...
         for carrierName, carrier in pairs(DCAFCarriers.Carriers) do
             menus.MainMenu = MENU_GROUP:New(group, carrier.DisplayName)
+            buildRecoveryTankersMenu(menus.MainMenu)
             buildCarrierMenu(group, carrier, menus.MainMenu)
             break
         end
     else
-Debug("nisse - multiple carriers: " .. tostring(DCAFCarriers.Count))    
         -- build a 'Carriers' main menu and individual sub menus for each carrier ...
         menus.MainMenu = MENU_GROUP:New(group, "Carriers")
+        buildRecoveryTankersMenu(menus.MainMenu)
         for carrierName, carrier in pairs(DCAFCarriers.Carriers) do
             local carrierMenu = MENU_GROUP:New(group, carrier.DisplayName, menus.MainMenu)
             buildCarrierMenu(group, carrier, carrierMenu)
         end
     end
-    -- end
-
 
 end
 
