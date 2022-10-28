@@ -1,5 +1,5 @@
 DCAF = {
-    Trace = false,
+    Trace = true,
     TraceToUI = false, 
     Debug = false,
     DebugToUI = false, 
@@ -81,7 +81,7 @@ function isAssignedString( value )
     return string.len(value) > 0 
 end
 
-function trimInstanceFromName( name, qualifierAt )
+function DCAF.trimInstanceFromName( name, qualifierAt )
     if not isNumber(qualifierAt) then
         qualifierAt = string.find(name, "#%d")
     end
@@ -91,18 +91,33 @@ function trimInstanceFromName( name, qualifierAt )
     return string.sub(name, 1, qualifierAt-1), string.sub(name, qualifierAt)
 end
 
+function DCAF.parseSpawnedUnitName(name)
+    local groupName, indexer = DCAF.trimInstanceFromName(name)
+    if groupName == name then
+-- Debug("nisse - DCAF.parseSpawnedUnitName :: groupName: " .. groupName)    
+        return name end
+
+    -- indexer now have format: <group indexer>-<unit indexer> (eg. "001-2", for second unit of first spawned group)
+    local dashAt = string.find(indexer, '-')
+    if not dashAt then
+-- Debug("nisse - DCAF.parseSpawnedUnitName :: groupName: " .. groupName)    
+        -- should never happen, but ...
+        return name end
+    
+    local unitIndex = string.sub(indexer, dashAt+1)
+-- Debug("nisse - DCAF.parseSpawnedUnitName :: groupName: " .. groupName .. " :: indexer: " .. indexer)    
+    return groupName, tonumber(unitIndex)
+end
+
 function isGroupNameInstanceOf( name, templateName )
     if name == templateName then
         return true end
 
--- Debug("isGroupNameInstanceOf :: name: " .. name .. " :: templateName: " .. templateName)        
     -- check for spawned pattern (eg. "Unit-1#001-1") ...
     local i = string.find(name, "#%d")
     if i then
         local test = trimInstanceFromName(name, i)
--- Debug("isGroupNameInstanceOf :: test: " .. test)        
         if test == templateName then
--- Debug("isGroupNameInstanceOf :: nisse")        
             return true, templateName end
     end
 
@@ -128,15 +143,15 @@ function isUnitNameInstanceOf(name, templateName)
     if name == templateName then
         return true end
 
-Debug("isUnitNameInstanceOf :: name: " .. name .. " :: templateName: " .. templateName)        
+-- Debug("isUnitNameInstanceOf :: name: " .. name .. " :: templateName: " .. templateName)        
     -- check for spawned pattern (eg. "Unit-1#001-1") ...
     local i = string.find(name, "#%d")
     if i then
         local test, instanceElement = trimInstanceFromName(name, i)
-Debug("isUnitNameInstanceOf :: test: " .. test)        
+-- Debug("isUnitNameInstanceOf :: test: " .. test)        
         if test == templateName then
 Debug("isUnitNameInstanceOf :: nisse")        
-            local counterAt = string.find(instanceElement, "-")
+            -- local counterAt = string.find(instanceElement, "-")
             if not counterAt then
                 return false end
 
@@ -163,6 +178,7 @@ function isUnitInstanceOf( unit, unitTemplate )
     if unit.UnitName == unitTemplate.UnitName then
         return true end
 
+    
     return isGroupNameInstanceOf( unit:GetGroup().GroupName, unitTemplate:GetGroup().GroupName )
 end
 
@@ -179,6 +195,22 @@ end
 
 FeetPerNauticalMile = 6076.1155
 MetersPerNauticalMile = UTILS.NMToMeters(1)
+
+function Feet(feet)
+    UTILS.FeetToMeters(feet)
+end
+
+function Hours(seconds)
+    if isNumber(seconds) then
+        return seconds * 3600
+    end
+end
+
+function Minutes(seconds)
+    if isNumber(seconds) then
+        return seconds * 60
+    end
+end
 
 function NauticalMilesToMeters( nm )
     if (not isNumber(nm)) then error("Expected 'nm' to be number") end
@@ -502,17 +534,31 @@ function getGroup( source )
 end
 
 function activateNow( source )
+-- nisse
+if isAssignedString(source) then
+    Debug("activateNow( \"" .. source .. "\"")
+else
+    Debug("activateNow( \"" .. source.GroupName .. "\"")
+end
+
     local group = getGroup( source )
     if not group then
         return exitWarning("activateNow :: cannot resolve group from " .. Dump(source))
     end
     if not group:IsActive() then
+        Trace("activateNow :: activates group '" .. group.GroupName .. "'")
         group:Activate()
     end
     return group
 end
 
 function spawnNow( source )
+-- nisse
+if isAssignedString(source) then
+    Debug("spawnNow( \"" .. source .. "\"")
+else
+    Debug("spawnNow( \"" .. source.GroupName .. "\"")
+end    
     local name = nil
     if isGroup(source) then
         name = source.GroupName
@@ -966,7 +1012,7 @@ Parameters
 DumpPrettyOptions = {
     asJson = false,
     indentSize = 2,
-    deep = false,
+    deep = false,             -- boolean or number (number can control how many levels to present for 'deep')
     includeFunctions = false
 }
 
@@ -985,6 +1031,9 @@ function DumpPrettyOptions:IndentWize( value )
 end
 
 function DumpPrettyOptions:Deep( value )
+    if isNumber(value) then
+        value = value+1 -- ensures 1 = only show root level details, 2 = show root + second level details etc. (0 == not deep)
+    end
     self.deep = value or true
     return self
 end
@@ -1003,16 +1052,24 @@ function DumpPretty(value, options)
     local function dumpRecursive(value, ilvl)
     if type(value) ~= 'table' then
         if (isString(value)) then
-          return '"' .. tostring(value) .. '"'
+            return '"' .. tostring(value) .. '"'
         end
-        return tostring(value)
-      end
+            return tostring(value)
+        end
 
-      if ((not options.deep or not DCAF.Debug) and ilvl > 0) then
-        if (options.asJson) then
+        local deep = options.deep
+        if isNumber(deep) then
+            deep = deep > ilvl
+        end
+        if (not deep or not DCAF.Debug) and ilvl > 0 then
+            if options.asJson then
             return "{ }" 
         end
-        return "{ --[[ data omitted ]] }"
+        if tableIsUnassigned(value) then
+            return "{ }"
+        else
+            return "{ --[[ data omitted ]] }"
+        end
       end
   
       local s = '{\n'
@@ -1040,7 +1097,9 @@ function DumpPrettyJson(value, options)
 end
 
 function DumpPrettyDeep(value, options)
-    if isTable(options) then
+    if isNumber(options) then
+        options = DumpPrettyOptions:New():Deep(options)
+    elseif isTable(options) then
         options = options:Deep()
     else
         options = DumpPrettyOptions:New():Deep()
@@ -1215,9 +1274,11 @@ local _navyAircrafts = {
 }
 
 function IsNavyAircraft( source )
-    if isTable(source) then
+    if isUnit(source) then
+        source = source:GetTypeName() 
+    elseif isTable(source) then
         -- assume event
-        source = source.IniTypeName
+        source = source.IniUnitTypeName
         if not source then
             return false end
     end
@@ -1247,18 +1308,18 @@ Returns
 ]]--
 function FindWaypointByName( source, name )
     local route = nil
-    if (isTable(source) and source.ClassName == nil) then
+    if isTable(source) and source.ClassName == nil then
         -- assume route ...
         route = source
     end
 
-    if (route == nil) then
+    if route == nil then
         -- try get route from group ...
         local group = getGroup( source )
         if ( group ~= nil ) then 
-        route = group:CopyRoute()
+            route = group:CopyRoute()
         else
-        return nil end
+            return nil end
     end
 
     for k,v in pairs(route) do
@@ -1548,6 +1609,131 @@ function LandHere( controllable, category, coalition )
 
 end
 
+local function resolveUnitInGroup(group, nsUnit, defaultIndex)
+    local unit = nil
+    if isNumber(nsUnit) then
+        nsUnit = math.max(1, nsUnit)
+        unit = group:GetUnit(nsUnit)
+    elseif isAssignedString(nsUnit) then
+        local index = tableIndexOf(group:GetUnits(), function(u) return u.UnitName == nsUnit end)
+        if index then
+            unit = group:GetUnit(index)
+        else
+            return "group '" .. group.GroupName .. " have no unit with name '" .. nsUnit .. "'"
+        end
+    elseif isUnit(nsUnit) then
+        unit = nsUnit
+    end
+    if unit then
+        return unit
+    end
+    if not isNumber(defaultIndex) then
+        defaultIndex = 1
+    end
+    return group:GetUnit(defaultIndex)
+end
+
+-- Activates TACAN beacon for specified group
+-- @param #any group A #GROUP or name of group
+-- @param #number nChannel The TACAN channel (eg. 39 in 30X)
+-- @param #string sModeChannel The TACAN mode ('X' or 'Y'). Optional; default = 'X'
+-- @param #string sIdent The TACAN Ident (a.k.a. "callsign"). Optional
+-- @param #boolean bBearing Specifies whether the beacon will provide bearing information. Optional; default = true
+-- @param #boolean bAA Specifies whether the beacon is airborne. Optional; default = true for air group, otherwise false
+-- @param #any nsAttachToUnit Specifies unit to attach TACAN to; either its internal index or its name. Optional; default = 1
+-- @return #string A message describing the outcome (mainly intended for debugging purposes)
+function CommandActivateTACAN(group, nChannel, sModeChannel, sIdent, bBearing, bAA, nsAttachToUnit)
+    local forGroup = getGroup(group)
+    if not forGroup then
+        error("CommandActivateTACAN :: cannot resolve group from: " .. DumpPretty(group)) end
+    if not isNumber(nChannel) then
+        error("CommandActivateTACAN :: `nChannel` was unassigned/unexpected value: " .. DumpPretty(nChannel)) end
+    if sModeChannel == nil or not isAssignedString(sModeChannel) then
+        sModeChannel = "X"
+    elseif sModeChannel ~= "X" and sModeChannel ~= "Y" then
+        error("CommandActivateTACAN :: invalid `sModeChannel`: " .. Dump(sModeChannel)) 
+    end
+    local unit = resolveUnitInGroup(forGroup, nsAttachToUnit)
+    if isAssignedString(unit) then
+        error("CommandActivateTACAN :: " .. unit)
+    end
+    if not isAssignedString(sIdent) then
+        sIdent = tostring(nChannel) .. sModeChannel end
+    if not isBoolean(bBearing) then
+        bBearing = true end
+
+    local beacon = unit:GetBeacon()
+    beacon:ActivateTACAN(nChannel, sModeChannel, sIdent, bBearing)
+    local traceDetails = string.format("%d%s (%s)", nChannel, sModeChannel, sIdent or "---")
+    if bAA then
+        traceDetails = traceDetails .. " A-A" end
+    if bBearing then
+        traceDetails = traceDetails .. " with bearing information" 
+    else
+        traceDetails = traceDetails .. " with NO bearing information"
+    end
+    if unit then
+        traceDetails = traceDetails .. ", attached to unit: " .. unit.UnitName end
+    local message = "TACAN was set for group '" .. forGroup.GroupName .. "' :: " .. traceDetails
+    Trace("CommandActivateTACAN :: " .. message)
+    return message
+end
+
+--- Deactivates an active beacon for specified group
+-- @param #any group A #GROUP or name of group
+-- @param #number nDelay Specifies a delay (seconds) before the beacon is deactivated
+-- @return #string A message describing the outcome (mainly intended for debugging purposes)
+function CommandDeactivateBeacon(group, nDelay)
+    local forGroup = getGroup(group)
+    if not forGroup then
+        error("CommandDeactivateBeacon :: cannot resolve group from: " .. DumpPretty(group)) end
+
+    forGroup:CommandDeactivateBeacon(nDelay)
+
+    local message = "beacon was deactivated for " .. forGroup.GroupName
+    Trace("CommandDeactivateBeacon-" .. forGroup.GroupName .. " :: " .. message)
+    return message
+end
+
+--- Activates ICLS beacon for specified group
+-- @param #any group A #GROUP or name of group
+-- @param #number nChannel The TACAN channel (eg. 39 in 30X)
+-- @param #string sIdent The TACAN Ident (a.k.a. "callsign"). Optional
+-- @param #number nDuration Specifies a duration for the TACAN to be active. Optional; when not set the TACAN srtays on indefinitely
+-- @return #string A message describing the outcome (mainly intended for debugging purposes)
+function CommandActivateICLS(group, nChannel, sIdent, nsAttachToUnit, nDuration)
+    local forGroup = getGroup(group)
+    if not forGroup then
+        error("CommandActivateICLS :: cannot resolve group from: " .. DumpPretty(group)) end
+    if not isNumber(nChannel) then
+        error("CommandActivateICLS :: `nChannel` was unassigned/unexpected value: " .. DumpPretty(nChannel)) end
+    local unit = resolveUnitInGroup(forGroup, nsAttachToUnit)
+    if isAssignedString(unit) then
+        error("CommandActivateICLS :: " .. unit)
+    end
+    unit:GetBeacon():ActivateICLS(nChannel, sIdent, nDuration)
+    local traceDetails = string.format("%d (%s)", nChannel, sIdent or "---")
+    traceDetails = traceDetails .. ", attached to unit: " .. unit.UnitName
+    local message = "ICLS was set for group '" .. forGroup.GroupName .. "' :: " .. traceDetails
+    Trace("CommandActivateICLS :: " .. message)
+    return message
+end
+
+--- Deactivates ICLS for specified group
+-- @param #any group A #GROUP or name of group
+-- @param #number nDuration Specifies a nDelay before the ICLS is deactivated
+-- @return #string A message describing the outcome (mainly intended for debugging purposes)
+function CommandDeactivateICLS(group, nDelay)
+    local forGroup = getGroup(group)
+    if not forGroup then
+        error("CommandDeactivateICLS :: cannot resolve group from: " .. DumpPretty(group)) end
+
+    forGroup:CommandDeactivateICLS(nDelay)
+    local message = "ICLS was deactivated group '" .. forGroup.GroupName
+    Trace("CommandDeactivateICLS :: " .. message)
+    return message
+end
+
 function ROEHoldFire( ... )
     for _, controllable in ipairs(arg) do
         local group = getGroup( controllable )
@@ -1731,6 +1917,25 @@ function TaskAttackGroup( attacker, target )
 
 end
 
+function IsAARTanker(group)
+    local forGroup = getGroup(group)
+    if not forGroup then
+        error("IsAARTanker :: cannot resolve group from " .. DumpPretty(group)) end
+
+    local route = forGroup:CopyRoute()
+    -- check for 'Tanker' task ...
+    for _, wp in ipairs(route) do
+        local task = wp.task
+        if task and task.id == "ComboTask" and task.params and task.params.tasks then -- todo Can task be other than 'ComboTask' here?
+            for _, task in ipairs(task.params.tasks) do
+                if task.id == "Tanker" then
+                    return true end
+            end
+        end
+    end
+    return false
+end
+
 --------------------------------------------- [[ MISSION EVENTS ]] ---------------------------------------------
 
 MissionEvents = { }
@@ -1856,15 +2061,17 @@ Debug("_e:onEvent :: nisse: " .. DumpPrettyDeep(nisse))
 
     local function invokeUnitDestroyed(event)
         if event.TgtUnit then
-            local source = event
-            event.RootEvent = event
+            local rootEvent = DCAF.clone(event)
             event = {
-                IniUnit = source.TgtUnit,
-                IniUnitName = source.TgtUnitName,
-                IniGroup = source.TgtGroup,
-                IniGroupName = source.TgtGroupName
+                RootEvent = rootEvent,
+                IniUnit = rootEvent.TgtUnit,
+                IniUnitName = rootEvent.TgtUnitName,
+                IniGroup = rootEvent.TgtGroup,
+                IniGroupName = rootEvent.TgtGroupName
             }
+-- Debug("invokeUnitDestroyed :: event: " .. DumpPrettyDeep(event))            
         end
+        -- event.RootEventId = rootEventId
         MissionEvents:Invoke(_missionEventsHandlers._unitDestroyedHandlers, event)
     end
 
@@ -1883,7 +2090,7 @@ Debug("_e:onEvent :: nisse: " .. DumpPrettyDeep(nisse))
         -- unit was killed by other unit
         event = addInitiatorAndTarget(event)
         MissionEvents:Invoke(_missionEventsHandlers._unitKilledHandlers, event)
-Debug("_e:onEvent :: S_EVENT_KILL")        
+-- Debug("_e:onEvent :: S_EVENT_KILL :: event: " .. DumpPretty(event))
         invokeUnitDestroyed(event)
         return
     end
@@ -1895,6 +2102,7 @@ Debug("_e:onEvent :: S_EVENT_KILL")
 
     if event.id == world.event.S_EVENT_CRASH then
         event = addInitiatorAndTarget(event)
+-- Debug("_e:onEvent :: S_EVENT_CRASH :: event: " .. DumpPretty(event))
         MissionEvents:Invoke( _missionEventsHandlers._unitCrashedHandlers, event)
         invokeUnitDestroyed(event)
         return
@@ -2421,6 +2629,7 @@ local function stopMonitoringZoneEventsWhenEmpty()
 end
 
 local function startMonitorZoneEvents()
+
     local function monitor()
 
         -- object-centric zone events ...
@@ -2437,7 +2646,7 @@ local function startMonitorZoneEvents()
         -- filter-cenric zone events ...
         removeZoneEvents = {}
         for _, zoneEvent in ipairs(FilterCentricZoneEvents) do
-            if zoneEvent:EvaluateForFilter() then               
+            if zoneEvent:EvaluateForFilter() then
                 table.insert(removeZoneEvents, zoneEvent)
             end
         end
@@ -2812,7 +3021,6 @@ function MissionEvents:EndOnGroupEntersZone( func )
 end
 
 function MissionEvents:OnGroupInsideZone( group, zone, func, continous, filter )
-Debug("MissionEvents:OnGroupInsideZone :: filter: " .. DumpPrettyDeep(filter))
     if not isBoolean(continous) then
         continous = true
     end
@@ -2857,5 +3065,429 @@ function MissionEvents:EndOnGroupLeftZone( func )
     -- todo Implement MissionEvents:EndOnGroupLeftZone
 end
 
+---------------------------------------- NAVY ----------------------------------------
+
+local DCAFCarriers = {
+    Count = 0,
+    Carriers = {
+        -- dictionary
+        --   key    = carrier unit name
+        --   valuer = #DCAF.Carrier
+    }
+}
+
+DCAF.Carrier = {
+    Group = nil,              -- #GROUP (MOOSE object) - the carrier group
+    Unit = nil,               -- #UNIT (MOOSE object) - the carrier unit
+    DisplayName = nil,        -- #string; name to be used in menus and communication
+    TACAN = nil,              -- #DCAF_TACAN; represents the carrier's TACAN (beacon)
+    ICLS = nil,               -- #DCAF_ICLS; represents the carrier's ICLS system
+    RecoveryTankers = {},     -- { list of #DCAF_RecoveryTankerInfo (not yet activated, gets removed when activated) }    
+}
+
+function DCAFCarriers:Add(carrier)
+    -- ensure carrier was not already added ...
+    local exists = DCAFCarriers[carrier.Unit.UnitName]
+    if exists then
+        error("DCAFCarriers:Add :: carrier was already added") end
+
+    DCAFCarriers.Carriers[carrier.Unit.UnitName] = carrier
+    DCAFCarriers.Count = DCAFCarriers.Count + 1
+    return carrier
+end
+
+local DCAF_TACAN = {
+    Group = nil,          -- #GROUP
+    Unit = nil,           -- #UNIT
+    Channel = nil,        -- #number (eg. 73, for channel 73X)     
+    Mode = nil,           -- #string (eg. 'X' for channel 73X)
+    Ident = nil,          -- #string (eg. 'C73')
+    Beaering = true       -- #boolean; Emits bearing information when set
+}
+
+local DCAF_ICLS = {
+    Group = nil,          -- #GROUP
+    Unit = nil,           -- #UNIT
+    Channel = nil,        -- #number (eg. 11, for channel 11)
+    Ident = nil,          -- #string (eg. 'C73')
+}
+
+local DCAF_RecoveryTankerInfo = {
+    Tanker = nil,         -- 
+    Group = nil,          -- #GROUP
+    TACAN = nil,          -- #DCAF_TACAN
+    Frequency = nil,      -- #number
+    Callsign = nil,
+    CallsignNumber = nil,
+    Speed = nil,
+    Altitude = nil,
+    OnLaunchedFunc = nil  -- #function; invoked when tanker gets launched
+}
+
+function DCAF.Carrier:New(group, nsUnit, sDisplayName)
+    local forGroup = getGroup(group)
+    if not forGroup then
+        error("DCAF.Carrier:New :: cannot resolve group from: " .. DumpPretty(group)) end
+
+    local forUnit = resolveUnitInGroup(forGroup, nsUnit)
+    -- todo: Ensure unit is actually a carrier!
+    if isAssignedString(forUnit) then
+        error("DCAF.Carrier:New :: cannot resolve unit from: " .. DumpPretty(nsUnit)) end
+
+    if not isAssignedString(sDisplayName) then
+        sDisplayName = forUnit.UnitName
+    end
+
+    local carrier = DCAF.clone(DCAF.Carrier)
+    carrier.Group = forGroup
+    carrier.Unit = forUnit
+    carrier.DisplayName = sDisplayName
+    return DCAFCarriers:Add(carrier)
+end
+
+function DCAF_TACAN:New(group, unit, nChannel, sMode, sIdent, bBearing)
+    local tacan = DCAF.clone(DCAF_TACAN)
+    tacan.Group = group
+    tacan.Unit = unit or group:GetUnit(1)
+    tacan.Channel = nChannel
+    tacan.Mode = sMode
+    tacan.Ident = sIdent
+    if isBoolean(bBearing) then
+        tacan.Bearing = bBearing end
+    return tacan
+end
+
+function DCAF.Carrier:ActivateTACAN()
+    if not self.TACAN then
+        return end
+
+    CommandActivateTACAN(self.Group, self.TACAN.Channel, self.TACAN.Mode, self.TACAN.Ident, self.TACAN.Beaering, false, self.Unit)
+    return self
+end
+
+function DCAF.Carrier:DeactivateTACAN(nDelay)
+    if not self.TACAN then
+        return end
+        
+    if isNumber(nDelay) and nDelay > 0 then
+        Delay(nDelay, function() 
+            CommandDeactivateBeacon(self.Group)
+        end)
+    else
+        CommandDeactivateBeacon(self.Group)
+    end
+    return self
+end
+
+function DCAF.Carrier:ActivateICLS()
+    if not self.ICLS then
+        return end
+        
+    Debug("DCAF.Carrier:ActivateICLS :: group: " .. self.Group.GroupName .. " :: unit: " .. self.Unit.UnitName .. " :: Channel: " .. tostring(self.ICLS.Channel) .. " :: Ident: " .. tostring(self.ICLS.Ident))
+    CommandActivateICLS(self.Group, self.ICLS.Channel, self.ICLS.Ident, self.Unit)
+    return self
+end
+
+function DCAF.Carrier:DeactivateICLS(nDelay)
+    if not self.ICLS then
+        return end
+        
+    if isNumber(nDelay) and nDelay > 0 then
+        Delay(nDelay, function() 
+            CommandDeactivateICLS(self.Group)
+        end)
+    else
+        CommandDeactivateICLS(self.Group)
+    end
+    return self
+end
+
+local function validateTACAN(nChannel, sMode, sIdent, errorPrefix)
+    if not isNumber(nChannel) then
+        error(errorPrefix .. " :: `nChannel` was unassigned") end
+    if nChannel < 1 or nChannel > 99 then
+        error(errorPrefix .. " :: `nChannel` was outside valid range (1-99)") end
+    if not isAssignedString(sMode) then
+        error(errorPrefix .. " :: `sMode` was unassigned") end
+    if sMode ~= 'X' and sMode ~= 'Y' then
+        error(errorPrefix .. " :: `sMode` was invalid (expected: 'X' or 'Y'") end
+    return nChannel, sMode, sIdent
+end
+
+local function getCarrierWithTACANChannel(nChannel, sMode)
+    for name, carrier in pairs(DCAFCarriers.Carriers) do
+        local tacan = carrier.TACAN
+        if tacan and tacan.Channel == nChannel and tacan.Mode == sMode then
+            return name, carrier
+        end
+    end
+end
+
+local function getCarrierWithICLSChannel(nChannel)
+    for name, carrier in pairs(DCAFCarriers.Carriers) do
+        local icls = carrier.ICLS
+        if icls and icls.Channel == nChannel then
+            return name, carrier
+        end
+    end
+end
+
+function DCAF.Carrier:SetTACANInactive(nChannel, sMode, sIdent, bBearing)
+    nChannel, sMode, sIdent = validateTACAN(nChannel, sMode, sIdent, "DCAF.Carrier:SetTACANInactive")
+    local existingCarrier = getCarrierWithTACANChannel(nChannel, sMode)
+    if existingCarrier and existingCarrier ~= self then
+        error("Cannot set TACAN " .. tostring(nChannel) .. sMode .. " for carrier '" .. self.DisplayName .. "'. Channel is already in use by '" .. existingCarrier .. "'") end
+    if self.TACAN then
+        self:DeactivateTACAN()
+    end
+    self.TACAN = DCAF_TACAN:New(self.Group, self.Unit, nChannel, sMode, sIdent, bBearing)
+    return self
+end
+
+function DCAF.Carrier:SetTACAN(nChannel, sMode, sIdent, bBearing, nActivateDelay)
+    self:SetTACANInactive(nChannel, sMode, sIdent, bBearing)
+    if isNumber(nActivateDelay) and nActivateDelay > 0 then
+        Delay(nActivateDelay, function()
+            self:ActivateTACAN()
+        end)
+    else
+        self:ActivateTACAN()
+    end
+    return self
+end
+
+function DCAF.Carrier:SetICLSInactive(nChannel, sIdent)
+    if not isNumber(nChannel) then
+        error("DCAF.Carrier:WithTACAN :: `nChannel` was unassigned") end
+    if nChannel < 1 or nChannel > 99 then
+        error("DCAF.Carrier:WithTACAN :: `nChannel` was outside valid range (1-99)") end
+    local existingCarrier = getCarrierWithICLSChannel(nChannel)
+    if existingCarrier and existingCarrier ~= self then
+        error("Cannot set ICLS " .. tostring(nChannel) .. " for carrier '" .. self.DisplayName .. "'. Channel is already in use by '" .. existingCarrier .. "'") end
+    
+    if self.ICLS then
+        self:DeactivateICLS()
+    end
+    self.ICLS = DCAF.clone(DCAF_ICLS)
+    self.ICLS.Group = self.Group
+    self.ICLS.Unit = self.Unit
+    self.ICLS.Channel = nChannel
+    self.ICLS.Ident = sIdent
+    return self
+end
+
+function DCAF.Carrier:SetICLS(nChannel, sIdent, nActivateDelay)
+    self:SetICLSInactive(nChannel, sIdent)
+    if isNumber(nActivateDelay) and nActivateDelay > 0 then
+        Delay(nActivateDelay, function()
+            self:ActivateICLS()
+        end)
+    else
+        self:ActivateICLS()
+    end
+    return self
+end
+
+local DCAFNavyF10Menus = {
+    -- dicionary
+    --  key = GROUP name (player aircraft group)
+    --  value 
+}
+
+local DCAFNavyUnitPlayerMenus = { -- item of #DCAFNavyF10Menus; one per player in Navy aircraft
+    MainMenu = nil,               -- #MENU_GROUP    eg. "F10 >> Carriers"
+    IsValid = true,               -- boolean; when set all menus are up to date; othwerise needs to be rebuilt
+    CarriersMenus = {
+        -- dictionary
+        --  key    = carrier UNIT name
+        --  value  = #DCAFNavyPlayerCarrierMenus
+    }
+}
+
+local DCAFNavyPlayerCarrierMenus = {
+    Carrier = nil,                -- #DCAF.Carrier
+    CarrierMenu = nil,            -- #MENU_GROUP     eg. "F10 >> Carriers >> CVN-73 Washington"
+    SubMenuActivateSystems = nil, -- #MENU_GROUP_COMMAND  eg. "F10 >> Carriers >> CVN-73 Washington >> Activate systems"
+}
+
+function DCAFNavyPlayerCarrierMenus:New(carrier, playerUnit)
+    
+end
+
+--[[
+local DCAFCarriers = {
+    Count = 0,
+    Carriers = {
+        -- dictionary
+        --   key    = carrier unit name
+        --   valuer = #DCAF.Carrier
+    }
+}
+
+DCAF.Carrier = {
+    Group = nil,              -- #GROUP (MOOSE object) - the carrier group
+    Unit = nil,               -- #UNIT (MOOSE object) - the carrier unit
+    TACAN = nil,              -- #DCAF_TACAN; represents the carrier's TACAN (beacon)
+    ICLS = nil,               -- #DCAF_ICLS; represents the carrier's ICLS system
+    RecoveryTankers = {},     -- { list of #DCAF_RecoveryTankerInfo (not yet activated) }
+    -- Menus = {
+    --     main = nil,
+    --     carrierSystemActivate = nil,
+    --     launchArco1 = nil,
+    --     launchArco2 = nil,
+    --     _groupName = nil,
+    --     _navalMenus = {}
+    -- },             
+}
+]]
+
+function DCAFNavyF10Menus:Build(group)
+
+    local function buildCarrierMenu(group, carrier, parentMenu)
+        if carrier.TACAN or carrier.ICLS then
+            MENU_GROUP_COMMAND:New(group, "Activate ICLS & TACAN", parentMenu, function()
+                carrier:ActivateTACAN()
+                carrier:ActivateICLS()
+            end)
+        end
+    end
+
+    -- local function buildMenuBaseStructure(group)
+    -- remove existing menus
+    local menus = DCAFNavyF10Menus[group.GroupName]
+    if menus then
+        menus.MainMenu:Remove()
+        menus.MainMenu = nil
+    else
+        menus = DCAF.clone(DCAFNavyUnitPlayerMenus)
+        DCAFNavyF10Menus[group.GroupName] = menus
+    end
+
+
+    if DCAFCarriers.Count == 0 then
+        error("DCAF.Carrier:AddF10PlayerMenus :: no carriers was added")
+    elseif DCAFCarriers.Count == 1 then
+        -- just use a single 'Carriers' F10 menu (no individual carriers sub menus) ...
+        for carrierName, carrier in pairs(DCAFCarriers.Carriers) do
+            menus.MainMenu = MENU_GROUP:New(group, carrier.DisplayName)
+            buildCarrierMenu(group, carrier, menus.MainMenu)
+            break
+        end
+    else
+Debug("nisse - multiple carriers: " .. tostring(DCAFCarriers.Count))    
+        -- build a 'Carriers' main menu and individual sub menus for each carrier ...
+        menus.MainMenu = MENU_GROUP:New(group, "Carriers")
+        for carrierName, carrier in pairs(DCAFCarriers.Carriers) do
+            local carrierMenu = MENU_GROUP:New(group, carrier.DisplayName, menus.MainMenu)
+            buildCarrierMenu(group, carrier, carrierMenu)
+        end
+    end
+    -- end
+
+
+end
+
+function DCAFNavyF10Menus:Rebuild(carrier, group)
+    if not group then
+        -- update for all player groups
+        for _, g in ipairs(DCAFNavyF10Menus) do
+            DCAFNavyF10Menus:Rebuild(carrier, g)
+        end
+        return
+    end
+
+    local menus = DCAFNavyF10Menus[group.GroupName]
+    if menus then
+        DCAFNavyF10Menus:Build(carrier, group)
+    end
+end
+
+-- note: This should be invoked at start of mission, before players start entering slots
+function DCAF.Carrier:AddF10PlayerMenus()
+    MissionEvents:OnPlayerEnteredAirplane(
+        function( event )
+            if not IsNavyAircraft(event.IniUnit) then
+                return end
+            
+            if not DCAFNavyF10Menus[event.IniGroupName] then
+                DCAFNavyF10Menus:Build(event.IniUnit:GetGroup())
+            end
+        end, true)
+end
+
+-- local function launchRecoveryTanker(carrier, tankerInfo) -- #DCAF_RecoveryTankerInfo
+--     local tanker = RECOVERYTANKER:New(carrier.Unit, tankerInfo.Group.GroupName)
+--     if tankerInfo.TACAN then
+--         tanker:SetTACAN(tankerInfo.TACAN.Channel, tankerInfo.TACAN.Mode)
+--     end
+--     if tankerInfo.Frequency then
+--         tanker:SetRadio(tankerInfo.Frequency)
+--     end
+--     if tankerInfo.Altitude then
+--         tanker:SetAltitude(tankerInfo.Altitude)
+--     end
+
+--         :SetCallsign(CALLSIGN.Tanker.Arco, 1)
+--         :Start()
+
+-- end
+
+-- RecoveryTanker = {}
+
+-- function RecoveryTanker:New(sTankerGroupName, nCallsign, nCallsignNumber)
+--     local info = DCAF.clone(DCAF_RecoveryTankerInfo)
+--     local forGroup = getGroup(sTankerGroupName)
+--     if not forGroup then
+--         error("RecoveryTanker:New :: cannot resolve recivery tanker group: " .. sTankerGroupName) end
+--     if not isNumber(nCallsign) then
+--         error("RecoveryTanker:New :: unasigned/unexpected value for `nCallsign`: " .. Dump(nCallsign)) end
+--     if not isNumber(nCallsignNumber) then
+--         nCallsignNumber = 1 end
+
+--     info.Group = forGroup
+--     info.Callsign = nCallsign
+--     info.CallsignNumber = nCallsignNumber
+--     info.Altitude = 6000
+--     return info
+-- end
+
+-- function DCAF_RecoveryTankerInfo:SetTACAN(nChannel, sMode, sIdent)
+--     nChannel, sMode, sIdent = validateTACAN(nChannel, sMode, sIdent, "RecoveryTanker:SetTACAN")
+--     local tacan = DCAF_TACAN:New(self.Group, nil, nChannel, sMode, sIdent, true)
+--     return self
+-- end
+
+-- function DCAF_RecoveryTankerInfo:SetRadio(nFrequency)
+--     if not isNumber(nFrequency) then
+--         error("RecoveryTanker:SetRadio :: unassigned/unexpected value for `nFrequency`" .. DeumpPretty(nFrequency)) end
+
+--     self.Frequency = nFrequency
+--     return self
+-- end
+
+-- function DCAF_RecoveryTankerInfo:SetAltitude(nFeet)
+--     if not isNumber(nFeet) then
+--         error("RecoveryTanker:SetAltitude :: unassigned/unexpected value for `nFeet`" .. DeumpPretty(nFeet)) end
+
+--     self.Altitude = nFeet
+--     return self
+-- end
+
+-- function DCAF.Carrier:AddRecoveryTanker(group, callsign, callsignNumber, bLaunch, onLaunchFunc)
+--     local forGroup = getGroup(group)
+--     if not forGroup then
+--         error("DCAF.Carrier:AddRecoveryTanker :: cannot resolve group from: " .. DumpPretty(group)) end
+
+--     local tanker = RECOVERYTANKER:New(self.Unit, forGroup.groupName):SetCallsign(callsign, callsignNumber):Set
+--     local info = DCAF.clone(DCAF_RecoveryTankerInfo)
+--     info.Tanker = tanker
+--     if not isBoolean(bLaunch) or bLaunch then
+--         self:launchRecoveryTanker(self, info)
+--         return self
+--     end
+--     return tanker
+-- end
+
+----------------------------------------------------------------------------------------------
 
 Trace("DCAF.Core was loaded")
