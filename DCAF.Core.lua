@@ -197,7 +197,11 @@ FeetPerNauticalMile = 6076.1155
 MetersPerNauticalMile = UTILS.NMToMeters(1)
 
 function Feet(feet)
-    UTILS.FeetToMeters(feet)
+    return UTILS.FeetToMeters(feet)
+end
+
+function Knots(knots)
+    return UTILS.KnotsToMps(knots)
 end
 
 function Hours(seconds)
@@ -212,7 +216,7 @@ function Minutes(seconds)
     end
 end
 
-function NauticalMilesToMeters( nm )
+function NauticalMiles( nm )
     if (not isNumber(nm)) then error("Expected 'nm' to be number") end
     return MetersPerNauticalMile * nm
 end
@@ -681,7 +685,7 @@ function GetEscortingGroups( source, subjectiveOnly )
         return exitWarning("GetEscortingGroups :: cannot resolve group from " .. Dump(source))
     end
 
-    local zone = ZONE_GROUP:New(group.GroupName.."-escorts", group, NauticalMilesToMeters(5))
+    local zone = ZONE_GROUP:New(group.GroupName.."-escorts", group, NauticalMiles(5))
     local nearbyGroups = SET_GROUP:New()
     if (group:IsAirPlane()) then
         nearbyGroups:FilterCategoryAirplane()
@@ -722,7 +726,7 @@ end
 function GetEscortClientGroup( source, maxDistance, resolveSubjective )
 
     if (maxDistance == nil) then
-        maxDistance = NauticalMilesToMeters(1.5)
+        maxDistance = NauticalMiles(1.5)
     end
     if (resolveSubjective == nil) then
         resolveSubjective = false
@@ -957,6 +961,61 @@ end
 
 function GetFlag( name )
     return trigger.misc.getUserFlag( name )
+end
+
+function GetCallsign(source)
+    local includeUnitNumber = false
+    local unit = getUnit(source)
+    if unit then
+        includeUnitNumber = true        
+    else
+        local group = getGroup(source)
+        if not group then
+            error("GetCallsignNameAndNumber :: cannot resolve unit or group from " .. DumpPretty(source)) end
+
+        unit = group:GetUnit(1)
+    end
+    local callsign = unit:GetCallsign()
+    local name
+    local number
+    local sNumber = string.match(callsign, "%d+")
+    if sNumber then
+        local numberAt = string.find(callsign, sNumber)
+        name = string.sub(callsign, 1, numberAt-1)
+        if not includeUnitNumber then
+            return name, tonumber(sNumber) end
+        
+        local sUnitNumber = string.sub(callsign, numberAt)
+        local dashAt = string.find(sNumber, ".-.")
+        if dashAt then
+            sUnitNumber = string.sub(sUnitNumber, dashAt+1)
+            sUnitNumber = string.match(sUnitNumber, "%d+")
+            return name, tonumber(sNumber), tonumber(sUnitNumber)
+        end
+    end
+    return callsign
+end
+
+function GetRTBAirbaseFromRoute(group)
+    local forGroup = getGroup(group)
+    if not forGroup then
+        error("GetRTBAirbaseFromRoute :: could not resolve group from " .. DumpPretty(group)) end
+
+    local homeBase
+    local route = forGroup:CopyRoute()
+    local lastWp = route[#route]
+    if lastWp.airdromeId then
+        homeBase = AIRBASE:FindByID(lastWp.airdromeId)
+    else
+        local wp0 = route[1]
+        if wp0.airdromeId then
+            homeBase = AIRBASE:FindByID(wp0.airdromeId)
+        else
+            local coord = forGroup:GetCoordinate()
+            homeBase = coord:GetClosestAirbase(Airbase.Category.AIRDROME, forGroup:GetCoalition())
+        end
+    end
+    return homeBase
 end
 
 function GetUnitFromGroupName( groupName, unitNumber )
@@ -3501,25 +3560,6 @@ local DCAFNavyPlayerCarrierMenus = {
     SubMenuActivateSystems = nil, -- #MENU_GROUP_COMMAND  eg. "F10 >> Carriers >> CVN-73 Washington >> Activate systems"
 }
 
---[[
-local DCAFCarriers = {
-    Count = 0,
-    Carriers = {
-        -- dictionary
-        --   key    = carrier unit name
-        --   valuer = #DCAF.Carrier
-    }
-}
-
-DCAF.Carrier = {
-    Group = nil,              -- #GROUP (MOOSE object) - the carrier group
-    Unit = nil,               -- #UNIT (MOOSE object) - the carrier unit
-    TACAN = nil,              -- #DCAF_TACAN; represents the carrier's TACAN (beacon)
-    ICLS = nil,               -- #DCAF_ICLS; represents the carrier's ICLS system
-    RecoveryTankers = {},     -- { list of #DCAF_RecoveryTankerInfo (not yet activated) }
-}
-]]
-
 local function getTankerMenuData(tanker, group)
     if tanker.State ==  DCAF_RecoveryTankerState.Parked then
         return "Launch " .. tanker:ToString(), function()
@@ -3641,78 +3681,361 @@ function DCAF.Carrier:AddF10PlayerMenus()
         end, true)
 end
 
--- local function launchRecoveryTanker(carrier, tankerInfo) -- #DCAF_RecoveryTankerInfo
---     local tanker = RECOVERYTANKER:New(carrier.Unit, tankerInfo.Group.GroupName)
---     if tankerInfo.TACAN then
---         tanker:SetTACAN(tankerInfo.TACAN.Channel, tankerInfo.TACAN.Mode)
---     end
---     if tankerInfo.Frequency then
---         tanker:SetRadio(tankerInfo.Frequency)
---     end
---     if tankerInfo.Altitude then
---         tanker:SetAltitude(tankerInfo.Altitude)
---     end
+---------------------------------------- TANKERS ----------------------------------------
 
---         :SetCallsign(CALLSIGN.Tanker.Arco, 1)
---         :Start()
+local DCAF_Tankers = {
+    [CALLSIGN.Tanker.Shell] = {
+        [1] = {
+            Frequency = 270,
+            TACANChannel = 39,
+            TACANMode = 'Y',
+            TACANIdent = 'SHA',
+            TrackBlock = 22,  -- x1000 feet
+            TrackSpeed = 430, -- knots
+        },
+        [2] = {
+            Frequency = 270.25,
+            TACANChannel = 40,
+            TACANMode = 'Y',
+            TACANIdent = 'SHB',
+            TrackBlock = 24, -- x1000 feet
+            TrackSpeed = 430, -- knots
+        },
+        [3] = {
+            Frequency = 270.5,
+            TACANChannel = 41,
+            TACANMode = 'Y',
+            TACANIdent = 'SHC',
+            TrackBlock = 26, -- x1000 feet
+            TrackSpeed = 430, -- knots
+        },
+    },
+    [CALLSIGN.Tanker.Texaco] = {
+        [1] = {
+            Frequency = 280,
+            TACANChannel = 42,
+            TACANMode = 'Y',
+            TACANIdent = 'TXA',
+            TrackBlock = 18, -- x1000 feet
+            TrackSpeed = 350, -- knots
+        },
+        [2] = {
+            Frequency = 280.25,
+            TACANChannel = 43,
+            TACANMode = 'Y',
+            TACANIdent = 'TXB',
+            TrackBlock = 20, -- x1000 feet
+            TrackSpeed = 350, -- knots
+        },
+        [3] = {
+            Frequency = 280.5,
+            TACANChannel = 44,
+            TACANMode = 'Y',
+            TACANIdent = 'TXC',
+            TrackBlock = 16, -- x1000 feet
+            TrackSpeed = 350, -- knots
+        },
+    },
+}
 
--- end
+DCAF.Tanker = {
+    Group = nil,              -- #GROUP (the tanker group)
+    TACANChannel = nil,       -- number; TACAN channel
+    TACANMode = nil,          -- string; TACAN mode
+    TACANIdent = nil,         -- string; TACAN ident
+    FuelStateRtb = 0.15,      -- 
+    Frequency = nil,          -- number; radio frequency
+    StartFrequency = nil,     -- number; radio frequency tuned at start and during RTB/landing
+    RTBAirbase = nil,         -- #AIRBASE; the last WP landing airbase; or starting/closest airbase otherwise
+    Track = {
+        -- list 
+        --  value = waypoint (#table)
+    },
+    TrackBlock = nil,         -- x1000 feet
+    Replacement = {
+        
+    },
+}
 
--- RecoveryTanker = {}
+function DCAF.Tanker:New(callsign, callsignNumber)
+    if callsign == nil then
+        error("DCAF.Tanker:New :: callsign group was not specified") end
 
--- function RecoveryTanker:New(sTankerGroupName, nCallsign, nCallsignNumber)
---     local info = DCAF.clone(DCAF_RecoveryTankerInfo)
---     local forGroup = getGroup(sTankerGroupName)
---     if not forGroup then
---         error("RecoveryTanker:New :: cannot resolve recivery tanker group: " .. sTankerGroupName) end
---     if not isNumber(nCallsign) then
---         error("RecoveryTanker:New :: unasigned/unexpected value for `nCallsign`: " .. Dump(nCallsign)) end
---     if not isNumber(nCallsignNumber) then
---         nCallsignNumber = 1 end
+    local group 
+    local groups = _DATABASE.GROUPS
+    local callsignName = CALLSIGN.Tanker:ToString(callsign)
+    for _, g in pairs(groups) do
+        if g:IsAir() then
+            local csName, csNumber = GetCallsign(g:GetUnit(1))
+            if csName == callsignName and csNumber == callsignNumber then
+                group = g
+                break
+            end
+        end
+    end
+    if not group then
+        error("DCAF.Tanker:New :: found no group with callsign " .. callsignName .. "-" .. tostring(callsignNumber)) end
 
---     info.Group = forGroup
---     info.Callsign = nCallsign
---     info.CallsignNumber = nCallsignNumber
---     info.Altitude = 6000
---     return info
--- end
+    -- local group = getGroup(tanker)
+    -- if not group then
+    --     error("DCAF.Tanker:New :: cannot resolve group from " .. DumpPretty(tanker)) end
 
--- function DCAF_RecoveryTankerInfo:SetTACAN(nChannel, sMode, sIdent)
---     nChannel, sMode, sIdent = validateTACAN(nChannel, sMode, sIdent, "RecoveryTanker:SetTACAN")
---     local tacan = DCAF_TACAN:New(self.Group, nil, nChannel, sMode, sIdent, true)
---     return self
--- end
+    local tanker = DCAF.clone(DCAF.Tanker)
+    tanker.Group = group
+    local defaults = DCAF_Tankers[callsign][callsignNumber]
+    tanker.TACANChannel = defaults.TACANChannel
+    tanker.TACANMode = defaults.TACANMode
+    tanker.TACANIdent = defaults.TACANIdent
+    tanker.Frequency = defaults.Frequency
+    tanker.RTBAirbase = GetRTBAirbaseFromRoute(group)
+    tanker.TrackBlock = defaults.TrackBlock
+    tanker.TrackSpeed = defaults.TrackSpeed
 
--- function DCAF_RecoveryTankerInfo:SetRadio(nFrequency)
---     if not isNumber(nFrequency) then
---         error("RecoveryTanker:SetRadio :: unassigned/unexpected value for `nFrequency`" .. DeumpPretty(nFrequency)) end
+  --function GROUP:RouteRTB( RTBAirbase, Speed )
 
---     self.Frequency = nFrequency
---     return self
--- end
+    return tanker
+end
 
--- function DCAF_RecoveryTankerInfo:SetAltitude(nFeet)
---     if not isNumber(nFeet) then
---         error("RecoveryTanker:SetAltitude :: unassigned/unexpected value for `nFeet`" .. DeumpPretty(nFeet)) end
+function DCAF.Tanker:SetTrackFromWaypoint(nStartWp, nHeading, nLength, nBlock, rgbColor, sTrackName)
+    if not isNumber(nStartWp) then
+        error("DCAF.Tanker:SetTrackFromWaypoint :: start waypoint was unassigned/unexpected value: " .. Dump(nStartWp)) end
+    if nStartWp < 1 then
+        error("DCAF.Tanker:SetTrackFromWaypoint :: start waypoint must be 1 or more (was: " .. Dump(nStartWp) .. ")") end
+    local route = self.Group:CopyRoute()
+    nStartWp = nStartWp+1 -- this is to harmonize with WP numbers on map (1st WP on map is zero - 0)
+    if nStartWp > #route then
+        error("DCAF.Tanker:SetTrackFromWaypoint :: start waypoint must be within route (route is " .. Dump(#route) .. " waypoints, startWp was ".. Dump(nStartWp) .. ")") end
 
---     self.Altitude = nFeet
---     return self
--- end
+    local startWpIndex = nStartWp
+    nStartWp = route[startWpIndex]
+    local trackAltitude = Feet(self.TrackBlock*1000)
+    nStartWp.alt = trackAltitude
+    
+    -- if not isNumber(nHeading) then
+    --     error("DCAF.Tanker:SetTrackWaypoints :: heading was unassigned/unexpected value: " .. Dump(nHeading)) end
 
--- function DCAF.Carrier:AddRecoveryTanker(group, callsign, callsignNumber, bLaunch, onLaunchFunc)
---     local forGroup = getGroup(group)
---     if not forGroup then
---         error("DCAF.Carrier:AddRecoveryTanker :: cannot resolve group from: " .. DumpPretty(group)) end
+    if not isNumber(nLength) then
+        nLength = NauticalMiles(30)
+    end
+    if isNumber(nBlock) then
+        self.TrackBlock = nBlock
+    end
 
---     local tanker = RECOVERYTANKER:New(self.Unit, forGroup.groupName):SetCallsign(callsign, callsignNumber):Set
---     local info = DCAF.clone(DCAF_RecoveryTankerInfo)
---     info.Tanker = tanker
---     if not isBoolean(bLaunch) or bLaunch then
---         self:launchRecoveryTanker(self, info)
---         return self
---     end
---     return tanker
--- end
+    local startWpCoord = COORDINATE:NewFromWaypoint(nStartWp)
+    local endWpCoord 
+    if not isNumber(nHeading) then
+        if startWpIndex == #route then
+            error("DCAF.Tanker:SetTrackFromWaypoint :: heading was unassigned/unexpected value and start of track was also last waypoint")
+        else
+            endWpCoord = COORDINATE:NewFromWaypoint(route[startWpIndex+1])
+        end
+    else
+        endWpCoord = startWpCoord:Translate(nLength, nHeading, Feet(self.TrackBlock*1000))
+    end
+    
+    local function hasTask(sTaskId, wpIndex)
+        local function hasWpTask(wp)
+            for index, task in ipairs(wp.task.params.tasks) do
+                if task.id == sTaskId then 
+                    return index end
+            end
+        end
+
+        if not wpIndex then
+            for wpIndex, wp in ipairs(route) do
+                if hasWpTask(wp) then 
+                    return wpIndex end
+            end
+        elseif hasWpTask(route[wpIndex]) then
+            return wpIndex 
+        end
+    end
+
+    local function hasAction(sActionId, wpIndex)
+        local function hasWpAction(wp)
+            for index, task in ipairs(wp.task.params.tasks) do
+                if task.id == "WrappedAction" and task.params.action.id == sActionId then 
+                    return index end
+            end
+        end
+
+        if not wpIndex then
+            for wpIndex, wp in ipairs(route) do
+                if hasWpAction(wp) then 
+                    return wpIndex end
+            end
+        elseif hasWpAction(route[wpIndex]) then
+            return wpIndex
+        end
+    end
+
+    local function drawTrack()
+        if not rgbColor then
+            return end
+
+        if not isTable(rgbColor) then
+            rgbColor = {0,1,1}
+        end
+        local trackHeading = startWpCoord:GetAngleDegrees(startWpCoord:GetDirectionVec3(endWpCoord))
+        local trackDistance = startWpCoord:Get2DDistance(endWpCoord)
+        local wp1 = startWpCoord:Translate(trackDistance + NauticalMiles(7), trackHeading, Feet(self.TrackBlock*1000))
+        local perpHeading = (trackHeading - 90) % 360
+        local wp2 = wp1:Translate(NauticalMiles(13), perpHeading, Feet(self.TrackBlock*1000))
+        perpHeading = (perpHeading - 90) % 360
+        local wp3 = wp2:Translate(trackDistance + NauticalMiles(14), perpHeading, Feet(self.TrackBlock*1000))
+        perpHeading = (perpHeading - 90) % 360
+        local wp4 = wp3:Translate(NauticalMiles(13), perpHeading, Feet(self.TrackBlock*1000))
+        wp1:MarkupToAllFreeForm({wp2, wp3, wp4}, self.Group:GetCoalition(), rgbColor, 0.5, nil, 0, 3)
+        wp4:SetHeading(trackHeading)
+        if isAssignedString(sTrackName) then
+            wp4:TextToAll(sTrackName, self.Group:GetCoalition(), rgbColor, 0.5, nil, 0)
+        end
+        -- ZONE_RADIUS:New('tanker-track-1', wp1:GetVec2(), 900):DrawZone(nil, {1,0,0})
+        -- ZONE_RADIUS:New('tanker-track-2', wp2:GetVec2(), 900):DrawZone(nil, {1,0,0})
+        -- ZONE_RADIUS:New('tanker-track-3', wp3:GetVec2(), 900):DrawZone(nil, {1,0,0})
+        -- ZONE_RADIUS:New('tanker-track-4', wp4:GetVec2(), 900):DrawZone(nil, {1,0,0})
+    end
+    local function hasOrbitTask() return hasTask("Orbit") end
+    local function hasTankerTask() return hasTask("Tanker") end                       -- todo consider elevating this func to global
+    local function hasSetFrequencyTask() return hasAction("SetFrequency") end         -- todo consider elevating this func to global
+    local function hasActivateBeaconTask() return hasAction("ActivateBeacon") end     -- todo consider elevating this func to global
+    local function hasDeactivateBeaconTask() return hasAction("DeactivateBeacon") end -- todo consider elevating this func to global
+
+    local function insertTask(task)                                                   -- todo consider elevating this func to global
+        task.number = #nStartWp.task.params.tasks+1 
+        table.insert(nStartWp.task.params.tasks, task)
+    end
+
+    local function insertAction(action, wpIndex)                                      -- todo consider elevating this func to global
+        if wpIndex == nil then
+            wpIndex = startWpIndex end
+        local wp = route[wpIndex]
+        table.insert(wp.task.params.tasks, {
+            number = #wp.task.params.tasks+1,
+            auto = false,
+            id = "WrappedAction",
+            enabled = true,
+            params = { action = action },
+          })
+    end
+
+    drawTrack()
+
+    local tankerTask = hasTankerTask()
+    if not tankerTask or tankerTask > startWpIndex then
+Debug("nisse - adds 'Tanker' task to track WP")
+        insertTask({
+            auto = false,
+            id = "Tanker",
+            enabled = true,
+            params = { },
+          })
+    end
+
+    local setFrequencyTask = hasSetFrequencyTask()
+    if not setFrequencyTask or setFrequencyTask > startWpIndex then
+Debug("nisse - adds 'Set Frequency' action to track WP")
+        insertAction({ 
+            id = 'SetFrequency', 
+            params = { 
+                power = 10,
+                frequency = self.Frequency * 1000000, 
+                modulation = radio.modulation.AM, 
+            }, 
+        })
+    end
+
+    local orbitTask = hasOrbitTask()
+    if not orbitTask or orbitTask ~= startWpIndex then
+Debug("nisse - adds 'Orbit' task to track WP :: orbitTask: " .. Dump(orbitTask) .. " :: startWpIndex: " .. Dump(startWpIndex))
+        insertTask(self.Group:TaskOrbit(startWpCoord, trackAltitude, Knots(self.TrackSpeed), endWpCoord))
+        if orbitTask ~= startWpIndex then
+            Warning("DCAF.Tanker:SetTrackFromWaypoint :: there is an orbit task set to a different WP (" .. Dump(orbitTask) .. ") than the one starting the tanker track (" .. Dump(startWpIndex) .. ")") end
+    end
+
+    if not hasActivateBeaconTask() then
+        -- ensure TACAN gets activated _before_ the first Track WP (some weird bug in DCS otherwise may cause it to not activate)
+        -- inject a new waypoint 2 nm before the tanker track, or use the previous WP if < 10nm from the tanker track
+Debug("nisse - adds 'Activate TACAN' action to track")
+        local prevWp = route[startWpIndex-1]
+        local prevWpCoord = COORDINATE:NewFromWaypoint(prevWp)
+        local distance = prevWpCoord:Get2DDistance(startWpCoord)
+        local tacanWp
+        local tacanWpIndex
+        if distance <= NauticalMiles(10) then
+            tacanWp = prevWp
+            tacanWpIndex = startWpIndex-1
+        else
+            local dirVec3 = prevWpCoord:GetDirectionVec3(startWpCoord)
+            local heading = prevWpCoord:GetAngleDegrees(dirVec3)
+            local tacanWpCoord = prevWpCoord:Translate(distance - NauticalMiles(2), heading, Feet(self.TrackBlock*1000))
+
+-- local nisse_tacanWpZone = ZONE_RADIUS:New('tanker-track-start', tacanWpCoord:GetVec2(), 900) 
+-- nisse_tacanWpZone:DrawZone(nil, {0,1,0})
+
+            local tacanWp = tacanWpCoord:WaypointAir(
+                COORDINATE.WaypointAltType.BARO, 
+                COORDINATE.WaypointType.TurningPoint,
+                COORDINATE.WaypointAction.TurningPoint,
+                Knots(self.TrackSpeed))
+            table.insert(route, startWpIndex, tacanWp)
+            tacanWpIndex = startWpIndex
+        end
+
+        local tacanSystem
+        if self.TACANMode == "X" then
+            tacanSystem = BEACON.System.TACAN_TANKER_X
+          else
+            tacanSystem = BEACON.System.TACAN_TANKER_Y
+          end
+        insertAction({
+            id = "ActivateBeacon",
+            params = {
+                modeChannel = self.TACANMode,
+                type = BEACON.Type.TACAN,
+                system = tacanSystem,
+                AA = false,
+                callsign = self.TACANIdent,
+                channel = self.TACANChannel,
+                bearing = true,
+                frequency = UTILS.TACANToFrequency(self.TACANChannel, self.TACANMode),
+            },
+          })
+          if startWpIndex == #route or startWpIndex == #route-1 then
+            -- add waypoint for end of track ...
+            local endWp = endWpCoord:WaypointAir(
+                COORDINATE.WaypointAltType.BARO, 
+                COORDINATE.WaypointType.TurningPoint,
+                COORDINATE.WaypointAction.TurningPoint,
+                Knots(self.TrackSpeed),
+            tacanWpIndex)
+            endWp.alt = trackAltitude
+            table.insert(route, startWpIndex+1, endWp)
+        end
+    end
+
+-- Debug("nisse - route for ".. sDrawTrack .. ": " .. DumpPrettyDeep(route))
+    self.Group:Route(route)
+    
+    -- todo
+    return self
+end
+
+function DCAF.Tanker:SpawnReplacementAt(state)
+    -- todo
+    return self
+end
+
+function DCAF.Tanker:Start(delay)
+    if isNumber(delay) then
+        Delay(delay, function()
+            activateNow(self.Group)
+        end)
+    else
+        activateNow(self.Group)
+    end
+    return self
+end
 
 ----------------------------------------------------------------------------------------------
 

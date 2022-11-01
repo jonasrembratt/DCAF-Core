@@ -1008,7 +1008,7 @@ function OnShowOfForce( intruder, callback, options ) --, radius, minCount, minS
     -- monitor (warning) shots and hits ...
     onShootingStartFunc = function(event)
 
-        if not IsHeadingFor(event.IniUnit, group, NauticalMilesToMeters(2), 5) then
+        if not IsHeadingFor(event.IniUnit, group, NauticalMiles(2), 5) then
             return end
 
         local interceptorInfo = interceptorsInfo[event.IniGroupName.GroupName]
@@ -2392,7 +2392,7 @@ function policeGroup:RemovePoliceUnit(unit, playerName)
 end
 
 AirPolicingOptions = {
-    scanRadius = NauticalMilesToMeters(5),
+    scanRadius = NauticalMiles(5),
     aiReactionDelayMin = 2,          -- minimum time after an order was issued until AI reacts
     aiReactionDelayMax = 5,          -- maximum time after an order was issued until AI reacts
     interceptAssist = false,
@@ -2785,7 +2785,7 @@ end
 function DebugGetSpottedFlights( source ) -- nisse Remove when debugged
 
     local deep = DumpPrettyOptions:New():Deep()
-    local count, flights = GetSpottedFlights( source, NauticalMilesToMeters(10) )
+    local count, flights = GetSpottedFlights( source, NauticalMiles(10) )
 
     local txt = ""
     for k, v in pairs(flights) do
