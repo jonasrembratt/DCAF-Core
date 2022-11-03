@@ -95,18 +95,15 @@ end
 function DCAF.parseSpawnedUnitName(name)
     local groupName, indexer = DCAF.trimInstanceFromName(name)
     if groupName == name then
--- Debug("nisse - DCAF.parseSpawnedUnitName :: groupName: " .. groupName)    
         return name end
 
     -- indexer now have format: <group indexer>-<unit indexer> (eg. "001-2", for second unit of first spawned group)
     local dashAt = string.find(indexer, '-')
     if not dashAt then
--- Debug("nisse - DCAF.parseSpawnedUnitName :: groupName: " .. groupName)    
         -- should never happen, but ...
         return name end
     
     local unitIndex = string.sub(indexer, dashAt+1)
--- Debug("nisse - DCAF.parseSpawnedUnitName :: groupName: " .. groupName .. " :: indexer: " .. indexer)    
     return groupName, tonumber(unitIndex)
 end
 
@@ -144,14 +141,11 @@ function isUnitNameInstanceOf(name, templateName)
     if name == templateName then
         return true end
 
--- Debug("isUnitNameInstanceOf :: name: " .. name .. " :: templateName: " .. templateName)        
     -- check for spawned pattern (eg. "Unit-1#001-1") ...
     local i = string.find(name, "#%d")
     if i then
         local test, instanceElement = trimInstanceFromName(name, i)
--- Debug("isUnitNameInstanceOf :: test: " .. test)        
         if test == templateName then
-Debug("isUnitNameInstanceOf :: nisse")        
             -- local counterAt = string.find(instanceElement, "-")
             if not counterAt then
                 return false end
@@ -359,6 +353,12 @@ end
 function Delay( seconds, userFunction, data )
     if (not isNumber(seconds)) then error("Delay :: seconds was not specified") end
     if (userFunction == nil) then error("Delay :: userFunction was not specified") end
+    
+    if seconds == 0 then
+        userFunction(data)
+        return 
+    end
+
     local timer = TIMER:New(
         function() 
             userFunction(data)
@@ -539,13 +539,6 @@ function getGroup( source )
 end
 
 function activateNow( source )
--- nisse
-if isAssignedString(source) then
-    Debug("activateNow( \"" .. source .. "\"")
-else
-    Debug("activateNow( \"" .. source.GroupName .. "\"")
-end
-
     local group = getGroup( source )
     if not group then
         return exitWarning("activateNow :: cannot resolve group from " .. Dump(source))
@@ -558,12 +551,6 @@ end
 end
 
 function spawnNow( source )
--- nisse
-if isAssignedString(source) then
-    Debug("spawnNow( \"" .. source .. "\"")
-else
-    Debug("spawnNow( \"" .. source.GroupName .. "\"")
-end    
     local name = nil
     if isGroup(source) then
         name = source.GroupName
@@ -579,7 +566,6 @@ end
 
   
 function isSameHeading( group1, group2 ) 
---Debug("isSameHeading :: g1.heading: " .. tostring(group1:GetHeading() .. " :: g2.heading: " .. tostring(group2:GetHeading())))
     return math.abs(group1:GetHeading() - group2:GetHeading()) < 5 
 end
 
@@ -2090,10 +2076,7 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
             --   return UnitGroup
             -- end
             event.TgtGroup = event.TgtUnit:GetGroup()
--- nisse
-local nisse = dcsTarget:getGroup():getName()
             if not event.TgtGroup then
-Debug("_e:onEvent :: nisse: " .. DumpPrettyDeep(nisse))
                 Warning("_e:onEvent :: event: " .. Dump(event.id) .. " :: could not resolve TgtGroup from UNIT:GetGroup()" )
                 return event
             end            
@@ -2145,9 +2128,7 @@ Debug("_e:onEvent :: nisse: " .. DumpPrettyDeep(nisse))
                 IniGroup = rootEvent.TgtGroup,
                 IniGroupName = rootEvent.TgtGroupName
             }
--- Debug("invokeUnitDestroyed :: event: " .. DumpPrettyDeep(event))            
         end
-        -- event.RootEventId = rootEventId
         MissionEvents:Invoke(_missionEventsHandlers._unitDestroyedHandlers, event)
     end
 
@@ -2284,7 +2265,6 @@ function MissionEvents:EndOnUnitHit( func ) MissionEvents:RemoveListener(_missio
 
 function MissionEvents:OnAircraftLanded( func, insertFirst ) 
     MissionEvents:AddListener(_missionEventsHandlers._aircraftLandedHandlers, func, nil, insertFirst) 
--- Debug("core - MissionEvents:OnAircraftLanded :: func: " .. tostring(func) .. " ::  registered :: #_aircraftLandedHandlers: " .. tostring(#_missionEventsHandlers._aircraftLandedHandlers))    
 end
 function MissionEvents:EndOnAircraftLanded( func ) MissionEvents:RemoveListener(_missionEventsHandlers._aircraftLandedHandlers, func) end
 
@@ -2373,55 +2353,73 @@ local _missionEventsAircraftFielStateMonitor = {
     Monitored = {
         -- dictionary
         --   key   = #string (group or unit name)
-        --   value = #UnitInfo
+        --   value = {
+        --       list of #UnitInfo        
+        --  } 
     },               
     CountMonitored = 0,           -- ¤number; no. of items in $self.Units
 }
 
 function _missionEventsAircraftFielStateMonitor:Start(key, units, fuelState, func)
-    if _missionEventsAircraftFielStateMonitor.Monitored[key] then
-        return errorOnDebug("MissionEvents:OnFuelState :: key was already monitored") end
+
+    local monitored = _missionEventsAircraftFielStateMonitor.Monitored[key]
+    if monitored then
+        if  monitored.State == fuelState then
+            return errorOnDebug("MissionEvents:OnFuelState :: key was already monitored for same fuel state ("..Dump(fuelState)..")") end
+    else
+        monitored = {}
+        _missionEventsAircraftFielStateMonitor.Monitored[key] = monitored
+    end
 
     local info = DCAF.clone(_missionEventsAircraftFielStateMonitor.UnitInfo)
     info.Units = units
     info.State = fuelState
     info.Func = func
-    _missionEventsAircraftFielStateMonitor.Monitored[key] = info
     _missionEventsAircraftFielStateMonitor.CountMonitored = _missionEventsAircraftFielStateMonitor.CountMonitored + 1
+    table.insert(monitored, info)
 
     if self.Timer then 
         return end
 
     local function monitorFuelStates()
         local triggeredKeys = {}
-        for key, info in pairs(_missionEventsAircraftFielStateMonitor.Monitored) do
-            for _, unit in pairs(info.Units) do
-                local state = unit:GetFuel()
-Debug("monitor fuel state :: unit: " .. unit.UnitName .. " :: state: " .. Dump(state))                
-                if state <= info.State then
-                    info.Func(unit)
-                    table.insert(triggeredKeys, key)
+        for key, monitored in pairs(_missionEventsAircraftFielStateMonitor.Monitored) do
+            for _, info in ipairs(monitored) do
+                for index, unit in pairs(info.Units) do
+                    local state = unit:GetFuel()
+-- Debug("monitor fuel state :: unit: " .. unit.UnitName .. " :: state: " .. Dump(state) .. " :: info.State: " .. Dump(info.State))                
+                    if state <= info.State then
+-- Debug("triggers onfuel state :: unit: " .. unit.UnitName .. " :: state: " .. Dump(state) .. " :: info.State: " .. Dump(info.State))                
+                        info.Func(unit)
+                        table.insert(triggeredKeys, { Key = key, Index = index })
+                    end
                 end
             end
         end
 
         -- end triggered keys ...
-        for _, key in ipairs(triggeredKeys) do
-            self:End(key)
+        for i = #triggeredKeys, 1, -1 do
+            local triggered = triggeredKeys[i]
+            self:End(triggered.Key, triggered.Index)
         end
     end
     
     self.Timer = TIMER:New(monitorFuelStates):Start(1, 60)
 end
 
-function _missionEventsAircraftFielStateMonitor:End(key)
+function _missionEventsAircraftFielStateMonitor:End(key, index)
 
     if not _missionEventsAircraftFielStateMonitor.Monitored[key] then
-        return errorOnDebug("MissionEvents:OnFuelState :: key was already monitored") 
+        return errorOnDebug("MissionEvents:OnFuelState :: key was not monitored") 
     else
-        Trace("MissionEvents:OnFuelState :: " .. key .. " :: ENDS")
-        _missionEventsAircraftFielStateMonitor.Monitored[key] = nil
+        local monitored = _missionEventsAircraftFielStateMonitor.Monitored[key]
+        local info = monitored[index]
+        Trace("MissionEvents:OnFuelState :: " .. key .. "/state("..tostring(info.State)..") :: ENDS")
+        table.remove(monitored, index)
         _missionEventsAircraftFielStateMonitor.CountMonitored = _missionEventsAircraftFielStateMonitor.CountMonitored - 1
+        if #monitored == 0 then
+            _missionEventsAircraftFielStateMonitor.Monitored[key] = nil
+        end
     end
 
     if not self.Timer or _missionEventsAircraftFielStateMonitor.CountMonitored > 0 then 
@@ -2500,8 +2498,6 @@ local _DCAFEvents = {
 function _DCAFEvents:Activate(activation)
     local activator = _DCAFEvents[activation.eventName]
     if activator then
--- Debug("nisse - DCAFEvents:Activate :: activation: " .. DumpPrettyDeep(activation))
--- Debug("nisse - DCAFEvents:Activate :: activator: " .. DumpPretty(activator))
         activator(activation.func, activation.insertFirst, activation.args)
 
         -- notify event activation, if callback func is registered ...
@@ -2518,12 +2514,10 @@ function _DCAFEvents:Activate(activation)
 end
 
 function _DCAFEvents:ActivateFor(source)
--- Debug("nisse - _DCAFEvents:ActivateFor :: source:" .. Dump(source) .. " :: _DCAFEvents_lateActivations: " .. DumpPrettyDeep(_DCAFEvents_lateActivations))
     local activations = _DCAFEvents_lateActivations[source]
     if not activations then
         return
     end
--- Debug("nisse - _DCAFEvents:ActivateFor :: #activations: " .. DumpPrettyDeep(#activations) .. " :: (1 expected)")
     _DCAFEvents_lateActivations[source] = nil
     for _, activation in ipairs(activations) do
         _DCAFEvents:Activate(activation)
@@ -3360,7 +3354,6 @@ function DCAF.Carrier:ActivateICLS()
     if not self.ICLS then
         return end
         
-    Debug("DCAF.Carrier:ActivateICLS :: group: " .. self.Group.GroupName .. " :: unit: " .. self.Unit.UnitName .. " :: Channel: " .. tostring(self.ICLS.Channel) .. " :: Ident: " .. tostring(self.ICLS.Ident))
     CommandActivateICLS(self.Group, self.ICLS.Channel, self.ICLS.Ident, self.Unit)
     return self
 end
@@ -3694,8 +3687,6 @@ function DCAFNavyF10Menus:Build(group)
         for _, carrier in pairs(DCAFCarriers.Carriers) do
             for _, tanker in ipairs(carrier.RecoveryTankers) do
                 local menuText, menuFunc = getTankerMenuData(tanker, group)
--- Debug("carrier: " .. carrier.Unit.UnitName .. " / " .. tanker.Tanker.tankergroupname)
-Debug(menuText)
                 local menu = MENU_GROUP_COMMAND:New(group, menuText, parentMenu, menuFunc)
                 tanker.GroupMenus[group.GroupName] = menu
             end
@@ -3853,12 +3844,18 @@ DCAF.Tanker = {
     Events = {},              -- dictionary; key = name of event (eg. 'OnFuelState'), value = event arguments
 }
 
-function DCAF.Tanker:New(controllable, replicate)
-   local group = getGroup(controllable)
-    if not group then
-        error("DCAF.Tanker:New :: cannot resolve group from " .. DumpPretty(controllable)) end
+function DCAF.Tanker:IsMissing()
+    return not self.Group
+end
 
+function DCAF.Tanker:New(controllable, replicate)
     local tanker = DCAF.clone(replicate or DCAF.Tanker)
+    local group = getGroup(controllable)
+    if not group then
+        -- note: To make code API more versatile we accept missing tankers. This allows for reusing same script in missions where not all tankers are present
+        Warning("DCAF.Tanker:New :: cannot resolve group from " .. DumpPretty(controllable))
+        return tanker
+    end
 
     -- initiate tanker ...
     tanker.Group = group
@@ -3903,8 +3900,6 @@ function DCAF.Tanker:NewFromCallsign(callsign, callsignNumber)
             end
         end
     end
-    if not group then
-        error("DCAF.Tanker:New :: found no group with callsign " .. callsignName .. "-" .. tostring(callsignNumber)) end
 
     return DCAF.Tanker:New(group)
 end
@@ -3974,7 +3969,10 @@ function DCAF_TrackFromWaypoint:Execute()
         trackLength = NauticalMiles(30)
     end
     if isNumber(self.Block) then
-        trackAltitude = Feet(self.Block*1000)
+        trackAltitude = Feet(self.Block * 1000)
+        startWp.alt = trackAltitude
+    elseif isNumber(self.Tanker.TrackBlock) then
+        trackAltitude = Feet(self.Tanker.TrackBlock * 1000)
         startWp.alt = trackAltitude
     end
 
@@ -4144,6 +4142,10 @@ function DCAF.Tanker:SetTrackFromWaypoint(nStartWp, nHeading, nLength, nBlock, r
         error("DCAF.Tanker:SetTrackFromWaypoint :: start waypoint was unassigned/unexpected value: " .. Dump(nStartWp)) end
     if nStartWp < 1 then
         error("DCAF.Tanker:SetTrackFromWaypoint :: start waypoint must be 1 or more (was: " .. Dump(nStartWp) .. ")") end
+
+    if self:IsMissing() then
+        return self end
+    
     local route = self.Group:CopyRoute()
     nStartWp = nStartWp+1 -- this is to harmonize with WP numbers on map (1st WP on map is zero - 0)
     if nStartWp > #route then
@@ -4170,6 +4172,9 @@ function DCAF.Tanker:OnFuelState(state, func)
     if not isFunction(func) then
         error("DCAF.Tanker:OnFuelState :: func was unassigned/unexpected value: " .. DumpPretty(func)) end
 
+    if self:IsMissing() then
+        return self end
+
     local args = {
         Tanker = self,
         State = state,
@@ -4185,6 +4190,10 @@ function DCAF.Tanker:OnBingoState(func)
 end
 
 function DCAF.Tanker:Start(delay)
+
+    if self:IsMissing() then
+        return self end
+
     if isNumber(delay) then
         Delay(delay, function()
             activateNow(self.Group)
@@ -4201,7 +4210,7 @@ function WaypointLandAt(airbase) -- todo Consider using MOOSE's COORDINATE:Waypo
         nAirbaseID = airbase
         airbase = AIRBASE:FindByID(nAirbaseID)
         if not airbase then
-            return errorOnDebug("WaypointLandAt :: cannot resolve airbase from id: " .. Dump(nAirbaseID)) end   
+            return errorOnDebug("WaypointLandAt :: cannot resolve airbase from id: " .. Dump(nAirbaseI)) end   
     elseif isAirbase(airbase) then
         nAirbaseID = airbase:GetID()
     else
@@ -4225,6 +4234,10 @@ function WaypointLandAt(airbase) -- todo Consider using MOOSE's COORDINATE:Waypo
 end
 
 function DCAF.Tanker:RTB()
+
+    if self:IsMissing() then
+        return self end
+
     local route = self.Group:CopyRoute()
     local landingWp = HasLandingTask(self.Group)
     if not landingWp then 
@@ -4240,6 +4253,10 @@ function DCAF.Tanker:RTB()
 end
 
 function DCAF.Tanker:SpawnReplacement(funcOnSpawned, nDelay)
+    
+    if self:IsMissing() then
+        return self end
+
     local function spawnNow()
         local group = SPAWN:New(self.Group.GroupName):Spawn()
         local tanker = DCAF.Tanker:New(group, self)
