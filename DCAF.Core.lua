@@ -49,7 +49,8 @@ function isFunction( value ) return type(value) == "function" end
 function isClass( value, class ) return isTable(value) and value.ClassName == class end
 function isUnit( value ) return isClass(value, "UNIT") end
 function isGroup( value ) return isClass(value, "GROUP") end
-function isZone( value ) return isClass(value, "ZONE") end
+function isZone( value ) return isClass(value, "ZONE") or isClass(value, "ZONE_POLYGON_BASE") end
+function isCoordinate( value ) return isClass(value, "COORDINATE") end
 function isAirbase( value ) return isClass(value, "AIRBASE") end
 
 function getTableType(table)
@@ -524,7 +525,7 @@ function getGroup( source )
         return source 
     end
     if (isUnit(source)) then 
-        return source:GetGroup() 
+        return sourBuildF10MenusForCoalitionForCoalition 
     end
     if (not isString(source)) then return nil end
 
@@ -663,7 +664,7 @@ end
 function CALLSIGN.Tanker:FromString(sCallsign)
     if     sCallsign == "Arco" then return CALLSIGN.Tanker.Arco
     elseif sCallsign == "Shell" then return CALLSIGN.Tanker.Shell
-    elseif sCallsign == "Texaco" then return Tanker.Texaco
+    elseif sCallsign == "Texaco" then return CALLSIGN.Tanker.Texaco
     end
 end
 
@@ -989,6 +990,16 @@ function GetCallsign(source)
     end
     return callsign
 end
+
+function IsTankerCallsign(controllable, ...)
+    local group = getGroup(controllable)
+    local callsign = CALLSIGN.Tanker:FromString(GetCallsign(group))
+    for i = 1, #arg, 1 do
+       if callsign == arg[i] then
+          return true
+       end
+    end
+ end
 
 function GetRTBAirbaseFromRoute(group)
     local forGroup = getGroup(group)
@@ -3240,6 +3251,7 @@ local DCAFCarriers = {
 }
 
 DCAF.Carrier = {
+    IsStrict = false,         -- #boolean; when set, an error will be thrown if carrier cannt be resolved (not setting it allows referencing carrier that might not be needed in a particular miz)
     Group = nil,              -- #GROUP (MOOSE object) - the carrier group
     Unit = nil,               -- #UNIT (MOOSE object) - the carrier unit
     DisplayName = nil,        -- #string; name to be used in menus and communication
@@ -3297,8 +3309,13 @@ local DCAF_RecoveryTanker = {
 
 function DCAF.Carrier:New(group, nsUnit, sDisplayName)
     local forGroup = getGroup(group)
+    local carrier = DCAF.clone(DCAF.Carrier)
     if not forGroup then
-        error("DCAF.Carrier:New :: cannot resolve group from: " .. DumpPretty(group)) end
+        if DCAF.Carrier.IsStrict then
+            error("DCAF.Carrier:New :: cannot resolve group from: " .. DumpPretty(group)) 
+        end
+        return carrier
+    end
 
     local forUnit = resolveUnitInGroup(forGroup, nsUnit)
     -- todo: Ensure unit is actually a carrier!
@@ -3309,11 +3326,14 @@ function DCAF.Carrier:New(group, nsUnit, sDisplayName)
         sDisplayName = forUnit.UnitName
     end
 
-    local carrier = DCAF.clone(DCAF.Carrier)
     carrier.Group = forGroup
     carrier.Unit = forUnit
     carrier.DisplayName = sDisplayName
     return DCAFCarriers:Add(carrier)
+end
+
+function DCAF.Carrier:IsEmpty()
+    return self.Group == nil
 end
 
 function DCAF_TACAN:New(group, unit, nChannel, sMode, sIdent, bBearing)
@@ -3403,6 +3423,9 @@ local function getCarrierWithICLSChannel(nChannel)
 end
 
 function DCAF.Carrier:SetTACANInactive(nChannel, sMode, sIdent, bBearing)
+    if self:IsEmpty() then
+        return self end
+
     nChannel, sMode, sIdent = validateTACAN(nChannel, sMode, sIdent, "DCAF.Carrier:SetTACANInactive")
     local existingCarrier = getCarrierWithTACANChannel(nChannel, sMode)
     if existingCarrier and existingCarrier ~= self then
@@ -3415,6 +3438,9 @@ function DCAF.Carrier:SetTACANInactive(nChannel, sMode, sIdent, bBearing)
 end
 
 function DCAF.Carrier:SetTACAN(nChannel, sMode, sIdent, bBearing, nActivateDelay)
+    if self:IsEmpty() then
+        return self end
+        
     self:SetTACANInactive(nChannel, sMode, sIdent, bBearing)
     if isNumber(nActivateDelay) and nActivateDelay > 0 then
         Delay(nActivateDelay, function()
@@ -3431,6 +3457,10 @@ function DCAF.Carrier:SetICLSInactive(nChannel, sIdent)
         error("DCAF.Carrier:WithTACAN :: `nChannel` was unassigned") end
     if nChannel < 1 or nChannel > 99 then
         error("DCAF.Carrier:WithTACAN :: `nChannel` was outside valid range (1-99)") end
+
+    if self:IsEmpty() then
+        return self end
+            
     local existingCarrier = getCarrierWithICLSChannel(nChannel)
     if existingCarrier and existingCarrier ~= self then
         error("Cannot set ICLS " .. tostring(nChannel) .. " for carrier '" .. self.DisplayName .. "'. Channel is already in use by '" .. existingCarrier .. "'") end
@@ -3448,6 +3478,10 @@ end
 
 function DCAF.Carrier:SetICLS(nChannel, sIdent, nActivateDelay)
     self:SetICLSInactive(nChannel, sIdent)
+
+    if self:IsEmpty() then
+        return self end
+        
     if isNumber(nActivateDelay) and nActivateDelay > 0 then
         Delay(nActivateDelay, function()
             self:ActivateICLS()
@@ -3459,6 +3493,8 @@ function DCAF.Carrier:SetICLS(nChannel, sIdent, nActivateDelay)
 end
 
 function DCAF.Carrier:WithRescueHelicopter(chopper)
+    if self:IsEmpty() then
+        return self end
 
     local rescueheli
     if isAssignedString(chopper) then
@@ -3581,6 +3617,9 @@ local DCAF_ArcosInfo = {
 }
 
 function DCAF.Carrier:WithArco1(sGroupName, nTakeOffType, bLaunchNow, nAltitudeFeet)
+    if self:IsEmpty() then
+        return self end
+        
     if not isNumber(nAltitudeFeet) then
         nAltitudeFeet = DCAF_ArcosInfo[1].Altitude
     end
@@ -3602,6 +3641,9 @@ function DCAF.Carrier:WithArco1(sGroupName, nTakeOffType, bLaunchNow, nAltitudeF
 end
 
 function DCAF.Carrier:WithArco2(sGroupName, nTakeOffType, bLaunchNow, nAltitudeFeet)
+    if self:IsEmpty() then
+        return self end
+
     if not isNumber(nAltitudeFeet) then
         nAltitudeFeet = DCAF_ArcosInfo[1].Altitude
     end
@@ -3754,8 +3796,10 @@ end
 function DCAF.Carrier:AddF10PlayerMenus()
     MissionEvents:OnPlayerEnteredAirplane(
         function( event )
+Debug("nisse - entered aircraft")            
             if not IsNavyAircraft(event.IniUnit) then
                 return end
+Debug("nisse - was navy aircraft")
             
             if not DCAFNavyF10Menus[event.IniGroupName] then
                 DCAFNavyF10Menus:Build(event.IniUnit:GetGroup())
@@ -4120,6 +4164,8 @@ function DCAF_TrackFromWaypoint:Execute()
                 frequency = UTILS.TACANToFrequency(self.Tanker.TACANChannel, self.Tanker.TACANMode),
             },
           })
+          startWpIndex = startWpIndex+1          
+Debug("nisse - tacan :: tacanWpIndex: " .. Dump(tacanWpIndex) .. " startWpIndex: " .. Dump(startWpIndex) .. " :: #route: " .. Dump(#route))
           if startWpIndex == #route or startWpIndex == #route-1 then
             -- add waypoint for end of track ...
             local endWp = endWpCoord:WaypointAir(
@@ -4135,6 +4181,8 @@ function DCAF_TrackFromWaypoint:Execute()
 
     self.Route = route
     self.Tanker.Group:Route(route)
+Debug("nisse - group: " .. self.Tanker.Group.GroupName .. " :: route (after): " .. DumpPrettyDeep(route))
+
 end
 
 function DCAF.Tanker:SetTrackFromWaypoint(nStartWp, nHeading, nLength, nBlock, rgbColor, sTrackName)
