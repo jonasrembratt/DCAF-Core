@@ -20,7 +20,7 @@ local function with_debug_info(table)
     return table
 end
 
-function DCAF.clone(template, deep)
+function DCAF.clone(template, deep, suppressDebugData)
     if not isBoolean(deep) then
         deep = true
     end
@@ -36,7 +36,9 @@ function DCAF.clone(template, deep)
 
     -- add debug information if applicable ...
     if DCAF.Debug then
-        return with_debug_info(cloned)
+        if not isBoolean(suppressDebugData) or suppressDebugData == false then
+            return with_debug_info(cloned)
+        end
     end
     return cloned
 end
@@ -328,6 +330,34 @@ function tableIsUnassigned(table)
     return table == nil or not next(table)
 end
 
+function dictCount(table)
+    if not isTable(table) then
+        error("dictionaryCount :: `table` is of type " .. type(table)) end
+    
+    local count = 0
+    for k, v in pairs(table) do
+        count = count+1
+    end
+    return count
+end
+
+function dictRandomKey(table, maxIndex)
+    if not isTable(table) then
+        error("dictionaryCount :: `table` is of type " .. type(table)) end
+
+    if not isNumber(maxIndex) then
+        maxIndex = dictCount(table)
+    end
+    local randomIndex = math.random(1, maxIndex)
+    local count = 1
+    for key, _ in pairs(table) do
+        if count == randomIndex then
+            return key
+        end
+        count = count + 1
+    end
+end
+
 function TraceIgnore(message, ...)
     Trace(message .. " :: IGNORES")
     return arg
@@ -473,6 +503,13 @@ GroupType = {
     Ship = "Ship",
     Ground = "Ground",
     Structure = "Structure",
+}
+
+AiSkill = {
+    Average = "Average", 
+    Good = "Good", 
+    High = "High", 
+    Excellent = "Excellent"
 }
 
 function Coalition.IsValid(value)
@@ -2039,6 +2076,22 @@ local _missionEventsHandlers = {
     _unitLeftZone = {},
 }
 
+local PlayersAndUnits = { -- dictionary
+    -- key = player name
+    -- value = #UNIT
+}
+
+function PlayersAndUnits:AddPlayer(sPlayerName, unit)
+    PlayersAndUnits[sPlayerName] = unit
+end
+
+function PlayersAndUnits:RemovePlayer(sPlayerName)
+    PlayersAndUnits[sPlayerName] = nil
+end
+
+function PlayersAndUnits:GetPlayerUnit(sPlayerName)
+    return PlayersAndUnits[sPlayerName]
+end
 
 local isMissionEventsListenerRegistered = false
 local _e = {}
@@ -2050,8 +2103,8 @@ function MissionEvents:Invoke(handlers, data)
 end
 
 function _e:onEvent( event )
-local deep = DumpPrettyOptions:New():Deep() -- nisse
---Debug("_e:onEvent-? :: event: " .. DumpPretty(event)) -- nisse
+-- local deep = DumpPrettyOptions:New():Deep() -- nisse
+-- Debug("_e:onEvent-? :: event: " .. DumpPrettyDeep(event, 2)) -- nisse
 
     if event.id == world.event.S_EVENT_MISSION_END then
         MissionEvents:Invoke( _missionEventsHandlers._missionEndHandlers, event )
@@ -2105,6 +2158,14 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
         return event
     end
 
+    if event.id == world.event.S_EVENT_BIRTH then
+        -- todo consider supporting MissionEvents:UnitSpawned(...)
+        
+        if isAssignedString(event.IniPlayerName) then
+            event.id = world.event.S_EVENT_PLAYER_ENTER_UNIT
+        end
+    end
+
     if event.id == world.event.S_EVENT_PLAYER_ENTER_UNIT then --  event
         if not event.initiator then
             return end -- weird!
@@ -2113,6 +2174,10 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
         if not unit then 
             return end -- weird!
 
+        if not isAssignedString(event.IniPlayerName) or PlayersAndUnits:GetPlayerUnit(event.IniPlayerName) then
+            return end
+        
+        PlayersAndUnits:AddPlayer(event.IniPlayerName, unit)
         MissionEvents:Invoke( _missionEventsHandlers._playerEnteredUnitHandlers, {
             time = MissionTime(),
             IniPlayerName = unit:GetPlayerName(),
@@ -2126,6 +2191,9 @@ local deep = DumpPrettyOptions:New():Deep() -- nisse
     end
 
     if event.id == world.event.S_EVENT_PLAYER_LEAVE_UNIT then
+        if isAssignedString(event.IniPlayerName) then
+            PlayersAndUnits:RemovePlayer(event.IniPlayerName)
+        end
         MissionEvents:Invoke( _missionEventsHandlers._playerLeftUnitHandlers, event )
     end
 
@@ -4114,7 +4182,7 @@ function DCAF_TrackFromWaypoint:Execute()
     local orbitTask = hasOrbitTask()
     if not orbitTask or orbitTask ~= startWpIndex then
         insertTask(self.Tanker.Group:TaskOrbit(startWpCoord, trackAltitude, Knots(self.Tanker.TrackSpeed), endWpCoord))
-        if orbitTask ~= startWpIndex then
+        if orbitTask and orbitTask ~= startWpIndex then
             Warning("DCAF.Tanker:SetTrackFromWaypoint :: there is an orbit task set to a different WP (" .. Dump(orbitTask) .. ") than the one starting the tanker track (" .. Dump(startWpIndex) .. ")") end
 
         self.Tanker.RTBWaypoint = startWpIndex+1 -- note, if 1st WP in track was also last waypoint in route, this will point 'outside' the route
@@ -4165,7 +4233,6 @@ function DCAF_TrackFromWaypoint:Execute()
             },
           })
           startWpIndex = startWpIndex+1          
-Debug("nisse - tacan :: tacanWpIndex: " .. Dump(tacanWpIndex) .. " startWpIndex: " .. Dump(startWpIndex) .. " :: #route: " .. Dump(#route))
           if startWpIndex == #route or startWpIndex == #route-1 then
             -- add waypoint for end of track ...
             local endWp = endWpCoord:WaypointAir(
@@ -4181,7 +4248,6 @@ Debug("nisse - tacan :: tacanWpIndex: " .. Dump(tacanWpIndex) .. " startWpIndex:
 
     self.Route = route
     self.Tanker.Group:Route(route)
-Debug("nisse - group: " .. self.Tanker.Group.GroupName .. " :: route (after): " .. DumpPrettyDeep(route))
 
 end
 
@@ -4320,6 +4386,7 @@ function DCAF.Tanker:SpawnReplacement(funcOnSpawned, nDelay)
     end
     return self
 end
+
 
 ----------------------------------------------------------------------------------------------
 

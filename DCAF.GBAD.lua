@@ -475,7 +475,7 @@ function SAM_AREA:WithSHORAD(template)
     return self
 end
 
---------------- F10 MENUS (great for training) ---------------
+----------------------------- F10 MENUS (great for training) -----------------------------
 
 local _menuBuiltFor = nil
 
@@ -616,4 +616,24 @@ function DCAF.GBAD:BuildF10GroupMenus(parentMenu, group)
             end)
         end
     end
+end
+
+
+------------------------------- GBAD BEHAVIOR -------------------------------
+
+DCAF.GBAD.HoldFireBehavior = {
+    Aspect = 45 -- degrees (holds fire when aspect between enemy aircraft and allied aircraft is less than this value)
+}
+
+DCAF.GBAD.AiBehavior = {
+    DisperseOnHARM = AiSkill.High,
+    HoldFire = { -- dictionary
+        -- key = #AiSkill
+        -- value = #DCAF.GBAD.HoldFireBehavior
+    },
+    Evade = true                    -- GBAD will evade by moving (if mobile) when threatened by a HARM shot
+}
+
+function SAM_AREA:WithAiBehavior(aiBehavior) -- #DCAF.GBAD.AiBehavior
+
 end
