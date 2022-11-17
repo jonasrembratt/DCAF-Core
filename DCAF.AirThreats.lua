@@ -34,6 +34,7 @@ local GroupState = {
     Group = nil,
     Options = {
         Distance = 60,
+        MaxOffsetAngle = 60,
         Altitude = DCAF.AirThreatAltitude.Level,
         Weapons = Weapons.Realistic,
         Behavior = Behavior.Aggressive,
@@ -131,9 +132,20 @@ local function applyOptions(banditGroup, waypoint, size, state, banditDisplayNam
     end
 end
 
+local function getRandomOffsetAngle(maxOffsetAngle)
+    if maxOffsetAngle == 0 then
+        return 0
+    end
+    local offsetAngle = math.random(0, maxOffsetAngle)
+    if offsetAngle > 0 and math.random(100) < 51 then
+        offsetAngle = -offsetAngle
+    end
+    return maxOffsetAngle
+end
+
 local function spawnBandits(info, size, state, banditDisplayName, distance, altitude, offsetAngle)
     if not isNumber(offsetAngle) then
-        offsetAngle = 0 
+        offsetAngle = getRandomOffsetAngle(state.Options.MaxOffsetAngle)
     end
     local blueHeading = state.Group:GetHeading() + offsetAngle
     if not isNumber(distance) then
@@ -187,6 +199,13 @@ local function buildMenus(state)
         for key, value in pairs(Distance) do
             MENU_GROUP_COMMAND:New(state.Group, key, distanceOptionsMenu, function()
                 state.Options.Distance = value
+                _rebuildMenus(state)
+            end)
+        end
+        local distanceOptionsMenu = MENU_GROUP:New(state.Group, "Max offset angle: " .. Dump(state.Options.MaxOffsetAngle).."°", state.Menus.Options)
+        for angle = 0, 80, 20 do
+            MENU_GROUP_COMMAND:New(state.Group, Dump(angle) .. "°", distanceOptionsMenu, function()
+                state.Options.MaxOffsetAngle = angle
                 _rebuildMenus(state)
             end)
         end
@@ -274,7 +293,7 @@ function DCAF.AirThreats:WithGroupMenus(menuText)
 end
 
 
-function DCAF.AirThreats:WithBanditGroup(sName, sGroup) 
+function DCAF.AirThreats:InitAdversary(sName, sGroup) 
     if not isAssignedString(sName) then
         error("DCAF.AirThreats:WithBandits :: unexpected `sName`: " .. DumpPretty(sName)) end
 
@@ -296,14 +315,14 @@ end
 
 DCAF.AirThreats.Randomization = {
     ClassName = "DCAF.AirThreats.Randomization",
-    MinInterval = 1,
-    MaxInterval = Minutes(2),
-    -- MinInterval = Minutes(1),
-    -- MaxInterval = Minutes(20),
+    -- MinInterval = 1,
+    -- MaxInterval = Minutes(2),
+    MinInterval = Minutes(1),
+    MaxInterval = Minutes(20),
     MinSize = 1,                        -- minimum size of spawned group
     MaxSize = 4,                        -- maximum size of spawned group
     MinCount = 1,                       -- minimum number of spawned groups per event
-    MaxCount = 3,                       -- maximum number of spawned groups per event
+    MaxCount = 2,                       -- maximum number of spawned groups per event
     Altitudes = {
         DCAF.AirThreatAltitude.High,
         DCAF.AirThreatAltitude.Medium,
@@ -314,7 +333,6 @@ DCAF.AirThreats.Randomization = {
     -- MaxAltitude = Feet(Altitude.High.MSL),
     MinDistance = NauticalMiles(40),
     MaxDistance = NauticalMiles(160),
-    MinOffsetAngle = 0,
     MaxOffsetAngle = 60,
     MaxEvents = 5,
     RemainingEvents = 5,
@@ -340,19 +358,11 @@ function DCAF.AirThreats.Randomization:WithDistance(min, max)
     return self
 end
 
-function DCAF.AirThreats.Randomization:WithOffsetAngle(min, max)
-    if not isNumber(min) then
-        error("DCAF.AirThreats.Randomization:WithOffsetAngle :: `min` must be a number but was: " .. DumpPretty(min)) end
+function DCAF.AirThreats.Randomization:WithMaxOffsetAngle(max)
+    if not isNumber(max) then
+        error("DCAF.AirThreats.Randomization:WithOffsetAngle :: `max` must be a number but was: " .. DumpPretty(max)) end
 
-    self.MinOffsetAngle = min
-    if isNumber(max) then
-        self.MaxOffsetAngle = max
-    else
-        self.MaxOffsetAngle = self.MaxOffsetAngle or min
-    end
-    if self.MinOffsetAngle > self.MaxOffsetAngle then
-        self.MinOffsetAngle, self.MaxOffsetAngle = swap(self.MinOffsetAngle, self.MaxOffsetAngle)
-    end
+    self.MaxOffsetAngle = max
     return self
 end
 
@@ -465,10 +475,7 @@ Debug("nisse - air threat randomize :: next event: " .. UTILS.SecondsToClock(tim
             local altitude = Feet(alt.MSL)
             local size = math.random(self.MinSize, self.MaxSize)
             local info = state.BanditGroups[key]
-            local offsetAngle = math.random(self.MinOffsetAngle, self.MaxOffsetAngle)
-            if offsetAngle > 0 and math.random(100) < 50 then
-                offsetAngle = -offsetAngle
-            end
+            local offsetAngle = getRandomOffsetAngle(self.MaxOffsetAngle)
             spawnBandits(info, size, state, key, distance, altitude, offsetAngle)
             key = dictRandomKey(state.BanditGroups, state.CountBanditGroups)
         end
