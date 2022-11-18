@@ -78,6 +78,26 @@ function isDictionary( value )
     return tableType == "dictionary"
 end
 
+function listClone(table, deep, startIndex, endIndex)
+    if not isList(table) then
+        error("tableClone :: `table` must be a list") end
+    if not isBoolean(deep) then
+        deep = false end
+    if not isNumber(startIndex) then
+        startIndex = 1  end
+    if not isNumber(endIndex) then
+        endIndex = #table end
+    
+    local clone = {}
+    local index = 1
+    for i = startIndex, endIndex, 1 do
+        clone[index] = table[i]
+        index = index+1
+    end
+    return clone
+end
+
+
 function isAssignedString( value )
     if not isString(value) then
         return false end

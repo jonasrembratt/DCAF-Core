@@ -30,6 +30,11 @@ DCAF.AirThreatAltitude = {
 
 local _airThreatRandomization
 
+local Spawners = { -- dictionary
+    -- key    = templat name
+    -- value  = #SPAWN
+}
+
 local GroupState = {
     Group = nil,
     Options = {
@@ -40,14 +45,15 @@ local GroupState = {
         Behavior = Behavior.Aggressive,
     },
     Randomization = nil,        -- #DCAF.AirThreats.Randomization
-    Spawned = {
+    Categories = { -- categorized adversaries
+        -- list of #DCAF.AirThreatCategory
+    },
+    Adversaries = { -- non-categorized adversaries
+        -- list of #AdversaryInfo
+    },
+    SpawnedAdversaries = {
         -- list of #GROUP
     },
-    BanditGroups = { -- dictionary
-        -- key = display name
-        -- value = #BanditGroupInfo
-    },
-    CountBanditGroups = 0,
     Menus = {
         Main = nil,
         Options = nil,
@@ -60,23 +66,73 @@ local GroupStateDict = { -- dictionary
     -- value = #GroupState
 }
 
-local BanditGroupInfo = {
-    Spawner = nil,              -- #SPAWN
+local AdversaryInfo = {
+    -- Spawner = nil,              -- #SPAWN
+    Name = nil,                 -- #string (adversary display name)
+    TemplateName = nil,         -- #string (adversary template name)
     Size = 0,                   -- #number (size of template)
 }
+
+function AdversaryInfo:Spawner()
+    return Spawners:Get(self.TemplateName)
+end
 
 local _isBuildingGroupMenus
 local _airCombatGroupMenuText
 
 DCAF.AirThreats = {
+    ClassName = "DCAF.AirThreats",
     IsStarted = false,
     IsBuildingGroupMenus = false,
     GroupMenuText = nil,
-    BanditGroups = { -- dictionary
-        -- key = display name
-        -- value = #BanditGroupInfo
+    Categories = { 
+        -- list of #DCAF.AirThreatCategory
+    },
+    Adversaries = {
+        -- list of #AdversaryInfo
     }
 }
+
+DCAF.AirThreatCategory = {
+    ClassName = "DCAF.AirThreatCategory",
+    Name = nil,
+    Group = nil,
+    Options = {
+        Distance = 60,
+        MaxOffsetAngle = 60,
+        Altitude = DCAF.AirThreatAltitude.Level,
+        Weapons = Weapons.Realistic,
+        Behavior = Behavior.Aggressive,
+    },
+    Adversaries = {
+        -- list of #BanditGroupInfo
+    },
+    SpawnedAdversaries = {
+        -- list of #GROUP
+    },
+    Menus = {
+        Main = nil,
+        Options = nil,
+        Spawn = nil
+    }
+}
+
+function Spawners:Get(sTemplateName)
+    local spawner = self[sTemplateName]
+    if not spawner then 
+        spawner = SPAWN:New(sTemplateName)
+        self[sTemplateName] = spawner
+    end
+    return spawner
+end
+
+function DCAF.AirThreatCategory:New(sCategoryName)
+    if not isAssignedString(sCategoryName) then
+        error("DCAF.AirThreatCategory:New :: `sCategoryName` must be an assigned string but was: " .. DumpPretty(sCategoryName)) end
+    local cat = DCAF.clone(DCAF.AirThreatCategory)
+    cat.Name = sCategoryName
+    return cat
+end
 
 function GroupState:New(group)
     local forGroup = getGroup(group)
@@ -85,10 +141,13 @@ function GroupState:New(group)
 
     local state = DCAF.clone(GroupState)
     state.Group = forGroup
-    state.Spawned = {}
+    state.SpawnedAdversaries = {}
     state.Randomization = _airThreatRandomization
-    state.BanditGroups = DCAF.clone(DCAF.AirThreats.BanditGroups, false, true)
-    state.CountBanditGroups = dictCount(state.BanditGroups)
+    state.Adversaries = DCAF.clone(DCAF.AirThreats.Adversaries, false, true)
+    state.Categories = DCAF.clone(DCAF.AirThreats.Categories, false, true)
+    for _, category in ipairs(state.Categories) do
+        category.Group = state.Group
+    end
     GroupStateDict[forGroup.GroupName] = state
     return state
 end
@@ -140,33 +199,35 @@ local function getRandomOffsetAngle(maxOffsetAngle)
     if offsetAngle > 0 and math.random(100) < 51 then
         offsetAngle = -offsetAngle
     end
-    return maxOffsetAngle
+    return offsetAngle
 end
 
-local function spawnBandits(info, size, state, banditDisplayName, distance, altitude, offsetAngle)
+local function spawnAdversaries(info, size, source, distance, altitude, offsetAngle)
     if not isNumber(offsetAngle) then
-        offsetAngle = getRandomOffsetAngle(state.Options.MaxOffsetAngle)
+        offsetAngle = getRandomOffsetAngle(source.Options.MaxOffsetAngle)
     end
-    local blueHeading = state.Group:GetHeading() + offsetAngle
+    local angle = (source.Group:GetHeading() + offsetAngle) % 360
     if not isNumber(distance) then
-        distance = NauticalMiles(state.Options.Distance)
+        distance = NauticalMiles(source.Options.Distance)
     end
-    local endCoord = state.Group:GetCoordinate()
-    local startCoord = endCoord:Translate(distance, blueHeading, true)
+    local endCoord = source.Group:GetCoordinate()
+    local startCoord = endCoord:Translate(distance, angle, true)
     if not isNumber(altitude) then
-        altitude = state.Group:GetAltitude()
+        altitude = source.Group:GetAltitude()
     end
-    if state.Options.Altitude.Name ~= DCAF.AirThreatAltitude.Level.Name then
-        altitude = Feet(state.Options.Altitude.MSL)
+    if source.Options.Altitude.Name ~= DCAF.AirThreatAltitude.Level.Name then
+        altitude = Feet(source.Options.Altitude.MSL)
     end
     startCoord:SetAltitude(altitude)
 
-    info.Spawner:InitGroupHeading((blueHeading - 180) % 360)
-    local banditGroup = info.Spawner:SpawnFromCoordinate(startCoord)
-    table.insert(state.Spawned, banditGroup)
-    local route = banditGroup:CopyRoute()
+    local spawner = info:Spawner()
+    spawner:InitGroupHeading((angle - 180) % 360)
+    local adversaryGroup = spawner:SpawnFromCoordinate(startCoord)
+Debug("nisse - spawned group: " .. adversaryGroup.GroupName)
+    table.insert(source.SpawnedAdversaries, adversaryGroup)
+    local route = adversaryGroup:CopyRoute()
     local wp0 = route[1]
-    local startCoord = endCoord:Translate(NauticalMiles(state.Options.Distance - 2), blueHeading, true)
+    local startCoord = endCoord:Translate(NauticalMiles(source.Options.Distance - 2), angle, true)
     local startWP = startCoord:WaypointAir(
         COORDINATE.WaypointAltType.BARO,
         COORDINATE.WaypointType.TurningPoint,
@@ -177,10 +238,14 @@ local function spawnBandits(info, size, state, banditDisplayName, distance, alti
         COORDINATE.WaypointType.TurningPoint,
         COORDINATE.WaypointAction.TurningPoint,
         wp0.Speed)
-    applyOptions(banditGroup, startWP, size, state, banditDisplayName)
+    applyOptions(adversaryGroup, startWP, size, source, info.Name)
     route = { startWP, endWP }
-    SetRoute(banditGroup, route)
+    SetRoute(adversaryGroup, route)
 end
+
+-- ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+--                                                        MENUS
+-- ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 local _rebuildMenus
 local function buildMenus(state)
@@ -189,85 +254,122 @@ local function buildMenus(state)
     end
 
     -- Options
-    if not state.Menus.Options then
-        state.Menus.Options = MENU_GROUP:New(state.Group, "Options", state.Menus.Main)
-    else
-        state.Menus.Options:RemoveSubMenus()
+    local function buildOptionsMenus(source, parentMenu)
+        if not source.Menus.Options then
+            source.Menus.Options = MENU_GROUP:New(source.Group, "OPTIONS", parentMenu)
+        else
+            source.Menus.Options:RemoveSubMenus()
+        end
+            -- Distance
+            local distanceOptionsMenu = MENU_GROUP:New(source.Group, "Distance: " .. tostring(source.Options.Distance) .. "nm", source.Menus.Options)
+            for key, value in pairs(Distance) do
+                MENU_GROUP_COMMAND:New(source.Group, key, distanceOptionsMenu, function()
+                    source.Options.Distance = value
+                    _rebuildMenus(source)
+                end)
+            end
+            local distanceOptionsMenu = MENU_GROUP:New(source.Group, "Max offset angle: " .. Dump(source.Options.MaxOffsetAngle).."°", source.Menus.Options)
+            for angle = 0, 80, 20 do
+                MENU_GROUP_COMMAND:New(source.Group, Dump(angle) .. "°", distanceOptionsMenu, function()
+                    source.Options.MaxOffsetAngle = angle
+                    _rebuildMenus(source)
+                end)
+            end
+            -- Altitude
+            local altitudeOptionsMenu = MENU_GROUP:New(source.Group, "Altitude: " .. source.Options.Altitude.Name, source.Menus.Options)
+            for key, value in pairs(DCAF.AirThreatAltitude) do
+                MENU_GROUP_COMMAND:New(source.Group, key, altitudeOptionsMenu, function()
+                    source.Options.Altitude = value
+                    _rebuildMenus(source)
+                end)
+            end
+            -- Weapons
+            local weaponsOptionsMenu = MENU_GROUP:New(source.Group, "Weapons: " .. source.Options.Weapons, source.Menus.Options)
+            for key, value in pairs(Weapons) do
+                MENU_GROUP_COMMAND:New(source.Group, value, weaponsOptionsMenu, function()
+                    source.Options.Weapons = value
+                    _rebuildMenus(source)
+                end)
+            end
+            -- Behavior
+            local behaviorOptionsMenu = MENU_GROUP:New(source.Group, "Behavior: " .. source.Options.Behavior, source.Menus.Options)
+            for key, value in pairs(Behavior) do
+                MENU_GROUP_COMMAND:New(source.Group, value, behaviorOptionsMenu, function()
+                    source.Options.Behavior = value
+                    _rebuildMenus(source)
+                end)
+            end        
     end
-        -- Distance
-        local distanceOptionsMenu = MENU_GROUP:New(state.Group, "Distance: " .. tostring(state.Options.Distance) .. "nm", state.Menus.Options)
-        for key, value in pairs(Distance) do
-            MENU_GROUP_COMMAND:New(state.Group, key, distanceOptionsMenu, function()
-                state.Options.Distance = value
-                _rebuildMenus(state)
-            end)
-        end
-        local distanceOptionsMenu = MENU_GROUP:New(state.Group, "Max offset angle: " .. Dump(state.Options.MaxOffsetAngle).."°", state.Menus.Options)
-        for angle = 0, 80, 20 do
-            MENU_GROUP_COMMAND:New(state.Group, Dump(angle) .. "°", distanceOptionsMenu, function()
-                state.Options.MaxOffsetAngle = angle
-                _rebuildMenus(state)
-            end)
-        end
-        -- Altitude
-        local altitudeOptionsMenu = MENU_GROUP:New(state.Group, "Altitude: " .. state.Options.Altitude.Name, state.Menus.Options)
-        for key, value in pairs(DCAF.AirThreatAltitude) do
-            MENU_GROUP_COMMAND:New(state.Group, key, altitudeOptionsMenu, function()
-                state.Options.Altitude = value
-                _rebuildMenus(state)
-            end)
-        end
-        -- Weapons
-        local weaponsOptionsMenu = MENU_GROUP:New(state.Group, "Weapons: " .. state.Options.Weapons, state.Menus.Options)
-        for key, value in pairs(Weapons) do
-            MENU_GROUP_COMMAND:New(state.Group, value, weaponsOptionsMenu, function()
-                state.Options.Weapons = value
-                _rebuildMenus(state)
-            end)
-        end
-        -- Behavior
-        local behaviorOptionsMenu = MENU_GROUP:New(state.Group, "Behavior: " .. state.Options.Behavior, state.Menus.Options)
-        for key, value in pairs(Behavior) do
-            MENU_GROUP_COMMAND:New(state.Group, value, behaviorOptionsMenu, function()
-                state.Options.Behavior = value
-                _rebuildMenus(state)
-            end)
-        end
-
-    -- Options End
+    -- uncategorized options ...
+    buildOptionsMenus(state, state.Menus.Main)
 
     -- Spawn: 
     if state.Menus.Spawn then 
         return end
     
     state.Menus.Spawn = MENU_GROUP:New(state.Group, "Spawn", state.Menus.Main)
-    for displayName, info in pairs(state.BanditGroups) do
-        local sizeName
-        local spawnGroupMenu = MENU_GROUP:New(state.Group, displayName, state.Menus.Spawn)
-        for i = 1, info.Size, 1 do
-            if i == 1 then
-                sizeName = "Singleton"
-            elseif i == 2 then
-                sizeName = "Pair"
-            elseif i == 3 then
-                sizeName = "Threeship"
-            elseif i == 4 then
-                sizeName = "Fourship"
-            else
-                sizeName = tostring(i)
+
+    local function buildSpawnMenus(adversaries, parentMenu, source)
+        local MaxAdversariesAtMenuLevel = 7
+        local menuIndex = 0
+        for _, info in ipairs(adversaries) do
+            menuIndex = menuIndex+1
+            if menuIndex > MaxAdversariesAtMenuLevel then
+                -- create a 'More ...' sub menu to allow for all adversarier ...
+                local clonedAdversaries = listClone(adversaries, false, menuIndex)
+                local moreMenu = MENU_GROUP:New(source.Group, "More", parentMenu)
+                buildSpawnMenus(clonedAdversaries, moreMenu, source)
+                return
             end
-            MENU_GROUP_COMMAND:New(state.Group, sizeName, spawnGroupMenu, function()
-                spawnBandits(info, i, state, displayName)
-            end)
+            local displayName = info.Name
+            local spawnMenu = MENU_GROUP:New(source.Group, displayName, parentMenu)
+            for i = 1, info.Size, 1 do
+                local sizeName
+                if i == 1 then
+                    sizeName = "Singleton"
+                elseif i == 2 then
+                    sizeName = "Pair"
+                elseif i == 3 then
+                    sizeName = "Threeship"
+                elseif i == 4 then
+                    sizeName = "Fourship"
+                else
+                    sizeName = tostring(i)
+                end
+                MENU_GROUP_COMMAND:New(source.Group, sizeName, spawnMenu, function()
+                    spawnAdversaries(info, i, source)
+                end)
+            end
         end
     end
 
-    -- Despawn:
-    MENU_GROUP_COMMAND:New(state.Group, "Despawn all", state.Menus.Main, function()
-        for _, banditGroup in pairs(state.Spawned) do
-            banditGroup:Destroy()
+    -- non-categories adversaries ...
+    buildSpawnMenus(state.Adversaries, state.Menus.Spawn, state)
+
+    local function despawnAll(source)
+        for _, group in ipairs(source.SpawnedAdversaries) do
+            group:Destroy()
         end
-        state.Spawned = {}
+        source.SpawnedAdversaries = {}
+    end
+
+    -- categoried adversaries ...
+    for _, category in ipairs(state.Categories) do
+        local categoryMenu = MENU_GROUP:New(state.Group, category.Name, state.Menus.Main)
+        buildOptionsMenus(category, categoryMenu)
+        buildSpawnMenus(category.Adversaries, categoryMenu, category)
+        MENU_GROUP_COMMAND:New(category.Group, "-- Despawn All --", categoryMenu, function()
+            despawnAll(category)
+        end)
+    end
+
+    -- Despawn:
+    MENU_GROUP_COMMAND:New(state.Group, "-- Despawn All --", state.Menus.Main, function()
+        despawnAll(state)
+        for _, category in ipairs(state.Categories) do
+            despawnAll(category)
+        end
+        state.SpawnedAdversaries = {}
     end)
 
 end
@@ -292,23 +394,43 @@ function DCAF.AirThreats:WithGroupMenus(menuText)
     return self
 end
 
-
-function DCAF.AirThreats:InitAdversary(sName, sGroup) 
+local function initAdversary(object, sName, sGroup)
+    -- as both #DCAF.AirThreats object and #DCAF.AirThreatCategory can init adversaries, this method allows both to do so
+    local self = object
     if not isAssignedString(sName) then
         error("DCAF.AirThreats:WithBandits :: unexpected `sName`: " .. DumpPretty(sName)) end
 
-    if DCAF.AirThreats.BanditGroups[sName] then
+    if tableIndexOf(self.Adversaries, function(adversary) return adversary.Name == sName end) then
         error("DCAF.AirThreats:WithBandits :: group was already added: " .. DumpPretty(sName)) end
     
     local banditGroup = getGroup(sGroup)
     if not banditGroup then
         error("DCAF.AirThreats:WithBandits :: cannot resolve group from: " .. DumpPretty(sGroup)) end
 
-    local info = DCAF.clone(BanditGroupInfo)
+    local info = DCAF.clone(AdversaryInfo)
+    info.Name = sName
+    info.TemplateName = banditGroup.GroupName
     info.Size = #banditGroup:GetUnits()
-    info.Spawner = SPAWN:New(banditGroup.GroupName)
-    DCAF.AirThreats.BanditGroups[sName] = info
+    self._adversayIndex = (self._adversayIndex or 0) + 1
+    table.insert(self.Adversaries, info)
     return self
+end
+
+function DCAF.AirThreats:InitAdversary(sName, sGroup) 
+    return initAdversary(self, sName, sGroup)
+end
+
+function DCAF.AirThreats:InitCategory(category)
+    if not isClass(category, DCAF.AirThreatCategory.ClassName) then
+        error("DCAF.AirThreats:InitCategory :: expected class '" .. DCAF.AirThreatCategory.ClassName .. "' but got: " .. DumpPretty(category)) end
+
+    table.insert(self.Categories, category)
+    return self
+end
+
+function DCAF.AirThreatCategory:InitAdversary(sName, sGroup)
+    self._adversayIndex = (self._adversayIndex or 0) + 1
+    return initAdversary(self, sName, sGroup)
 end
 
 --------------------------------- RANDOMIZED AIR THREATS ---------------------------------
@@ -422,14 +544,14 @@ function DCAF.AirThreats.Randomization:WithGroups(...)
         local group = getGroup(arg[i])
         if not group then
             if isAssignedString(arg[i]) then
-                group = DCAF.AirThreats.BanditGroups[arg[i]]
+                group = DCAF.AirThreats.Adversaries[arg[i]]
             end
             if not group then
                 error("DCAF.AirThreats.Randomization:WithGroups :: cannot resolve group from: " .. DumpPretty(arg[i]))  end
             table.insert(group)
         end
     end
-    self.BanditGroups = groups
+    self.Adversaries = groups
     return self
 end
 
@@ -463,21 +585,21 @@ Debug("nisse - air threat randomize :: next event: " .. UTILS.SecondsToClock(tim
             return
         end
 
-        local now = UTILS.SecondsOfToday()
-        local key = dictRandomKey(state.BanditGroups, state.CountBanditGroups)
-        if not key or self.RemainingEvents == 0 then
+        if self.RemainingEvents == 0 then
             return end
 
+        local now = UTILS.SecondsOfToday()
+        local index = math.random(1, #state.Adversaries)
         local count = math.random(self.MinCount, self.MaxCount)
         for i = 1, count, 1 do
             local distance = math.random(self.MinDistance, self.MaxDistance)
             local alt = self:GetAltitude()
             local altitude = Feet(alt.MSL)
             local size = math.random(self.MinSize, self.MaxSize)
-            local info = state.BanditGroups[key]
+            local info = state.Adversaries[index]
             local offsetAngle = getRandomOffsetAngle(self.MaxOffsetAngle)
-            spawnBandits(info, size, state, key, distance, altitude, offsetAngle)
-            key = dictRandomKey(state.BanditGroups, state.CountBanditGroups)
+            spawnAdversaries(info, size, state, distance, altitude, offsetAngle)
+            index = math.random(1, #state.Adversaries)
         end
         self.RemainingEvents = self.RemainingEvents-1             
         if self.RemainingEvents == 0 then
@@ -496,7 +618,8 @@ Debug("nisse - air threat randomize :: next event: " .. UTILS.SecondsToClock(tim
 
 end
 
-function DCAF.AirThreats:WithRandomization(randomization)
+--- Automatically spawns adversaries for (player) groups at random intervals as long as it is airborne
+function DCAF.AirThreats:WithGroupRandomization(randomization)
     if randomization == nil then
         randomization = DCAF.AirThreats.Randomization:New()
     end
