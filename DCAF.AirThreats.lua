@@ -37,13 +37,7 @@ local Spawners = { -- dictionary
 
 local GroupState = {
     Group = nil,
-    Options = {
-        Distance = 60,
-        MaxOffsetAngle = 60,
-        Altitude = DCAF.AirThreatAltitude.Level,
-        Weapons = Weapons.Realistic,
-        Behavior = Behavior.Aggressive,
-    },
+    Options = nil,
     Randomization = nil,        -- #DCAF.AirThreats.Randomization
     Categories = { -- categorized adversaries
         -- list of #DCAF.AirThreatCategory
@@ -97,13 +91,7 @@ DCAF.AirThreatCategory = {
     ClassName = "DCAF.AirThreatCategory",
     Name = nil,
     Group = nil,
-    Options = {
-        Distance = 60,
-        MaxOffsetAngle = 60,
-        Altitude = DCAF.AirThreatAltitude.Level,
-        Weapons = Weapons.Realistic,
-        Behavior = Behavior.Aggressive,
-    },
+    Options = nil,
     Adversaries = {
         -- list of #BanditGroupInfo
     },
@@ -117,6 +105,15 @@ DCAF.AirThreatCategory = {
     }
 }
 
+DCAF.AirThreatOptions = {
+    ClassName = "DCAF.AirThreatOptions",
+    _fallback = nil,
+    _distance = nil,
+    _maxOffsetAngle = nil,
+    _altitude = nil,
+    _behavior = nil,
+}
+
 function Spawners:Get(sTemplateName)
     local spawner = self[sTemplateName]
     if not spawner then 
@@ -126,12 +123,76 @@ function Spawners:Get(sTemplateName)
     return spawner
 end
 
+function DCAF.AirThreatOptions:New(fallback)
+    local options = DCAF.clone(DCAF.AirThreatOptions)
+    options._fallback = fallback or {}
+    return options
+end
+
+function DCAF.AirThreatOptions:Default()
+    local options = DCAF.AirThreatOptions:New()
+    options._distance = 60
+    options._maxOffsetAngle = 60
+    options._altitude = DCAF.AirThreatAltitude.Level
+    options._behavior = Behavior.Aggressive
+    return options
+end
+
+function DCAF.AirThreatOptions:Reset()
+    self._distance = nil
+    self._altitude = nil
+    self._maxOffsetAngle = nil
+    self._behavior = nil
+    return self
+end
+
+function DCAF.AirThreatOptions:GetDistance()
+    return self._distance or self._fallback._distance or 60, self._distance == nil and self._fallback._distance ~= nil
+end
+function DCAF.AirThreatOptions:SetDistance(value)
+    self._distance = value
+    return self
+end
+
+function DCAF.AirThreatOptions:GetMaxOffsetAngle()
+    return self._maxOffsetAngle or self._fallback._maxOffsetAngle or 60, self._maxOffsetAngle == nil and self._fallback._maxOffsetAngle ~= nil
+end
+function DCAF.AirThreatOptions:SetMaxOffsetAngle(value)
+    self._maxOffsetAngle = value
+    return self
+end
+
+function DCAF.AirThreatOptions:GetAltitude()
+    return self._altitude or self._fallback._altitude or DCAF.AirThreatAltitude.Level, self._altitude == nil and self._fallback._altitude ~= nil
+end
+function DCAF.AirThreatOptions:SetAltitude(value)
+    self._altitude = value
+    return self
+end
+
+function DCAF.AirThreatOptions:GetBehavior()
+    return self._behavior or self._fallback._behavior or Behavior.Aggressive, self._behavior == nil and self._fallback._behavior ~= nil
+end
+function DCAF.AirThreatOptions:SetBehavior(value)
+    self._behavior = value
+    return self
+end
+
+
 function DCAF.AirThreatCategory:New(sCategoryName)
     if not isAssignedString(sCategoryName) then
         error("DCAF.AirThreatCategory:New :: `sCategoryName` must be an assigned string but was: " .. DumpPretty(sCategoryName)) end
     local cat = DCAF.clone(DCAF.AirThreatCategory)
     cat.Name = sCategoryName
     return cat
+end
+
+function DCAF.AirThreatCategory:InitOptions(options)
+    if not isClass(options, DCAF.AirThreatOptions.ClassName) then
+        error("DCAF.AirThreatCategory:InitOptions :: expected type '"..DCAF.AirThreatOptions.ClassName.."' but got: " .. DumpPretty(options)) end
+
+    self.Options = options
+    return self
 end
 
 function GroupState:New(group)
@@ -141,52 +202,59 @@ function GroupState:New(group)
 
     local state = DCAF.clone(GroupState)
     state.Group = forGroup
+    state.Options = DCAF.AirThreatOptions:Default()
     state.SpawnedAdversaries = {}
     state.Randomization = _airThreatRandomization
     state.Adversaries = DCAF.clone(DCAF.AirThreats.Adversaries, false, true)
     state.Categories = DCAF.clone(DCAF.AirThreats.Categories, false, true)
     for _, category in ipairs(state.Categories) do
         category.Group = state.Group
+        if category.Options == nil then
+            category.Options = DCAF.AirThreatOptions:New(state.Options)
+        else
+            category.Options._fallback = state.Options
+        end
     end
     GroupStateDict[forGroup.GroupName] = state
     return state
 end
 
-local function applyOptions(banditGroup, waypoint, size, state, banditDisplayName)
+local function applyOptions(adversaryGroup, waypoint, size, source, banditDisplayName)
     -- size
-    local units = banditGroup:GetUnits()
+    local units = adversaryGroup:GetUnits()
     if #units > size then
         for i = size+1, #units, 1 do
             units[i]:Destroy()
         end
     end
 
-    banditGroup:ClearTasks()
+    adversaryGroup:ClearTasks()
     local task 
-    if state.Options.Behavior == Behavior.Aggressive then
+    local behavior = source.Options:GetBehavior()
+    if behavior == Behavior.Aggressive then
         if isAssignedString(banditDisplayName) then
-            MessageTo(state.Group, Dump(size) .. " x " .. banditDisplayName .. " attacks " .. state.Group.GroupName)
+            MessageTo(source.Group, Dump(size) .. " x " .. banditDisplayName .. " attacks " .. source.Group.GroupName)
         end
-        task = banditGroup:TaskAttackGroup(state.Group)
-    elseif state.Options.Behavior == Behavior.Defensive then
+        task = adversaryGroup:TaskAttackGroup(source.Group)
+    elseif behavior == Behavior.Defensive then
         if isAssignedString(banditDisplayName) then
-            MessageTo(state.Group, Dump(size) .. " x " .. banditDisplayName .. " is defensive")
+            MessageTo(source.Group, Dump(size) .. " x " .. banditDisplayName .. " is defensive")
         end
-        ROEDefensive(banditGroup)
-    elseif state.Options.Behavior == Behavior.SittingDuck then
+        ROEDefensive(adversaryGroup)
+    elseif behavior == Behavior.SittingDuck then
         if isAssignedString(banditDisplayName) then
-            MessageTo(state.Group, Dump(size) .. " x " .. banditDisplayName .. " is sitting ducks")
+            MessageTo(source.Group, Dump(size) .. " x " .. banditDisplayName .. " is sitting ducks")
         end
-        ROEHoldFire(banditGroup)
-        banditGroup:OptionROTNoReaction()
+        ROEHoldFire(adversaryGroup)
+        adversaryGroup:OptionROTNoReaction()
     else
-        error("applyOptions :: unsupported behavior: " .. DumpPretty(state.Options.Behavior))
+        error("applyOptions :: unsupported behavior: " .. DumpPretty(behavior))
     end
     if task then
         if #task > 0 then
-            waypoint.task = banditGroup:TaskCombo(task)
+            waypoint.task = adversaryGroup:TaskCombo(task)
         else
-            waypoint.task = banditGroup:TaskCombo({ task })
+            waypoint.task = adversaryGroup:TaskCombo({ task })
         end    
     end
 end
@@ -204,30 +272,31 @@ end
 
 local function spawnAdversaries(info, size, source, distance, altitude, offsetAngle)
     if not isNumber(offsetAngle) then
-        offsetAngle = getRandomOffsetAngle(source.Options.MaxOffsetAngle)
+        offsetAngle = getRandomOffsetAngle(source.Options:GetMaxOffsetAngle())
     end
-    local angle = (source.Group:GetHeading() + offsetAngle) % 360
     if not isNumber(distance) then
-        distance = NauticalMiles(source.Options.Distance)
+        distance = NauticalMiles(source.Options:GetDistance())
     end
     local endCoord = source.Group:GetCoordinate()
+    local angle = (source.Group:GetHeading() + offsetAngle) % 360
     local startCoord = endCoord:Translate(distance, angle, true)
     if not isNumber(altitude) then
-        altitude = source.Group:GetAltitude()
-    end
-    if source.Options.Altitude.Name ~= DCAF.AirThreatAltitude.Level.Name then
-        altitude = Feet(source.Options.Altitude.MSL)
+        altitude = source.Options:GetAltitude()
+        if altitude.Name == DCAF.AirThreatAltitude.Level.Name then
+            altitude = source.Group:GetAltitude()
+        else
+            altitude = Feet(altitude.MSL)
+        end
     end
     startCoord:SetAltitude(altitude)
 
     local spawner = info:Spawner()
     spawner:InitGroupHeading((angle - 180) % 360)
     local adversaryGroup = spawner:SpawnFromCoordinate(startCoord)
-Debug("nisse - spawned group: " .. adversaryGroup.GroupName)
     table.insert(source.SpawnedAdversaries, adversaryGroup)
     local route = adversaryGroup:CopyRoute()
     local wp0 = route[1]
-    local startCoord = endCoord:Translate(NauticalMiles(source.Options.Distance - 2), angle, true)
+    local startCoord = endCoord:Translate(distance - NauticalMiles(2), angle, true)
     local startWP = startCoord:WaypointAir(
         COORDINATE.WaypointAltType.BARO,
         COORDINATE.WaypointType.TurningPoint,
@@ -260,45 +329,60 @@ local function buildMenus(state)
         else
             source.Menus.Options:RemoveSubMenus()
         end
+            local function displayValue(value, suffix, isFallback)
+                if isFallback then
+                    return '[' .. Dump(value) .. (suffix or '') .. ']'
+                else
+                    return Dump(value) .. suffix or ''
+                end
+            end
+
+            -- Reset All Options
+            MENU_GROUP_COMMAND:New(source.Group, "-- RESET --", source.Menus.Options, function()
+                source.Options:Reset()
+                _rebuildMenus(source)
+            end)
+            
             -- Distance
-            local distanceOptionsMenu = MENU_GROUP:New(source.Group, "Distance: " .. tostring(source.Options.Distance) .. "nm", source.Menus.Options)
+            local distance, isFallback = source.Options:GetDistance()
+            local distanceOptionsMenu = MENU_GROUP:New(source.Group, "Distance: " .. displayValue(distance, 'nm', isFallback), source.Menus.Options)
             for key, value in pairs(Distance) do
                 MENU_GROUP_COMMAND:New(source.Group, key, distanceOptionsMenu, function()
-                    source.Options.Distance = value
+                    source.Options:SetDistance(value)
                     _rebuildMenus(source)
                 end)
             end
-            local distanceOptionsMenu = MENU_GROUP:New(source.Group, "Max offset angle: " .. Dump(source.Options.MaxOffsetAngle).."°", source.Menus.Options)
+
+            -- Mas Offset Angle ...
+            local maxOffsetAngle, isFallback = source.Options:GetMaxOffsetAngle()
+            local distanceOptionsMenu = MENU_GROUP:New(source.Group, "Max offset angle: " .. displayValue(maxOffsetAngle, '°', isFallback), source.Menus.Options)
             for angle = 0, 80, 20 do
                 MENU_GROUP_COMMAND:New(source.Group, Dump(angle) .. "°", distanceOptionsMenu, function()
-                    source.Options.MaxOffsetAngle = angle
+                    source.Options:SetMaxOffsetAngle(angle)
                     _rebuildMenus(source)
                 end)
             end
+
             -- Altitude
-            local altitudeOptionsMenu = MENU_GROUP:New(source.Group, "Altitude: " .. source.Options.Altitude.Name, source.Menus.Options)
+            local altitude, isFallback = source.Options:GetAltitude()
+            local altitudeOptionsMenu = MENU_GROUP:New(source.Group, "Altitude: " .. displayValue(source.Options:GetAltitude().Name, '', isFallback), source.Menus.Options)
             for key, value in pairs(DCAF.AirThreatAltitude) do
                 MENU_GROUP_COMMAND:New(source.Group, key, altitudeOptionsMenu, function()
-                    source.Options.Altitude = value
+                    source.Options:SetAltitude(value)
                     _rebuildMenus(source)
                 end)
             end
-            -- Weapons
-            local weaponsOptionsMenu = MENU_GROUP:New(source.Group, "Weapons: " .. source.Options.Weapons, source.Menus.Options)
-            for key, value in pairs(Weapons) do
-                MENU_GROUP_COMMAND:New(source.Group, value, weaponsOptionsMenu, function()
-                    source.Options.Weapons = value
-                    _rebuildMenus(source)
-                end)
-            end
+
             -- Behavior
-            local behaviorOptionsMenu = MENU_GROUP:New(source.Group, "Behavior: " .. source.Options.Behavior, source.Menus.Options)
+            local behavior, isFallback = source.Options:GetBehavior()
+            local behaviorOptionsMenu = MENU_GROUP:New(source.Group, "Behavior: " .. displayValue(behavior, '', isFallback), source.Menus.Options)
             for key, value in pairs(Behavior) do
                 MENU_GROUP_COMMAND:New(source.Group, value, behaviorOptionsMenu, function()
-                    source.Options.Behavior = value
+                    source.Options:SetBehavior(value)
                     _rebuildMenus(source)
                 end)
-            end        
+            end
+
     end
     -- uncategorized options ...
     buildOptionsMenus(state, state.Menus.Main)
@@ -307,8 +391,6 @@ local function buildMenus(state)
     if state.Menus.Spawn then 
         return end
     
-    state.Menus.Spawn = MENU_GROUP:New(state.Group, "Spawn", state.Menus.Main)
-
     local function buildSpawnMenus(adversaries, parentMenu, source)
         local MaxAdversariesAtMenuLevel = 7
         local menuIndex = 0
@@ -344,7 +426,10 @@ local function buildMenus(state)
     end
 
     -- non-categories adversaries ...
-    buildSpawnMenus(state.Adversaries, state.Menus.Spawn, state)
+    if #state.Adversaries > 0 then
+        state.Menus.Spawn = MENU_GROUP:New(state.Group, "Spawn", state.Menus.Main)
+        buildSpawnMenus(state.Adversaries, state.Menus.Spawn, state)
+    end
 
     local function despawnAll(source)
         for _, group in ipairs(source.SpawnedAdversaries) do
