@@ -6,7 +6,7 @@ local Weapons = {
     Realistic = "RDR + IR + Guns"
 }
 
-local Behavior = {
+DCAF.AirThreatBehavior = {
     SittingDuck = "Sitting duck",
     Defensive = "Defensive",
     Aggressive = "Aggressive"
@@ -134,7 +134,7 @@ function DCAF.AirThreatOptions:Default()
     options._distance = 60
     options._maxOffsetAngle = 60
     options._altitude = DCAF.AirThreatAltitude.Level
-    options._behavior = Behavior.Aggressive
+    options._behavior = DCAF.AirThreatBehavior.Aggressive
     return options
 end
 
@@ -171,7 +171,7 @@ function DCAF.AirThreatOptions:SetAltitude(value)
 end
 
 function DCAF.AirThreatOptions:GetBehavior()
-    return self._behavior or self._fallback._behavior or Behavior.Aggressive, self._behavior == nil and self._fallback._behavior ~= nil
+    return self._behavior or self._fallback._behavior or DCAF.AirThreatBehavior.Aggressive, self._behavior == nil and self._fallback._behavior ~= nil
 end
 function DCAF.AirThreatOptions:SetBehavior(value)
     self._behavior = value
@@ -231,17 +231,17 @@ local function applyOptions(adversaryGroup, waypoint, size, source, banditDispla
     adversaryGroup:ClearTasks()
     local task 
     local behavior = source.Options:GetBehavior()
-    if behavior == Behavior.Aggressive then
+    if behavior == DCAF.AirThreatBehavior.Aggressive then
         if isAssignedString(banditDisplayName) then
             MessageTo(source.Group, Dump(size) .. " x " .. banditDisplayName .. " attacks " .. source.Group.GroupName)
         end
         task = adversaryGroup:TaskAttackGroup(source.Group)
-    elseif behavior == Behavior.Defensive then
+    elseif behavior == DCAF.AirThreatBehavior.Defensive then
         if isAssignedString(banditDisplayName) then
             MessageTo(source.Group, Dump(size) .. " x " .. banditDisplayName .. " is defensive")
         end
         ROEDefensive(adversaryGroup)
-    elseif behavior == Behavior.SittingDuck then
+    elseif behavior == DCAF.AirThreatBehavior.SittingDuck then
         if isAssignedString(banditDisplayName) then
             MessageTo(source.Group, Dump(size) .. " x " .. banditDisplayName .. " is sitting ducks")
         end
@@ -282,13 +282,27 @@ local function spawnAdversaries(info, size, source, distance, altitude, offsetAn
     local startCoord = endCoord:Translate(distance, angle, true)
     if not isNumber(altitude) then
         altitude = source.Options:GetAltitude()
-        if altitude.Name == DCAF.AirThreatAltitude.Level.Name then
-            altitude = source.Group:GetAltitude()
+        local variation
+        if altitude.Name == DCAF.AirThreatAltitude.High.Name then
+            variation = math.random(0, 5) * 1000
+            altitude = Feet(altitude.MSL - variation)
+        elseif altitude.Name == DCAF.AirThreatAltitude.Level.Name then
+            variation = math.random(0, 4) * 1000
+            if math.random(100) < 50 then
+                variation = -variation
+            end
+            altitude = source.Group:GetAltitude() + Feet(variation)
         else
-            altitude = Feet(altitude.MSL)
+            variation = math.random(0, 5) * 1000
+            if math.random(100) < 50 then
+                variation = -variation
+            end
+            altitude = math.max(Feet(300), Feet(altitude.MSL + variation))
+
         end
     end
     startCoord:SetAltitude(altitude)
+    endCoord:SetAltitude(altitude)
 
     local spawner = info:Spawner()
     spawner:InitGroupHeading((angle - 180) % 360)
@@ -376,7 +390,7 @@ local function buildMenus(state)
             -- Behavior
             local behavior, isFallback = source.Options:GetBehavior()
             local behaviorOptionsMenu = MENU_GROUP:New(source.Group, "Behavior: " .. displayValue(behavior, '', isFallback), source.Menus.Options)
-            for key, value in pairs(Behavior) do
+            for key, value in pairs(DCAF.AirThreatBehavior) do
                 MENU_GROUP_COMMAND:New(source.Group, value, behaviorOptionsMenu, function()
                     source.Options:SetBehavior(value)
                     _rebuildMenus(source)
