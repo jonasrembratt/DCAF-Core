@@ -2550,21 +2550,6 @@ function EnableAirPolicing( options ) -- todo consider allowing filtering which 
         if policeGroup:AddPoliceUnit(unit, options) then
             Trace("EnableAirPolicing :: player ("..event.IniPlayerName..") entered "..event.IniUnitName.." as police unit of group " .. event.IniGroupName)
         end
-        -- local group = getGroup( event.IniGroupName ) obsolete
-        -- if (group ~= null) then 
-        --     local isPolicing, pg = policeGroup:isPolicing(group)
-        --     if (isPolicing) then
-        --         if not AirPolicing.policeUnitState then
-        --             Trace("EnableAirPolicing :: player ("..event.IniPlayerName..") entered "..event.IniUnitName.." :: group is already air police: "..event.IniGroupName)
-        --             return
-        --         end
-        --         Trace("EnableAirPolicing :: player ("..event.IniPlayerName..") entered "..event.IniUnitName.." :: group is already air police: "..event.IniGroupName)
-        --         pg:AddPoliceUnit(event.IniUnit, options)
-        --         return
-        --     end
-        --     policeGroup:New(group, options)
-        --     Trace("EnableAirPolicing :: player ("..event.IniPlayerName..") entered "..event.IniUnitName.." :: air policing options added for group "..event.IniGroupName)
-        -- end
     end)
 
     -- remove policing features for player as he/she leaves airplane ...

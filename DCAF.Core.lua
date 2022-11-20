@@ -268,10 +268,17 @@ function concatList(list, separator, itemSerializeFunc)
         if count > 0 then
             s = s .. separator
         end
+        count = count+1
         if itemSerializeFunc then
             s = s .. itemSerializeFunc(v)
         else
-            s = s .. v:ToString() or tostring(v)
+            if v == nil then
+                s = s .. 'nil'
+            elseif v.ToString then
+                s = s .. v:ToString()
+            else
+                s = s .. tostring(v)
+            end
         end
     end
     return s
@@ -2097,20 +2104,28 @@ local _missionEventsHandlers = {
 }
 
 local PlayersAndUnits = { -- dictionary
-    -- key = player name
-    -- value = #UNIT
+    -- key = <unit name>
+    -- value = { Unit = #UNIT, PlayerName = <player name> }
 }
 
-function PlayersAndUnits:AddPlayer(sPlayerName, unit)
-    PlayersAndUnits[sPlayerName] = unit
+function PlayersAndUnits:Add(unit, playerName)
+-- Debug("nisse - player enters unit :: unit: " .. unit.UnitName .. " :: player: " .. Dump(playerName))
+    PlayersAndUnits[unit.UnitName] = { Unit = unit, PlayerName = playerName}
 end
 
-function PlayersAndUnits:RemovePlayer(sPlayerName)
-    PlayersAndUnits[sPlayerName] = nil
+function PlayersAndUnits:Remove(unitName)
+-- local nisse = PlayersAndUnits[unitName]
+-- if nisse then
+-- Debug("nisse - player leaves unit :: unit: " .. unitName .. " :: player: " .. Dump(nisse.PlayerName))
+-- end
+    PlayersAndUnits[unitName] = nil
 end
 
-function PlayersAndUnits:GetPlayerUnit(sPlayerName)
-    return PlayersAndUnits[sPlayerName]
+function PlayersAndUnits:Get(unitName)
+    local info = PlayersAndUnits[unitName]
+    if info then
+        return info.Unit, info.PlayerName
+    end
 end
 
 local isMissionEventsListenerRegistered = false
@@ -2123,7 +2138,6 @@ function MissionEvents:Invoke(handlers, data)
 end
 
 function _e:onEvent( event )
--- local deep = DumpPrettyOptions:New():Deep() -- nisse
 -- Debug("_e:onEvent-? :: event: " .. DumpPrettyDeep(event, 2)) -- nisse
 
     if event.id == world.event.S_EVENT_MISSION_END then
@@ -2179,7 +2193,7 @@ function _e:onEvent( event )
     end
 
     if event.id == world.event.S_EVENT_BIRTH then
-        -- todo consider supporting MissionEvents:UnitSpawned(...)
+        -- todo consider supporting MissionEvents:UnitBirth(...)
         
         if isAssignedString(event.IniPlayerName) then
             event.id = world.event.S_EVENT_PLAYER_ENTER_UNIT
@@ -2194,10 +2208,10 @@ function _e:onEvent( event )
         if not unit then 
             return end -- weird!
 
-        if not isAssignedString(event.IniPlayerName) or PlayersAndUnits:GetPlayerUnit(event.IniPlayerName) then
+        if PlayersAndUnits:Get(event.IniUnitName) then
             return end
         
-        PlayersAndUnits:AddPlayer(event.IniPlayerName, unit)
+        PlayersAndUnits:Add(unit, event.IniPlayerName)
         MissionEvents:Invoke( _missionEventsHandlers._playerEnteredUnitHandlers, {
             time = MissionTime(),
             IniPlayerName = unit:GetPlayerName(),
@@ -2211,9 +2225,7 @@ function _e:onEvent( event )
     end
 
     if event.id == world.event.S_EVENT_PLAYER_LEAVE_UNIT then
-        if isAssignedString(event.IniPlayerName) then
-            PlayersAndUnits:RemovePlayer(event.IniPlayerName)
-        end
+        PlayersAndUnits:Remove(event.IniUnitName)
         MissionEvents:Invoke( _missionEventsHandlers._playerLeftUnitHandlers, event )
     end
 

@@ -635,5 +635,5 @@ DCAF.GBAD.AiBehavior = {
 }
 
 function SAM_AREA:WithAiBehavior(aiBehavior) -- #DCAF.GBAD.AiBehavior
-
+    
 end
