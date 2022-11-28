@@ -9,7 +9,7 @@ local Weapons = {
 DCAF.AirBehavior = {
     Passive = "Passive",
     Defensive = "Defensive",
-    Aggressive = "Aggressive",
+    Attack = "Attack",
 }
 
 local Distance = {
@@ -75,14 +75,14 @@ local GroupStateDict = { -- dictionary
     -- value = #GroupState
 }
 
-local AdversaryInfo = {
+local AirGroupInfo = {
     -- Spawner = nil,              -- #SPAWN
     Name = nil,                 -- #string (adversary display name)
     TemplateName = nil,         -- #string (adversary template name)
     Size = 0,                   -- #number (size of template)
 }
 
-function AdversaryInfo:Spawner()
+function AirGroupInfo:Spawner()
     return Spawners:Get(self.TemplateName)
 end
 
@@ -103,7 +103,7 @@ DCAF.Air = {
         -- list of #DCAF.AirCategory
     },
     Adversaries = {
-        -- list of #AdversaryInfo
+        -- list of #GroupInfo
     }
 }
 
@@ -113,7 +113,25 @@ DCAF.AirCategory = {
     Group = nil,
     Options = nil,
     Adversaries = {
-        -- list of #AdversaryInfo
+        -- list of #GroupInfo
+    },
+    SpawnedAdversaries = {
+        -- list of #GROUP
+    },
+    Menus = {
+        Main = nil,
+        Options = nil,
+        Spawn = nil
+    }
+}
+
+DCAF.Airbase = {
+    ClassName = "DCAF.Airbase",
+    Name = nil,
+    Group = nil,
+    Options = nil,
+    Adversaries = {
+        -- list of #GroupInfo
     },
     SpawnedAdversaries = {
         -- list of #GROUP
@@ -158,7 +176,7 @@ function DCAF.AirOptions:Default()
     options._aspect = DCAF.AirAspect.Hot
     options._maxOffsetAngle = 60
     options._altitude = DCAF.AirAltitude.Level
-    options._behavior = DCAF.AirBehavior.Aggressive
+    options._behavior = DCAF.AirBehavior.Attack
     return options
 end
 
@@ -213,7 +231,7 @@ function DCAF.AirOptions:SetAltitude(value)
 end
 
 function DCAF.AirOptions:GetBehavior()
-    return self._behavior or self._fallback._behavior or DCAF.AirBehavior.Aggressive, self._behavior == nil and self._fallback._behavior ~= nil
+    return self._behavior or self._fallback._behavior or DCAF.AirBehavior.Attack, self._behavior == nil and self._fallback._behavior ~= nil
 end
 function DCAF.AirOptions:SetBehavior(value)
     self._behavior = value
@@ -229,7 +247,7 @@ function DCAF.AirCategory:New(sCategoryName)
     return cat
 end
 
-function DCAF.AirCategory:InitOptions(options)
+function DCAF.AirCategory:WithOptions(options)
     if not isClass(options, DCAF.AirOptions.ClassName) then
         error("DCAF.AirCategory:InitOptions :: expected type '"..DCAF.AirOptions.ClassName.."' but got: " .. DumpPretty(options)) end
 
@@ -273,7 +291,7 @@ local function applyOptions(adversaryGroup, waypoint, size, source, adversaryDis
     adversaryGroup:ClearTasks()
     local task 
     local behavior = source.Options:GetBehavior()
-    if behavior == DCAF.AirBehavior.Aggressive then
+    if behavior == DCAF.AirBehavior.Attack then
         if source.Group:IsAir() then
             task = adversaryGroup:TaskAttackGroup(source.Group)
             if isAssignedString(adversaryDisplayName) then
@@ -644,29 +662,33 @@ function DCAF.Air:WithGroupMenus(sMenuText, sGroup)
     return self
 end
 
-local function initAdversary(object, sName, sGroup)
-    -- as both #DCAF.Air object and #DCAF.AirCategory can init adversaries, this method allows both to do so
+local function initGroup(object, sName, sGroup, nSize)
+    -- as both #DCAF.Air object and #DCAF.AirCategory can init groups, this method allows both to do so
     local self = object
     if not isAssignedString(sName) then
-        error("DCAF.Air:InitAdversary :: unexpected `sName`: " .. DumpPretty(sName)) end
+        error("DCAF.Air:InitGroup :: unexpected `sName`: " .. DumpPretty(sName)) end
 
     if tableIndexOf(self.Adversaries, function(adversary) return adversary.Name == sName end) then
-        error("DCAF.Air:InitAdversary :: group was already added: " .. DumpPretty(sName)) end
+        error("DCAF.Air:InitGroup :: group was already added: " .. DumpPretty(sName)) end
     
     local adversadyGroup = getGroup(sGroup)
     if not adversadyGroup then
-        error("DCAF.Air:InitAdversary :: cannot resolve group from: " .. DumpPretty(sGroup)) end
+        error("DCAF.Air:InitGroup :: cannot resolve group from: " .. DumpPretty(sGroup)) end
 
-    local info = DCAF.clone(AdversaryInfo)
+    local info = DCAF.clone(AirGroupInfo)
     info.Name = sName
     info.TemplateName = adversadyGroup.GroupName
-    info.Size = #adversadyGroup:GetUnits()
+    if isNumber(nSize) then
+        info.Size = math.min(4, math.max(1, math.abs(nSize))) -- max size is 4 (DCS limitation)
+    else
+        info.Size = #adversadyGroup:GetUnits()
+    end
     table.insert(self.Adversaries, info)
     return self
 end
 
-function DCAF.Air:InitAdversary(sName, sGroup) 
-    return initAdversary(self, sName, sGroup)
+function DCAF.Air:InitGroup(sName, sGroup, nSize) 
+    return initGroup(self, sName, sGroup, nSize)
 end
 
 function DCAF.Air:InitCategory(category)
@@ -677,9 +699,9 @@ function DCAF.Air:InitCategory(category)
     return self
 end
 
-function DCAF.AirCategory:InitAdversary(sName, sGroup)
+function DCAF.AirCategory:WithGroup(sName, sGroup, nSize)
     self._adversayIndex = (self._adversayIndex or 0) + 1
-    return initAdversary(self, sName, sGroup)
+    return initGroup(self, sName, sGroup, nSize)
 end
 
 --------------------------------- RANDOMIZED AIR THREATS ---------------------------------

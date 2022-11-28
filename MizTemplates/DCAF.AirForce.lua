@@ -54,7 +54,7 @@ DCAF.Tanker:NewFromCallsign(CALLSIGN.Tanker.Texaco, 1)
                -- >>SECOND WAVE<< uncomment next line to launch TEXACO-2 once TEXACO-1 reaches 40% fuel
                -- launchTexaco2() 
             end)
-           :OnFuelState(0.17, function(tanker)  -- makes tanker RTB, to orifinal airbase, when when fuel reaches 17%
+           :OnFuelState(0.17, function(tanker)  -- makes tanker RTB, to original airbase, when when fuel reaches 17%
                tanker:RTB()
                -- uncomment next line to always have a SHELL-1 tanker working the track
                -- tanker:SpawnReplacement(delayStart())   -- spawns after <delay> seconds (nil/0 seconds = wpasn now)
