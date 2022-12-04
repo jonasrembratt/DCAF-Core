@@ -29,6 +29,13 @@ DCAF.AirAltitude = {
     Popup = { Name = "Popup", MSL = 500 },
 }
 
+DCAF.AirStack = {
+    None = { Name = "None", Feet = 0 },
+    Tight = { Name = "Tight", Feet = 50 },
+    Open = { Name = "Open", Feet = 600 },
+    Tall = { Name = "Tall", Feet = 3000 },
+}
+
 DCAF.AirPosition = {
     Ahead = "12 o'clock",
     Behind = "6 o'clock",
@@ -152,6 +159,7 @@ DCAF.AirOptions = {
     _maxOffsetAngle = nil,          -- #number (degrees)
     _altitude = nil,                -- #DCAF.AirAltitude
     _behavior = nil,                -- #DCAF.AirBehavior
+    _stack = nil,                   -- #DCAF.AirStack; when ~= DCAF.AirStack.None, the group gets split into two groups vertically separated by specified value
 }
 
 function Spawners:Get(sTemplateName)
@@ -177,6 +185,7 @@ function DCAF.AirOptions:Default()
     options._maxOffsetAngle = 60
     options._altitude = DCAF.AirAltitude.Level
     options._behavior = DCAF.AirBehavior.Attack
+    options._stack = DCAF.AirStack.None
     return options
 end
 
@@ -187,6 +196,7 @@ function DCAF.AirOptions:Reset()
     self._altitude = nil
     self._maxOffsetAngle = nil
     self._behavior = nil
+    self._stack = nil
     return self
 end
 
@@ -238,6 +248,13 @@ function DCAF.AirOptions:SetBehavior(value)
     return self
 end
 
+function DCAF.AirOptions:GetStack()
+    return self._stack or self._fallback._stack or DCAF.AirStack.None, self._stack == nil and self._fallback._stack ~= nil
+end
+function DCAF.AirOptions:SetStack(value)
+    self._stack = value
+    return self
+end
 
 function DCAF.AirCategory:New(sCategoryName)
     if not isAssignedString(sCategoryName) then
@@ -390,27 +407,7 @@ local function getCoordsAndheading(source, distance, position, offsetAngle, aspe
     return { Spawn = spawnCoord, Task = taskCoord, End = endCoord }, heading
 end
 
-local function spawnGroup(info, size, source, distance, altitude, position, offsetAngle, aspect)
-    if not isNumber(offsetAngle) then
-        offsetAngle = getRandomOffsetAngle(source.Options:GetMaxOffsetAngle())
-    end
-    if not isNumber(distance) then
-        distance = NauticalMiles(source.Options:GetDistance())
-    end
-    if not position then
-        position = source.Options:GetPosition()
-    end
-    if not aspect then
-        aspect = source.Options:GetAspect()
-    end
-
-    -- route coordinates ...
-    local coords, heading = getCoordsAndheading(source, distance, position, offsetAngle, aspect)
-    local spawnCoord = coords.Spawn
-    local taskCoord = coords.Task
-    local endCoord = coords.End
-
-    -- altitude ...
+local function getAltitude(source, distance, altitude)
     if not isNumber(altitude) then
         altitude = source.Options:GetAltitude()
         local variation = 0
@@ -442,9 +439,35 @@ local function spawnGroup(info, size, source, distance, altitude, position, offs
                 variation = -variation
             end
             altitude = math.max(Feet(300), Feet(altitude.MSL + variation))
-
         end
     end
+    return altitude
+end
+
+local function spawnGroup(info, size, source, distance, altitude, position, offsetAngle, aspect, coords, heading)
+    if not isNumber(offsetAngle) then
+        offsetAngle = getRandomOffsetAngle(source.Options:GetMaxOffsetAngle())
+    end
+    if not isNumber(distance) then
+        distance = NauticalMiles(source.Options:GetDistance())
+    end
+    if not position then
+        position = source.Options:GetPosition()
+    end
+    if not aspect then
+        aspect = source.Options:GetAspect()
+    end
+
+    -- route coordinates ...
+    if coords == nil then
+        coords, heading = getCoordsAndheading(source, distance, position, offsetAngle, aspect)
+    end
+    local spawnCoord = coords.Spawn
+    local taskCoord = coords.Task
+    local endCoord = coords.End
+
+    -- altitude ...
+    altitude = getAltitude(source, distance, altitude)
     spawnCoord:SetAltitude(altitude)
 
     -- spawn and set route ...
@@ -470,7 +493,34 @@ local function spawnGroup(info, size, source, distance, altitude, position, offs
     SetRoute(group, route)
 end
 
-
+local function spawnStackedGroup(info, size, source, stack, distance, altitude, position, offsetAngle, aspect)
+    if not isNumber(offsetAngle) then
+        offsetAngle = getRandomOffsetAngle(source.Options:GetMaxOffsetAngle())
+    end
+    if not isNumber(distance) then
+        distance = NauticalMiles(source.Options:GetDistance())
+    end
+    if not position then
+        position = source.Options:GetPosition()
+    end
+    if not aspect then
+        aspect = source.Options:GetAspect()
+    end
+    local altitude = getAltitude(source, distance, altitude)
+    local separation = stack.Feet
+    local referenceAltitude = altitude - separation/2
+    local lowAltutude = referenceAltitude - separation/2
+    local highAltutude = referenceAltitude + separation/2
+    if lowAltutude < 100 then
+        lowAltutude = lowAltutude+100
+        highAltutude = highAltutude+100
+    end
+    local lowSize = routines.utils.round(size/2, 0)
+    local highSize = size - lowSize
+    local coords, heading = getCoordsAndheading(source, distance, position, offsetAngle, aspect)
+    spawnGroup(info, lowSize, source, distance, lowAltutude, position, offsetAngle, aspect, coords, heading)
+    spawnGroup(info, highSize, source, distance, highAltutude, position, offsetAngle, aspect, coords, heading)
+end
 
 -- ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 --                                                        MENUS
@@ -554,6 +604,16 @@ local function buildMenus(state)
             end)
         end
 
+        -- Stack
+        local stack, isFallback = source.Options:GetStack()
+        local stackOptionsMenu = MENU_GROUP:New(source.Group, "Stack: " .. displayValue(source.Options:GetStack().Name, '', isFallback), source.Menus.Options)
+        for key, value in pairs(DCAF.AirStack) do
+            MENU_GROUP_COMMAND:New(source.Group, key, stackOptionsMenu, function()
+                source.Options:SetStack(value)
+                buildOptionsMenus(source, parentMenu)
+            end)
+        end
+
         -- Behavior
         local behavior, isFallback = source.Options:GetBehavior()
         local behaviorOptionsMenu = MENU_GROUP:New(source.Group, "Behavior: " .. displayValue(behavior, '', isFallback), source.Menus.Options)
@@ -600,7 +660,12 @@ local function buildMenus(state)
                     sizeName = tostring(i)
                 end
                 MENU_GROUP_COMMAND:New(source.Group, sizeName, spawnMenu, function()
-                    spawnGroup(info, i, source)
+                    local stack = source.Options:GetStack()
+                    if stack.Name == DCAF.AirStack.None.Name then
+                        spawnGroup(info, i, source)
+                    else
+                        spawnStackedGroup(info, i, source, stack)
+                    end
                 end)
             end
         end

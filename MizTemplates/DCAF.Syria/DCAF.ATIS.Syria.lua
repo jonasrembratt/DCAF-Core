@@ -1,18 +1,28 @@
 -- DCAF AIRAC 2022-1
 
--- local SRS_PATH = [[D:\Program Files\DCS-SimpleRadio-Standalone]]
+DCAF.AIRAC = {
+   Version = "2022.12",
+   SRS_PATH = [[C:\Program Files\DCS-SimpleRadio-Standalone]]
+}
+
+local SRS_PATH = [[C:\Program Files\DCS-SimpleRadio-Standalone]]
+
+--[[
+for testing:
+C:\Program Files\DCS-SimpleRadio-Standalone>.\\DCS-SR-ExternalAudio.exe -t "Automated Traffic Information Service, Charlie. Hello World, " -f 305 -m AM -c 2
+]]
 
 --== TURKEY ==--
 
 -- Incirlik // LTAG
 ATIS:New(AIRBASE.Syria.Incirlik, 305)
-        :SetRadioRelayUnitName("Radio Relay "..AIRBASE.Syria.Incirlik)
+        :SetSRS(SRS_PATH, "male", "en-US", 5002)
+        --:SetRadioRelayUnitName("Radio Relay "..AIRBASE.Syria.Incirlik)
         :SetImperialUnits()
         :SetTACAN(21)
         :SetTowerFrequencies({360.2, 129.4})
         :AddILS(109.30, "5")
         :AddILS(111.70, "23")
-        -- :SetSRS(SRS_PATH, "male", "en-US")
         :Start()
 
 -- Gaziantep Intl // LTAJ
@@ -22,7 +32,7 @@ ATIS:New(AIRBASE.Syria.Gaziantep, 119.275)
         :SetVOR(116.7)
         :SetTowerFrequencies({250.9, 121.1})
         :AddILS(108.7, "5")
-        --:SetSRS(SRS_PATH)
+        :SetSRS(DCAF.AIRAC.SRS_PATH)
         :Start()
 
 
@@ -35,7 +45,7 @@ ATIS:New(AIRBASE.Syria.Akrotiri, 125)
         :SetTACAN(107)
         :SetTowerFrequencies({339.85, 130.075})
         :AddILS(109.7, "28")
-        -- :SetSRS(SRS_PATH)
+        :SetSRS(DCAF.AIRAC.SRS_PATH)
         :Start()
 
 
@@ -48,7 +58,7 @@ ATIS:New(AIRBASE.Syria.Paphos, 127.325, radio.modulation.AM)
         :SetTACAN(79)
         :SetTowerFrequencies({250.25, 127.8})
         :AddILS(108.9, "29")
-        -- :SetSRS(SRS_PATH, "male", "en-US")
+        :SetSRS(DCAF.AIRAC.SRS_PATH, "male", "en-US")
         :Start()
 
 --== ISRAEL ==--
@@ -60,5 +70,5 @@ ATIS:New(AIRBASE.Syria.Ramat_David, 123)
         :SetTACAN(84)
         :SetTowerFrequencies({250.95})
         :AddILS(111.10, "32")
-        -- :SetSRS(SRS_PATH)
+        :SetSRS(DCAF.AIRAC.SRS_PATH)
         :Start()
