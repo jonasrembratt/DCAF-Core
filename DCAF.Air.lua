@@ -1,3 +1,9 @@
+-- ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+--                                      DCAF.Air - Build any A-A threat, from the cockpit
+--                                                Digital Coalition Air Force
+--                                                          2022
+-- ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 local Weapons = {
     Guns = "Guns only",
     Heaters = "IR missiles only",
@@ -12,13 +18,14 @@ DCAF.AirBehavior = {
     Attack = "Attack",
 }
 
-local Distance = {
-    ["80nm"] = 80,
+DCAF.AirDistance = {
     ["60nm"] = 60,
     ["40nm"] = 40,
     ["20nm"] = 20,
     ["10nm"] = 10,
     ["2nm"] = 2,
+    ["1nm"] = 1,
+    ["3000ft"] = 0.5,
     ["1000ft"] = 0.17,
 }
 
@@ -29,11 +36,18 @@ DCAF.AirAltitude = {
     Popup = { Name = "Popup", MSL = 500 },
 }
 
-DCAF.AirStack = {
+DCAF.AirStackHeight = {
     None = { Name = "None", Feet = 0 },
     Tight = { Name = "Tight", Feet = 50 },
-    Open = { Name = "Open", Feet = 600 },
-    Tall = { Name = "Tall", Feet = 3000 },
+    Open = { Name = "Open", Feet = 1000 },
+    Tall = { Name = "Tall", Feet = 20000 },
+    Full = { Name = "Full", Feet = 100000 },
+}
+
+DCAF.AirGroupDistribution = {
+    None = "None",
+    Half = "Half",
+    All = "All",
 }
 
 DCAF.AirPosition = {
@@ -159,7 +173,8 @@ DCAF.AirOptions = {
     _maxOffsetAngle = nil,          -- #number (degrees)
     _altitude = nil,                -- #DCAF.AirAltitude
     _behavior = nil,                -- #DCAF.AirBehavior
-    _stack = nil,                   -- #DCAF.AirStack; when ~= DCAF.AirStack.None, the group gets split into two groups vertically separated by specified value
+    _groupDistribution = nil,       -- #DCAF.AirGroupDistribution - used when splitting a group for stacking or separation
+    _stackHeight = nil,             -- #DCAF.AirStackHeight; when ~= DCAF.AirStackHeight.None, the group gets split into two groups vertically separated by specified value
 }
 
 function Spawners:Get(sTemplateName)
@@ -185,7 +200,13 @@ function DCAF.AirOptions:Default()
     options._maxOffsetAngle = 60
     options._altitude = DCAF.AirAltitude.Level
     options._behavior = DCAF.AirBehavior.Attack
-    options._stack = DCAF.AirStack.None
+    options._groupDistribution = DCAF.AirGroupDistribution.None
+    options._stackHeight = DCAF.AirStackHeight.None
+
+    -- for debugging - nisse
+    -- options._groupDistribution = DCAF.AirGroupDistribution.Half
+    -- options._stackHeight = DCAF.AirStackHeight.Full
+
     return options
 end
 
@@ -196,7 +217,8 @@ function DCAF.AirOptions:Reset()
     self._altitude = nil
     self._maxOffsetAngle = nil
     self._behavior = nil
-    self._stack = nil
+    self._stackHeight = nil
+    self._groupDistribution = nil
     return self
 end
 
@@ -248,11 +270,19 @@ function DCAF.AirOptions:SetBehavior(value)
     return self
 end
 
+function DCAF.AirOptions:GetGroupDistribution()
+    return self._groupDistribution or self._fallback._groupDistribution or DCAF.AirGroupDistribution.None, self._groupDistribution == nil and self._fallback._groupDistribution ~= nil
+end
+function DCAF.AirOptions:SetGroupDistribution(value)
+    self._groupDistribution = value
+    return self
+end
+
 function DCAF.AirOptions:GetStack()
-    return self._stack or self._fallback._stack or DCAF.AirStack.None, self._stack == nil and self._fallback._stack ~= nil
+    return self._stackHeight or self._fallback._stackHeight or DCAF.AirStackHeight.None, self._stackHeight == nil and self._fallback._stackHeight ~= nil
 end
 function DCAF.AirOptions:SetStack(value)
-    self._stack = value
+    self._stackHeight = value
     return self
 end
 
@@ -296,7 +326,12 @@ function GroupState:New(group)
     return state
 end
 
-local function applyOptions(adversaryGroup, waypoint, size, source, adversaryDisplayName)
+local SpawnGroupRole = {
+    Support = "Support",
+    BFM = "BFM"
+}
+
+local function applyOptions(adversaryGroup, waypoint, size, source, adversaryDisplayName, role)
     -- size
     local units = adversaryGroup:GetUnits()
     if #units > size then
@@ -310,24 +345,28 @@ local function applyOptions(adversaryGroup, waypoint, size, source, adversaryDis
     local behavior = source.Options:GetBehavior()
     if behavior == DCAF.AirBehavior.Attack then
         if source.Group:IsAir() then
-            task = adversaryGroup:TaskAttackGroup(source.Group)
+            if role ~= SpawnGroupRole.Support then
+                task = adversaryGroup:TaskAttackGroup(source.Group)
+            else
+                ROEDefensive(adversaryGroup)
+            end            
             if isAssignedString(adversaryDisplayName) then
-                MessageTo(source.Group, Dump(size) .. " x " .. adversaryDisplayName .. " attacks " .. source.Group.GroupName)
+                MessageTo(source.Group, adversaryDisplayName .. " attacks " .. source.Group.GroupName)
             end
         else
             task = adversaryGroup:EnRouteTaskEngageTargets()
             if isAssignedString(adversaryDisplayName) then
-                MessageTo(source.Group, Dump(size) .. " x " .. adversaryDisplayName .. " searches/engages in area")
+                MessageTo(source.Group, adversaryDisplayName .. " searches/engages in area")
             end
         end
     elseif behavior == DCAF.AirBehavior.Defensive then
         if isAssignedString(adversaryDisplayName) then
-            MessageTo(source.Group, Dump(size) .. " x " .. adversaryDisplayName .. " is defensive")
+            MessageTo(source.Group, adversaryDisplayName .. " is defensive")
         end
         ROEDefensive(adversaryGroup)
     elseif behavior == DCAF.AirBehavior.Passive then
         if isAssignedString(adversaryDisplayName) then
-            MessageTo(source.Group, Dump(size) .. " x " .. adversaryDisplayName .. " is passive")
+            MessageTo(source.Group, adversaryDisplayName .. " is passive")
         end
         ROEHoldFire(adversaryGroup)
         adversaryGroup:OptionROTNoReaction()
@@ -441,10 +480,11 @@ local function getAltitude(source, distance, altitude)
             altitude = math.max(Feet(300), Feet(altitude.MSL + variation))
         end
     end
+-- Debug("nisse - getAltitude :: variation: " .. Dump(variation) .. " :: alt: " .. Dump(altitude) .. " :: own alt: " .. Dump(altitude))
     return altitude
 end
 
-local function spawnGroup(info, size, source, distance, altitude, position, offsetAngle, aspect, coords, heading)
+local function spawnGroup(info, size, source, distance, altitude, position, offsetAngle, aspect, coords, heading, adversaryName, role)
     if not isNumber(offsetAngle) then
         offsetAngle = getRandomOffsetAngle(source.Options:GetMaxOffsetAngle())
     end
@@ -456,6 +496,14 @@ local function spawnGroup(info, size, source, distance, altitude, position, offs
     end
     if not aspect then
         aspect = source.Options:GetAspect()
+    end
+
+    local function isBFMSetup()
+        local ownAltitude = source.Group:GetAltitude()
+        return UTILS.MetersToNM(distance) < 2 
+                and math.abs(altitude - ownAltitude) < Feet(1000)
+                and ((position == DCAF.AirPosition.Ahead and aspect == DCAF.AirAspect.Cold)
+                  or (position == DCAF.AirPosition.Behind and aspect == DCAF.AirAspect.Hot))
     end
 
     -- route coordinates ...
@@ -477,23 +525,208 @@ local function spawnGroup(info, size, source, distance, altitude, position, offs
     table.insert(source.SpawnedAdversaries, group)
     local route = group:CopyRoute()
     local wp0 = route[1]
+    local speedMps = wp0.Speed
+    if isBFMSetup() then
+Debug("nisse - BFM setup :: matches speed")
+        speedMps = source.Group:GetVelocityMPS()
+        group:SetSpeed(speedMps)
+    end
+
+    if role == SpawnGroupRole.Support then
+        taskCoord:SetAltitude(altitude)
+        endCoord:SetAltitude(altitude)
+    end
 
     local taskWP = taskCoord:WaypointAir(
         COORDINATE.WaypointAltType.BARO,
         COORDINATE.WaypointType.TurningPoint,
         COORDINATE.WaypointAction.TurningPoint,
-        wp0.Speed)
+        speedMps)
     local endWP = endCoord:WaypointAir(
         COORDINATE.WaypointAltType.BARO,
         COORDINATE.WaypointType.TurningPoint,
         COORDINATE.WaypointAction.TurningPoint,
-        wp0.Speed)
-    applyOptions(group, {taskWP, endWP}, size, source, info.Name)
+        speedMps)
+    applyOptions(group, {taskWP, endWP}, size, source, adversaryName, role)
     route = { taskWP, endWP }
     SetRoute(group, route)
+    return group
+end
+
+local CoordinatedAttack = {
+    _interval = 1,
+    _isEnded = false,
+    _timer = nil,
+    _groups = {
+        -- list if #GROUP
+    }
+}
+
+function CoordinatedAttack:New(func, interval)
+    local attack = DCAF.clone(CoordinatedAttack)
+    if isNumber(interval) then
+        attack._interval = interval
+    else
+        attack._interval = 1
+    end
+
+    attack._timer = TIMER:New(function() 
+        if attack._isEnded then
+            return end
+
+        local isAlive = false
+        for _, group in ipairs(attack._groups) do
+            if group:CountAliveUnits() > 0 then
+                isAlive = true
+                break
+            end
+        end
+        if not isAlive then
+            attack:Stop()
+        end
+
+        func(attack)
+    end)
+    return attack
+end
+
+function CoordinatedAttack:AddGroup(group)
+    table.insert(self._groups, group)
+    return self
+end
+
+function CoordinatedAttack:OnBegin(func)
+    self._onStartFunc = func
+    return self
+end
+
+function CoordinatedAttack:OnEnd(func)
+    self._onEndFunc = func
+    return self
+end
+
+function CoordinatedAttack:GetAliveGroups()
+    local aliveGroups = {}
+    for _, group in ipairs(self._groups) do
+        if group:IsAlive() then
+            table.insert(aliveGroups, group)
+        end
+    end
+    return aliveGroups
+end
+
+function CoordinatedAttack:Includes(group)
+    local g = getGroup(group)
+    if not g then
+        return false end
+
+    for _, attackGroup in ipairs(self._groups) do
+        if attackGroup == g then
+            return true end
+    end
+    return false
+end
+
+function CoordinatedAttack:Start()
+    self._timer:Start(1, self._interval)
+    if isFunction(self._onStartFunc) then
+        self._onStartFunc(self)
+    end
+end
+
+function CoordinatedAttack:Stop()
+    self._isEnded = true
+-- Debug("nisse - CoordinatedAttack:Stop :: _onEndFunc: " .. Dump(self._onEndFunc))
+    if isFunction(self._onEndFunc) then
+        self._onEndFunc(self)
+    end
+    Delay(3, function()
+Debug("nisse - CoordinatedAttack:Stop :: timer stops")
+        self._timer:Stop()
+    end)
+end
+
+local function supportedAttack(targetGroup)
+
+    local function finishAttack(attack)
+        -- all support groups attack (coordination ends) ...
+        for _, group in ipairs(attack:GetAliveGroups()) do
+            local isSupporting = attack._supportGroups[group.GroupName]
+            if isSupporting then
+-- Debug("nisse - finishAttack :: supporting groups attack " .. targetGroup.GroupName)
+                TaskAttackGroup(group, targetGroup)
+            end
+        end
+        attack:Stop()
+    end
+
+    local coordinatedAttack = CoordinatedAttack:New(function(attack) 
+        -- ensure all supporting groups keep same speed as lead group(s)
+        local leadUnit
+        local supportingGroups = {}
+        local aliveGroups = attack:GetAliveGroups()
+        if #aliveGroups == 0 then
+            attack:Stop()
+            return
+        end
+
+        for _, group in ipairs(aliveGroups) do
+            local isSupporting = attack._supportGroups[group.GroupName]
+            if not isSupporting then
+                leadUnit = leadUnit or group:GetFirstUnitAlive()
+            else
+                table.insert(supportingGroups, group)
+            end
+        end
+        
+        if not leadUnit then
+            -- all lead groups destroyed; attack with supporting groups and end coordination ...
+            finishAttack(attack)
+            return
+        end
+
+        -- ensure supporting groups keep same speed as attacking (lead) group(s) ...
+        -- also, have supporting group switch to attacking if inside of 18nm from TGT ...
+        local speedMps = leadUnit:GetVelocityMPS()
+        for _, supportingGroup in ipairs(supportingGroups) do
+            local distanceToTGT = supportingGroup:GetCoordinate():Get2DDistance(targetGroup:GetCoordinate())
+            if distanceToTGT < NauticalMiles(18) then
+-- Debug("nisse - support group is inside 18nm :: ATTACKS")
+                finishAttack(attack)
+                return
+            end
+            supportingGroup:SetSpeed(speedMps, true)
+        end
+
+    end):OnBegin(function(attack) 
+        -- when missiles gets shot; all supporting groups attack and coordination ends ...
+        local function onMissilesShot(event)
+            -- check to see if the missiles fired was related to coorindated attack ...
+            if (event.IniGroup ~= targetGroup and not attack:Includes(event.IniGroup)) 
+            and (event.TgtGroup and not attack:Includes(event.TgtGroup)) then
+                return end
+
+            finishAttack(attack)
+            MissionEvents:EndOnWeaponFired(attack._onMissileShot)
+        end
+        attack._onMissileShot = onMissilesShot
+        MissionEvents:OnWeaponFired(attack._onMissileShot)
+    end):OnEnd(function(attack) 
+        if attack._onMissileShot then
+-- Debug("nisse - ends monitoring weapons being fired")
+            MissionEvents:EndOnWeaponFired(attack._onMissileShot)
+        end
+    end)
+    coordinatedAttack._supportGroups = {}
+    return coordinatedAttack
+
 end
 
 local function spawnStackedGroup(info, size, source, stack, distance, altitude, position, offsetAngle, aspect)
+    if size == 1 then
+        spawnGroup(info, 1, source, distance, altitude, position, offsetAngle, aspect, nil, nil, "Single " .. info.Name)
+        return
+    end
     if not isNumber(offsetAngle) then
         offsetAngle = getRandomOffsetAngle(source.Options:GetMaxOffsetAngle())
     end
@@ -507,19 +740,81 @@ local function spawnStackedGroup(info, size, source, stack, distance, altitude, 
         aspect = source.Options:GetAspect()
     end
     local altitude = getAltitude(source, distance, altitude)
-    local separation = stack.Feet
-    local referenceAltitude = altitude - separation/2
-    local lowAltutude = referenceAltitude - separation/2
-    local highAltutude = referenceAltitude + separation/2
-    if lowAltutude < 100 then
-        lowAltutude = lowAltutude+100
-        highAltutude = highAltutude+100
+    local distribution = source.Options:GetGroupDistribution()
+    local factor = size
+    if distribution == DCAF.AirGroupDistribution.Half then
+        factor = 2
     end
-    local lowSize = routines.utils.round(size/2, 0)
-    local highSize = size - lowSize
+    local separation = Feet(stack.Feet)
     local coords, heading = getCoordsAndheading(source, distance, position, offsetAngle, aspect)
-    spawnGroup(info, lowSize, source, distance, lowAltutude, position, offsetAngle, aspect, coords, heading)
-    spawnGroup(info, highSize, source, distance, highAltutude, position, offsetAngle, aspect, coords, heading)
+    local landHeight = COORDINATE:GetLandHeight()
+    local hardDeck = Feet(100)
+    if COORDINATE:GetSurfaceType() ~= land.SurfaceType.WATER then
+        hardDeck = Feet(300)
+    end
+    local lowAlt, highAlt
+    if stack.Name == DCAF.AirStackHeight.Full.Name then
+        -- 'Full' stack, lowest at treetop/sea level and top at specified altitude
+        lowAlt = landHeight + hardDeck
+        separation = (altitude-lowAlt) / (factor-1)
+        highAlt = altitude
+    else
+        lowAlt = altitude - (factor-1) * separation
+        highAlt = separation * (factor-1)
+    end
+    highAlt = math.min(Feet(40000), highAlt)
+    if lowAlt < landHeight + hardDeck then
+        lowAlt = landHeight + hardDeck
+    end
+
+    local count = size
+    local isEvenSize = size % factor == 0
+    local groupSize = math.floor(size / factor)
+    if not isEvenSize --[[or stack.Name == DCAF.AirStackHeight.Full.Name]] then
+        groupSize = 1
+    end
+    local twoshipCreated = false
+    local adversaryName = Dump(size) .. " x " .. info.Name
+    local leadGroup
+    local behavior = source.Options:GetBehavior()
+    local isAttack = behavior == DCAF.AirBehavior.Attack
+    local coordinatedAttack
+    if isAttack then
+        coordinatedAttack = supportedAttack(source.Group)
+    end
+    local countSupportGroups = 0
+
+    for i = 0, factor-1, 1 do
+        local useGroupSize = groupSize
+        local stackedSize = 1
+        local groupAltitude = lowAlt + i*separation
+        local isSupportGroup = math.abs(altitude - groupAltitude) > 3000 -- meters (9000 ft)
+        local role
+        if isSupportGroup then
+            role = SpawnGroupRole.Support
+        end
+        if not isEvenSize and factor == 2 and not twoshipCreated then
+            if i == 1 or math.random(100) < 51 then
+                twoshipCreated = true
+                useGroupSize = 2
+            end
+        end
+        local group = spawnGroup(info, useGroupSize, source, distance, groupAltitude, position, offsetAngle, aspect, coords, heading, adversaryName, role)
+        if coordinatedAttack then
+            coordinatedAttack:AddGroup(group)
+            if isSupportGroup then
+                countSupportGroups = countSupportGroups + 1
+                coordinatedAttack._supportGroups[group.GroupName] = isSupportGroup
+            end
+        end
+        adversaryName = nil
+    end
+    if coordinatedAttack and countSupportGroups > 0 then
+        coordinatedAttack:Start()
+    else
+        coordinatedAttack = nil
+    end
+
 end
 
 -- ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -556,7 +851,7 @@ local function buildMenus(state)
         -- Distance
         local distance, isFallback = source.Options:GetDistance()
         local distanceOptionsMenu = MENU_GROUP:New(source.Group, "Distance: " .. displayValue(distance, 'nm', isFallback), source.Menus.Options)
-        for key, value in pairs(Distance) do
+        for key, value in pairs(DCAF.AirDistance) do
             MENU_GROUP_COMMAND:New(source.Group, key, distanceOptionsMenu, function()
                 source.Options:SetDistance(value)
                 buildOptionsMenus(source, parentMenu)
@@ -604,14 +899,30 @@ local function buildMenus(state)
             end)
         end
 
-        -- Stack
+        -- Distribute
+        local distribution, isFallback = source.Options:GetGroupDistribution()
         local stack, isFallback = source.Options:GetStack()
-        local stackOptionsMenu = MENU_GROUP:New(source.Group, "Stack: " .. displayValue(source.Options:GetStack().Name, '', isFallback), source.Menus.Options)
-        for key, value in pairs(DCAF.AirStack) do
-            MENU_GROUP_COMMAND:New(source.Group, key, stackOptionsMenu, function()
-                source.Options:SetStack(value)
+        local distributeMenuText = "Distribute: " .. displayValue(distribution, '', isFallback)
+        if distribution ~= DCAF.AirGroupDistribution.None and stack.Name ~= DCAF.AirStackHeight.None.Name then
+            distributeMenuText = distributeMenuText .. ", " .. string.lower(stack.Name) .. " stack"
+        end
+        local distributionOptionsMenu = MENU_GROUP:New(source.Group, distributeMenuText, source.Menus.Options)
+        for key, value in pairs(DCAF.AirGroupDistribution) do
+            MENU_GROUP_COMMAND:New(source.Group, key, distributionOptionsMenu, function()
+                source.Options:SetGroupDistribution(value)
                 buildOptionsMenus(source, parentMenu)
             end)
+        end
+
+        -- Stack
+        if distribution ~= DCAF.AirGroupDistribution.None then
+            local stackOptionsMenu = MENU_GROUP:New(source.Group, "Stack: " .. displayValue(source.Options:GetStack().Name, '', isFallback), distributionOptionsMenu)
+            for key, value in pairs(DCAF.AirStackHeight) do
+                MENU_GROUP_COMMAND:New(source.Group, key, stackOptionsMenu, function()
+                    source.Options:SetStack(value)
+                    buildOptionsMenus(source, parentMenu)
+                end)
+            end
         end
 
         -- Behavior
@@ -661,8 +972,9 @@ local function buildMenus(state)
                 end
                 MENU_GROUP_COMMAND:New(source.Group, sizeName, spawnMenu, function()
                     local stack = source.Options:GetStack()
-                    if stack.Name == DCAF.AirStack.None.Name then
-                        spawnGroup(info, i, source)
+                    if stack.Name == DCAF.AirStackHeight.None.Name then
+                        local adversaryName = Dump(i) .. " x " .. info.Name
+                        spawnGroup(info, i, source, nil, nil, nil, nil, nil, nil, nil, adversaryName)
                     else
                         spawnStackedGroup(info, i, source, stack)
                     end

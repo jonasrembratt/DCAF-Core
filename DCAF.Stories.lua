@@ -923,10 +923,10 @@ function StoryEventArgs:DestroyGroups(...)
         if arg.n > 1 then
             table.remove(arg, 1)
         end
-        groups = tableCopyTo(arg, groups)
+        groups = tableCopy(arg, groups)
     else
         scope = StoryScope.Storyline
-        groups = tableCopyTo(arg, groups)
+        groups = tableCopy(arg, groups)
     end
     if scope == StoryScope.None then
         error("StoryEventArgs:DestroyGroups :: scope cannot be '" .. scope .. "' when destroying groupes") -- todo or can it?
@@ -1205,7 +1205,7 @@ function Storyline:OnAircraftLanded(aircraft, func)
 
         -- this is a one-time event ... 
         MissionEvents:EndOnAircraftLanded(eventFunc)
-        event = tableCopyTo(StoryEventArgs:New(self), event)
+        event = tableCopy(StoryEventArgs:New(self), event)
         func(event)
     end
 
@@ -1249,7 +1249,7 @@ function Storyline:OnGroupDiverted(group, func)
             return end
 
         MissionEvents:EndOnGroupDiverted(eventFunc)
-        event = tableCopyTo(StoryEventArgs:New(self), event)
+        event = tableCopy(StoryEventArgs:New(self), event)
         func(event)
     end
 
@@ -1305,7 +1305,7 @@ function Storyline:OnGroupEntersZone(zone, group, func, filter, continous)
         if not isValidObjects() then
             return end
 
-        event = tableCopyTo(StoryEventArgs:New(self), event)
+        event = tableCopy(StoryEventArgs:New(self), event)
         func(event)
     end
 
@@ -1338,7 +1338,7 @@ function Storyline:OnGroupInsideZone(zone, group, func, filter, continous)
         if not self:FindGroup(event.IniGroup) then
             return end
 
-        event = tableCopyTo(StoryEventArgs:New(self), event)
+        event = tableCopy(StoryEventArgs:New(self), event)
         func(event)
     end
 
@@ -1371,7 +1371,7 @@ function Storyline:OnGroupLeftZone(zone, group, func, filter, continous)
         if not self:FindGroup(event.IniGroup) then
             return end
 
-        event = tableCopyTo(StoryEventArgs:New(self), event)
+        event = tableCopy(StoryEventArgs:New(self), event)
         func(event)
     end
 
@@ -1404,7 +1404,7 @@ function Storyline:OnUnitEntersZone(zone, unit, func, filter, continous)
         if not self:FindActiveUnit(event.IniUnitName) then
             return end
 
-        event = tableCopyTo(StoryEventArgs:New(self), event)
+        event = tableCopy(StoryEventArgs:New(self), event)
         func(event)
     end
 
@@ -1437,7 +1437,7 @@ function Storyline:OnUnitInsideZone(zone, unit, func, filter, continous)
         if not self:FindActiveUnit(event.IniUnitName) then
             return end
 
-        event = tableCopyTo(StoryEventArgs:New(self), event)
+        event = tableCopy(StoryEventArgs:New(self), event)
         func(event)
     end
     
@@ -1470,7 +1470,7 @@ function Storyline:OnUnitLeftZone(zone, unit, func, filter, continous)
         if not self:FindActiveUnit(event.IniUnitName) then
             return end
 
-        event = tableCopyTo(StoryEventArgs:New(self), event)
+        event = tableCopy(StoryEventArgs:New(self), event)
         func(event)
     end
         
@@ -1549,7 +1549,7 @@ function Storyline:OnUnitDestroyed(unit, func)
         if not isApplicable() then
             return end
 
-        event = tableCopyTo(StoryEventArgs:New(self), event)
+        event = tableCopy(StoryEventArgs:New(self), event)
         func(event)
     end
         
