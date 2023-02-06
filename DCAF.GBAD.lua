@@ -170,7 +170,7 @@ local function teardownIADS(area, force)
     if not area.IADS then
         return end
 
-    if area.IADS.Type == "Skynet" then
+    if area.IADS_Type == "Skynet" then
         teardownSkynetIADS(area, force)
     elseif area.IADS_Type == "MANTIS" then
         teardownMantisIADS(area, force)
@@ -534,13 +534,10 @@ local function spawnSAMSite(area, template, vec2, destroyExisting, shorads)
     local manpadGroups = spawnRandomMANPADS(area, samGroup)
     local shorads = spawnRandomSHORADs(area, samGroup)
     table.insert(s3.SamSites, SAM_SITE:New(area, samGroup, shorads, aaaGroups, manpadGroups))
-    local skynetStatus 
     local message
     if area.IADS then
-        skynetStatus = "ON"
         message = "SAM site was spawned: " .. template .. " (" .. area.IADS_Type .. " IADS is ON)"
     else
-        skynetStatus = "OFF"
         message = "SAM site was spawned: " .. template .. " (IADS is OFF)"
     end
     MessageTo(nil, message)
@@ -678,39 +675,49 @@ local SETTINGS_MENUS = {
     SkyNetMenu = nil
 }
 
-function SETTINGS_MENUS:BuildCoalition(parentMenu, forCoalition)
-    if not self.MainMenu then
-        self.MainMenu = MENU_COALITION:New(forCoalition, "Settings", parentMenu)
+local _buildCoalitionSettings
+local function buildCoalitionSettings(gbad, menus, parentMenu, forCoalition)
+    if not menus.MainMenu then
+        menus.MainMenu = MENU_COALITION:New(forCoalition, "Settings", parentMenu)
+    else
+        menus.MainMenu:RemoveSubMenus()
     end
 
-    self.MainMenu:RemoveSubMenus()
-
     -- Difficulty...
-    local difficultyMenu = MENU_COALITION:New(coalition.side.BLUE, DCAF.GBAD.Difficulty.Desc, self.MainMenu)
+    local difficultyMenu = MENU_COALITION:New(forCoalition, DCAF.GBAD.Difficulty.Desc, menus.MainMenu)
     for key, difficulty in pairs(DCAF.GBAD_DIFFICULTY) do
-        MENU_COALITION_COMMAND:New(coalition.side.BLUE, difficulty.Desc, difficultyMenu, function() 
+        MENU_COALITION_COMMAND:New(forCoalition, difficulty.Desc, difficultyMenu, function() 
             DCAF.GBAD.Difficulty = difficulty
-            self:BuildCoalition(forCoalition)
+            _buildCoalitionSettings(gbad, menus, parentMenu, forCoalition)
         end)
     end
 
     -- SAM missiles simulation...
-    local wpnSimMenuCaption = "Simulated SAM missiles: "
     if DCAF.GBAD.WeaponsSimulation then
-        wpnSimMenuCaption = wpnSimMenuCaption .. "YES"
-    else
-        wpnSimMenuCaption = wpnSimMenuCaption .. "NO"
-    end
-    local wpnSimMenu = MENU_COALITION_COMMAND:New(coalition.side.BLUE, wpnSimMenuCaption, self.MainMenu, function() 
-        if DCAF.GBAD.WeaponsSimulation then
-            DCAF.GBAD.WeaponsSimulation:Stop()
-            DCAF.GBAD.WeaponsSimulation = nil
-            self:BuildCoalition(forCoalition)
-            return
+        local wpnSimMenuCaption = "Simulated SAM missiles: "
+        if DCAF.GBAD.WeaponsSimulation:IsActive() then
+            wpnSimMenuCaption = wpnSimMenuCaption .. "YES"
+        else
+            wpnSimMenuCaption = wpnSimMenuCaption .. "NO"
         end
-        self:WithSimulatedSAMMissiles()
-        self:BuildCoalition(forCoalition)
-    end)
+        local wpnSimMenu = MENU_COALITION_COMMAND:New(forCoalition, wpnSimMenuCaption, menus.MainMenu, function() 
+            if DCAF.GBAD.WeaponsSimulation:IsActive() then
+                DCAF.GBAD.WeaponsSimulation:Stop()
+                _buildCoalitionSettings(gbad, menus, parentMenu, forCoalition)
+                return
+            end
+            DCAF.GBAD.WeaponsSimulation:Start()
+            _buildCoalitionSettings(gbad, menus, parentMenu, forCoalition)
+        end)
+    end
+end
+_buildCoalitionSettings = buildCoalitionSettings
+
+function SETTINGS_MENUS:BuildCoalition(gbad, parentMenu, forCoalition)
+    if not isNumber(forCoalition) then
+        forCoalition = coalition.side.BLUE
+    end
+    buildCoalitionSettings(gbad, self, parentMenu, forCoalition)
 end
 
 function SETTINGS_MENUS:BuildGroup(parentMenu, group)
@@ -851,7 +858,7 @@ function DCAF.GBAD:BuildF10CoalitionMenus(parentMenu, forCoalition)
     if isAssignedString(parentMenu) then
         parentMenu = MENU_COALITION:New(forCoalition, parentMenu)
     end
-    SETTINGS_MENUS:BuildCoalition(parentMenu, forCoalition)
+    SETTINGS_MENUS:BuildCoalition(self, parentMenu, forCoalition)
 
     local buildAreaMenuFunc
     local function buildAreaMenu(area)
@@ -919,7 +926,7 @@ function DCAF.GBAD:BuildF10GroupMenus(parentMenu, group)
     if isAssignedString(parentMenu) then
         parentMenu = MENU_GROUP:New(forGroup, parentMenu)
     end
-    SETTINGS_MENUS:BuildCoalition(parentMenu)
+    SETTINGS_MENUS:BuildCoalition(self, parentMenu)
     for i, area in ipairs(DCAF.GBAD.Areas) do
         local areaMenu = MENU_GROUP:New(forGroup, area.Name, parentMenu)
         buildSkynetGroupMenu(area, forGroup, areaMenu)

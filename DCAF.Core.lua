@@ -1,7 +1,7 @@
 -- ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 --                                     DCAF.Core - The DCAF Lua foundation (relies on MOOSE)
---                                                Digital Coalition Air Force
---                                                          2022
+--                                              Digital Coalition Air Force
+--                                                        2022
 -- ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DCAF = {
@@ -104,12 +104,12 @@ function listClone(table, deep, startIndex, endIndex)
     return clone
 end
 
-function listReverse(table)
-    if not isList(table) then
-        error("tableClone :: `table` must be a list") end
+function listReverse(list)
+    if not isList(list) then
+        error("tableClone :: `list` must be a list") end
     local reversed = {}
-    for i = #table, 1, -1 do
-        table.insert(reversed, table[i])
+    for i = #list, 1, -1 do
+        table.insert(reversed, list[i])
     end
     return reversed
 end
@@ -238,6 +238,13 @@ function Knots(knots)
     return UTILS.KnotsToMps(knots)
 end
 
+function MachToKnots(mach)
+    if not isNumber(mach) then
+        error("MachToKnots :: `mach` must be a number but was : " .. type(mach)) end
+
+    return 666.738661 * mach
+end
+
 function Hours(seconds)
     if isNumber(seconds) then
         return seconds * 3600
@@ -330,18 +337,18 @@ function listCopy(source, target, sourceStartIndex, targetStartIndex)
     return target, #target
 end
 
-function tableCopy(source, target)
+function tableCopy(source, target, deep)
     local count = 0
     if not isTable(target) then
         target = {}
     end
     for k,v in pairs(source) do
         if target[k] == nil then
-            if isTable(v) then
-                target[k] = routines.utils.deepCopy(v)
-            else
+            -- if isTable(v) then
+            --     target[k] = routines.utils.deepCopy(v)
+            -- else
                 target[k] = v
-            end
+            -- end
         end
         count = count + 1
     end
@@ -444,6 +451,43 @@ function dictGetKeyFor(table, criteria)
 
         if isFunction(criteria) and criteria(v) then
             return key end
+    end
+end
+
+VariableValue = {
+    ClassName = "VariableValue",
+    Value = 100,           -- #number - fixed value)
+    Variance = 0           -- #number - variance (percent)
+}
+
+function VariableValue:New(value, variance)
+    if not isNumber(value) then
+        error("VariableValue:New :: `value` must be a number") end
+    
+    if variance == nil then
+        variance = 0
+    else
+        if not isNumber(variance) then
+            error("VariableValue:New :: `variance` must be a number") 
+        end
+        variance = math.max(0, variance)
+    end
+        
+    local vv = DCAF.clone(VariableValue)
+    vv.Value = value
+    vv.Variance = variance
+    return vv
+end
+
+function VariableValue:GetValue()
+    if self.Variance == 0 then
+        return self.Value
+    end
+    local var = (math.random(self.Variance) / 100) * self.Value
+    if math.random(100) <= 50 then
+        return self.Value - var
+    else
+        return self.Value + var
     end
 end
 
@@ -692,6 +736,42 @@ function GroupType.IsAny(groupType, table)
             return true
         end
     end
+end
+
+local SPAWNS = { -- dictionary
+    -- key   = template name
+    -- value = #SPAWN
+}
+
+function getSpawn(name)
+    local function f()
+        local spawn = SPAWNS[name]
+        if spawn then return
+            spawn end
+        spawn = SPAWN:New(name)
+        SPAWNS[name] = spawn
+        return spawn
+    end
+
+    local success, spawn = pcall(f)
+    if success then 
+        return spawn end
+end
+
+function getSpawnWithAlias(name, alias)
+    local function f()
+        local key = name .. "::" .. alias
+        local spawn = SPAWNS[key]
+        if spawn then return
+            spawn end
+        spawn = SPAWN:NewWithAlias(name, alias)
+        SPAWNS[key] = spawn
+        return spawn
+    end
+
+    local success, spawn = pcall(f)
+    if success then 
+        return spawn end
 end
 
 --[[
@@ -961,10 +1041,16 @@ local function isEscortingFromTask( escortGroup, clientGroup )
 end
 
 --- Retrieves the textual form of MOOSE's 
-function CALLSIGN.Tanker:ToString(nCallsign)
-    if     nCallsign == CALLSIGN.Tanker.Arco then return "Arco"
-    elseif nCallsign == CALLSIGN.Tanker.Shell then return "Shell"
-    elseif nCallsign == CALLSIGN.Tanker.Texaco then return "Texaco"
+function CALLSIGN.Tanker:ToString(nCallsign, number)
+    local name
+    if     nCallsign == CALLSIGN.Tanker.Arco then name = "Arco"
+    elseif nCallsign == CALLSIGN.Tanker.Shell then name = "Shell"
+    elseif nCallsign == CALLSIGN.Tanker.Texaco then name = "Texaco"
+    end
+    if isNumber(number) then
+        return name .. " " .. tostring(number)
+    else
+        return name
     end
 end
 
@@ -975,12 +1061,18 @@ function CALLSIGN.Tanker:FromString(sCallsign)
     end
 end
 
-function CALLSIGN.AWACS:ToString(nCallsign)
-    if     nCallsign == CALLSIGN.AWACS.Darkstar then return "Darkstar"
-    elseif nCallsign == CALLSIGN.AWACS.Focus then return "Focus"
-    elseif nCallsign == CALLSIGN.AWACS.Magic then return "Magic"
-    elseif nCallsign == CALLSIGN.AWACS.Overlord then return "Overlord"
-    elseif nCallsign == CALLSIGN.AWACS.Wizard then return "Wizard"
+function CALLSIGN.AWACS:ToString(nCallsign, number)
+    local name
+    if     nCallsign == CALLSIGN.AWACS.Darkstar then name = "Darkstar"
+    elseif nCallsign == CALLSIGN.AWACS.Focus then name = "Focus"
+    elseif nCallsign == CALLSIGN.AWACS.Magic then name = "Magic"
+    elseif nCallsign == CALLSIGN.AWACS.Overlord then name = "Overlord"
+    elseif nCallsign == CALLSIGN.AWACS.Wizard then name = "Wizard"
+    end
+    if isNumber(number) then
+        return name .. " " .. tostring(number)
+    else
+        return name
     end
 end
 
@@ -2391,6 +2483,76 @@ function IsAARTanker(group)
     return false
 end
 
+function HasTask(controllabe, sTaskId, wpIndex) -- todo move higher up, to more general part of the file
+    local group = getGroup(controllabe)
+    if not group then
+        error("HasTask :: cannot resolve group from: " .. DumpPretty(controllabe)) end
+
+    local route = group:CopyRoute()
+    local function hasWpTask(wp)
+        for index, task in ipairs(wp.task.params.tasks) do
+            if task.id == sTaskId then 
+                return index end
+        end
+    end
+
+    if not wpIndex then
+        for wpIndex, wp in ipairs(route) do
+            if hasWpTask(wp) then 
+                return wpIndex end
+        end
+    elseif hasWpTask(route[wpIndex]) then
+        return wpIndex 
+    end
+end
+
+function HasAction(controllabe, sActionId, wpIndex) -- todo move higher up, to more general part of the file
+    local group = getGroup(controllabe)
+    if not group then
+        error("HasTask :: cannot resolve group from: " .. DumpPretty(controllabe)) end
+
+    local route = group:CopyRoute()
+    local function hasWpAction(wp)
+        for index, task in ipairs(wp.task.params.tasks) do
+            if task.id == "WrappedAction" and task.params.action.id == sActionId then 
+                return index end
+        end
+    end
+
+    if not wpIndex then
+        for wpIndex, wp in ipairs(route) do
+            if hasWpAction(wp) then 
+                return wpIndex end
+        end
+    elseif hasWpAction(route[wpIndex]) then
+        return wpIndex
+    end
+end
+
+function HasLandingTask(controllabe) 
+    -- note: The way I understand it a landing task can be a WrappedAction or a special type of "Land" waypint
+    local wrappedLandingWpIndex = HasAction(controllabe, "Landing")
+    if wrappedLandingWpIndex then
+        return wrappedLandingWpIndex 
+    end
+
+    local group = getGroup(controllabe)
+    if not group then
+        error("HasLandingTask :: cannot resolve group from: " .. DumpPretty(controllabe)) end
+
+    local route = group:CopyRoute()
+    for wpIndex, wp in ipairs(route) do
+        if wp.type == "Land" then 
+            return wpIndex, AIRBASE:FindByID(wp.airdromeId)
+        end
+    end
+end
+function HasOrbitTask(controllabe) return HasTask(controllabe, "Orbit") end
+function HasTankerTask(controllabe) return HasTask(controllabe, "Tanker") end
+function HasSetFrequencyTask(controllabe) return HasAction(controllabe, "SetFrequency") end
+function HasActivateBeaconTask(controllabe) return HasAction(controllabe, "ActivateBeacon") end
+function HasDeactivateBeaconTask(controllabe) return HasAction(controllabe, "DeactivateBeacon") end
+
 --------------------------------------------- [[ MISSION EVENTS ]] ---------------------------------------------
 
 
@@ -2424,15 +2586,10 @@ local PlayersAndUnits = { -- dictionary
 }
 
 function PlayersAndUnits:Add(unit, playerName)
--- Debug("nisse - player enters unit :: unit: " .. unit.UnitName .. " :: player: " .. Dump(playerName))
     PlayersAndUnits[unit.UnitName] = { Unit = unit, PlayerName = playerName}
 end
 
 function PlayersAndUnits:Remove(unitName)
--- local nisse = PlayersAndUnits[unitName]
--- if nisse then
--- Debug("nisse - player leaves unit :: unit: " .. unitName .. " :: player: " .. Dump(nisse.PlayerName))
--- end
     PlayersAndUnits[unitName] = nil
 end
 
@@ -4236,7 +4393,9 @@ function DCAF.Carrier:AddF10PlayerMenus()
         end, true)
 end
 
----------------------------------------- BIG (air force) TANKERS & AWACS ----------------------------------------
+-- ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+--                                              BIG (air force) TANKERS & AWACS
+-- ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 local DCAF_Tankers = {
     [CALLSIGN.Tanker.Shell] = {
@@ -4378,7 +4537,7 @@ function DCAF.Tanker:IsMissing()
     return not self.Group
 end
 
-function DCAF.Tanker:New(controllable, replicate)
+function DCAF.Tanker:New(controllable, replicate, callsign, callsignNumber)
     local tanker = DCAF.clone(replicate or DCAF.Tanker)
     tanker._isTemplate = false
     local group = getGroup(controllable)
@@ -4390,15 +4549,18 @@ function DCAF.Tanker:New(controllable, replicate)
 
     -- initiate tanker ...
     tanker.Group = group
-    -- local existing, key = DCAF_Services:Exists(tanker)
-    -- if existing then
-    --     error("DCAF.Tanker:New :: Cannot create service '" .. key .."'. Tanker was already created") end
-    
-    -- DCAF_Services:Add(tanker)
-
-    local callsign, callsignNumber = GetCallsign(group)
-    Trace("DCAF.Tanker:New :: callsign: " .. callsign .. " " .. Dump(callsignNumber))    
-    local defaults = DCAF_Tankers[CALLSIGN.Tanker:FromString(callsign)][callsignNumber]
+    local defaults
+    if callsign ~= nil then
+        if not isNumber(callsign) then
+            error("DCAF.Tanker:New :: `callsign` must be number but was " .. type(callsign))  end
+        if not isNumber(callsignNumber) then
+            error("DCAF.Tanker:New :: `callsignNumber` must be number but was " .. type(callsignNumber))  end
+        defaults = DCAF_Tankers[callsign][callsignNumber]
+    else
+        callsign, callsignNumber = GetCallsign(group)
+        defaults = DCAF_Tankers[CALLSIGN.Tanker:FromString(callsign)][callsignNumber]
+    end
+    Trace("DCAF.Tanker:New :: callsign: " .. Dump(callsign) .. " " .. Dump(callsignNumber) .. " :: defaults: " .. DumpPrettyDeep(defaults))
     tanker.TACANChannel = defaults.TACANChannel
     tanker.TACANMode = defaults.TACANMode
     tanker.TACANIdent = defaults.TACANIdent
@@ -4428,96 +4590,55 @@ function DCAF.Tanker:New(controllable, replicate)
     return tanker
 end
 
-function DCAF.Tanker:NewFromCallsign(callsign, callsignNumber)
-    if callsign == nil then
-        error("DCAF.Tanker:New :: callsign group was not specified") end
+function DCAF.Tanker:InitFrequency(frequency)
+    if not isNumber(frequency) then
+        error("DCAF.Tanker:WithFrequency :: `frequency` must be a number but was " .. type(frequency)) end
+    
+    self.Frequency = frequency
+    return self
+end
 
-    local group 
-    local groups = _DATABASE.GROUPS
+function DCAF.Tanker:FindGroupWithCallsign(callsign, callsignNumber)
     local callsignName = CALLSIGN.Tanker:ToString(callsign)
+    local groups = _DATABASE.GROUPS
     for _, g in pairs(groups) do
         if g:IsAir() then
             local csName, csNumber = GetCallsign(g:GetUnit(1))
             if csName == callsignName and csNumber == callsignNumber then
-                group = g
-                break
+                return g
             end
         end
     end
+end
 
+function DCAF.Tanker:NewFromCallsign(callsign, callsignNumber)
+    if callsign == nil then
+        error("DCAF.Tanker:New :: callsign group was not specified") end
+
+    local group = self:FindGroupWithCallsign(callsign, callsignNumber)
+    -- local groups = _DATABASE.GROUPS
+    -- local callsignName = CALLSIGN.Tanker:ToString(callsign)
+    -- for _, g in ipairs(groups) do
+    --     if g:IsAir() then
+    --         local csName, csNumber = GetCallsign(g:GetUnit(1))
+    --         if csName == callsignName and csNumber == callsignNumber then
+    --             group = g
+    --             break
+    --         end
+    --     end
+    -- end
+    if not group then
+        error("DCAF.Tanker:NewFromCallsign :: cannot resolve Tanker from callsign: " .. CALLSIGN.Tanker:ToString(callsign, callsignNumber)) end
     return DCAF.Tanker:New(group)
 end
 
-function HasTask(controllabe, sTaskId, wpIndex) -- todo move higher up, to more general part of the file
-    local group = getGroup(controllabe)
-    if not group then
-        error("HasTask :: cannot resolve group from: " .. DumpPretty(controllabe)) end
-
-    local route = group:CopyRoute()
-    local function hasWpTask(wp)
-        for index, task in ipairs(wp.task.params.tasks) do
-            if task.id == sTaskId then 
-                return index end
-        end
-    end
-
-    if not wpIndex then
-        for wpIndex, wp in ipairs(route) do
-            if hasWpTask(wp) then 
-                return wpIndex end
-        end
-    elseif hasWpTask(route[wpIndex]) then
-        return wpIndex 
-    end
-end
-
-function HasAction(controllabe, sActionId, wpIndex) -- todo move higher up, to more general part of the file
-    local group = getGroup(controllabe)
-    if not group then
-        error("HasTask :: cannot resolve group from: " .. DumpPretty(controllabe)) end
-
-    local route = group:CopyRoute()
--- Debug("nisse - HasAction :: route: " .. DumpPrettyDeep(route))    
-    local function hasWpAction(wp)
-        for index, task in ipairs(wp.task.params.tasks) do
-            if task.id == "WrappedAction" and task.params.action.id == sActionId then 
-                return index end
-        end
-    end
-
-    if not wpIndex then
-        for wpIndex, wp in ipairs(route) do
-            if hasWpAction(wp) then 
-                return wpIndex end
-        end
-    elseif hasWpAction(route[wpIndex]) then
-        return wpIndex
-    end
-end
-
-function HasLandingTask(controllabe) 
-    -- note: The way I understand it a landing task can be a WrappedAction or a special type of "Land" waypint
-    local wrappedLandingWpIndex = HasAction(controllabe, "Landing")
-    if wrappedLandingWpIndex then
-        return wrappedLandingWpIndex 
-    end
-
-    local group = getGroup(controllabe)
-    if not group then
-        error("HasLandingTask :: cannot resolve group from: " .. DumpPretty(controllabe)) end
-
-    local route = group:CopyRoute()
-    for wpIndex, wp in ipairs(route) do
-        if wp.type == "Land" then 
-            return wpIndex, AIRBASE:FindByID(wp.airdromeId)
-        end
-    end
-end
-function HasOrbitTask(controllabe) return HasTask(controllabe, "Orbit") end
-function HasTankerTask(controllabe) return HasTask(controllabe, "Tanker") end
-function HasSetFrequencyTask(controllabe) return HasAction(controllabe, "SetFrequency") end
-function HasActivateBeaconTask(controllabe) return HasAction(controllabe, "ActivateBeacon") end
-function HasDeactivateBeaconTask(controllabe) return HasAction(controllabe, "DeactivateBeacon") end
+-- function DCAF.Tanker:Route(route)
+--     if not isTable(route) then
+--         error("DCAF.Tanker:Route :: `route` must be a table but was " .. type(route)) end
+--     self.Route = route
+--     self.Group:Route(route)
+--     return self
+-- end
 
 function DCAF_ServiceTrack:IsTanker()
     return self.Service.ClassName == DCAF_SERVICE_TYPE.Tanker
@@ -4527,18 +4648,123 @@ function DCAF_ServiceTrack:IsAWACS()
     return self.Service.ClassName == DCAF_SERVICE_TYPE.AWACS
 end
 
+local function insertWaypointTask(waypoint, task)
+    task.number = #waypoint.task.params.tasks+1 
+    table.insert(waypoint.task.params.tasks, task)
+end
+
+local function TankerTask()
+    return {
+        auto = false,
+        id = "Tanker",
+        enabled = true,
+        params = { },
+    }
+end
+
+local function FrequencyAction(nFrequency, nPower, modulation)
+    if not isNumber(nFrequency) then
+        error("FrequencyAction :: `nFrequency` must be number but was " .. type(nFrequency)) end
+
+    if not isNumber(nPower) then
+        nPower = 10
+    end
+
+    if not modulation then
+        modulation = radio.modulation.AM
+    end
+
+    return 
+    { 
+        id = 'SetFrequency', 
+        params = { 
+            power = nPower,
+            frequency = nFrequency * 1000000, 
+            modulation = modulation 
+        }, 
+    }
+end
+
+local function ActivateBeaconAction(beaconType, nChannel, nFrequency, sModeChannel, sCallsign, nBeaconSystem, bBearing, bAA)
+    if not isNumber(beaconType) then
+        beaconType = BEACON.Type.TACAN
+    end
+    if not isBoolean(bBearing) then
+        bBearing = true
+    end    
+    if not isBoolean(bAA) then
+        bAA = false
+    end
+
+    return {
+        id = "ActivateBeacon",
+        params = {
+            modeChannel = sModeChannel,
+            type = beaconType,
+            system = nBeaconSystem,
+            AA = bAA,
+            callsign = sCallsign,
+            channel = nChannel,
+            bearing = bBearing,
+            frequency = nFrequency
+        }
+    }
+end
+
+local function ActivateTacanAction(nChannel, sModeChannel, sCallsign, bBearing, bAA)
+    local tacanSystem
+    if sModeChannel == "X" then
+        tacanSystem = BEACON.System.TACAN_TANKER_X
+    else
+        tacanSystem = BEACON.System.TACAN_TANKER_Y
+    end
+    return ActivateBeaconAction(
+        BEACON.Type.TACAN, 
+        nChannel,
+        UTILS.TACANToFrequency(nChannel, sModeChannel), 
+        sModeChannel, 
+        sCallsign, 
+        tacanSystem, 
+        bBearing, 
+        bAA)
+    -- return {
+    --     id = "ActivateBeacon",
+    --     params = {
+    --         modeChannel = self.Service.TACANMode,
+    --         type = BEACON.Type.TACAN,
+    --         system = tacanSystem,
+    --         AA = false,
+    --         callsign = self.Service.TACANIdent,
+    --         channel = self.Service.TACANChannel,
+    --         bearing = true,
+    --         frequency = UTILS.TACANToFrequency(self.Service.TACANChannel, self.Service.TACANMode),
+    --     },
+    -- }
+end
+
+local function insertWaypointAction(waypoint, action)
+    table.insert(waypoint.task.params.tasks, {
+        number = #waypoint.task.params.tasks+1,
+        auto = false,
+        id = "WrappedAction",
+        enabled = true,
+        params = { action = action },
+      })
+end
+
 function DCAF_ServiceTrack:Execute(direct) -- direct = service will proceed direct to track
     if not isBoolean(direct) then
         direct = false
     end
-    local route = self.Service.Group:CopyRoute()
--- Debug("nisse - DCAF_ServiceTrack:Execute :: self: " .. DumpPrettyDeep(self, 1))
-    local startWpIndex = self.StartWpIndex
-    startWpIndex = startWpIndex+1 -- this is to harmonize with WP numbers on map (1st WP on map is zero - 0)
-    if startWpIndex > #route then
-        error("DCAF.Tanker:SetTrack :: start waypoint must be within route (route is " .. Dump(#route) .. " waypoints, startWp was ".. Dump(nStartWp) .. ")") end
 
-    local startWp = route[startWpIndex]
+    local waypoints, route = self.Service:GetWaypoints() -- .Route or self.Service.Group:CopyRoute()
+    local wpOffset = 1
+    local startWpIndex = self.StartWpIndex
+    startWpIndex = startWpIndex + wpOffset -- this is to harmonize with WP numbers on map (1st WP on map is zero - 0)
+    if startWpIndex > #waypoints then
+        error("DCAF.Tanker:SetTrack :: start waypoint must be within route (route is " .. Dump(#waypoints) .. " waypoints, startWp was ".. Dump(startWpIndex) .. ")") end
+
+    local startWp = waypoints[startWpIndex]
     
     local trackLength = self.Length
     local trackAltitude
@@ -4546,23 +4772,24 @@ function DCAF_ServiceTrack:Execute(direct) -- direct = service will proceed dire
     if not isNumber(trackLength) then
         trackLength = NauticalMiles(30)
     end
--- Debug("nisse - DCAF_ServiceTrack:Execute :: self: " .. DumpPrettyDeep(self, 2))    
     if isNumber(self.Block) then
         trackAltitude = Feet(self.Block * 1000)
-        startWp.alt = trackAltitude
     elseif isNumber(self.Service.TrackBlock) then
         trackAltitude = Feet(self.Service.TrackBlock * 1000)
-        startWp.alt = trackAltitude
+    end
+    startWp.alt = trackAltitude
+    if DCAF.Debug then
+        startWp.name = "TRACK IP"
     end
 
     local startWpCoord = COORDINATE:NewFromWaypoint(startWp)
     local endWpCoord 
 
     if not isNumber(trackHeading) then
-        if startWpIndex == #route then
+        if startWpIndex == #waypoints then
             error(self.Service.ClassName.."SetTrackFromWaypoint :: heading was unassigned/unexpected value and start of track was also last waypoint")
         else
-            endWpCoord = COORDINATE:NewFromWaypoint(route[startWpIndex+1])
+            endWpCoord = COORDINATE:NewFromWaypoint(waypoints[startWpIndex+1])
             self.RTBWaypoint = startWpIndex+2 -- note, if last WP in track was also last waypoint in route, this will point 'outside' the route
         end
     else
@@ -4606,22 +4833,15 @@ function DCAF_ServiceTrack:Execute(direct) -- direct = service will proceed dire
     local function hasActivateBeaconTask() return HasAction(self.Service.Group, "ActivateBeacon") end      -- todo consider elevating this func to global
     local function hasDeactivateBeaconTask() return HasAction(self.Service.Group, "DeactivateBeacon") end  -- todo consider elevating this func to global
 
-    local function insertTask(task)                                                   -- todo consider elevating this func to global
-        task.number = #startWp.task.params.tasks+1 
-        table.insert(startWp.task.params.tasks, task)
-    end
+    -- local function insertTask(task)                                                   -- todo consider elevating this func to global
+    --     insertWaypointTask(startWp, task)
+    -- end
 
     local function insertAction(action, wpIndex)                                      -- todo consider elevating this func to global
         if wpIndex == nil then
             wpIndex = startWpIndex end
-        local wp = route[wpIndex]
-        table.insert(wp.task.params.tasks, {
-            number = #wp.task.params.tasks+1,
-            auto = false,
-            id = "WrappedAction",
-            enabled = true,
-            params = { action = action },
-          })
+        local wp = waypoints[wpIndex]
+        insertWaypointAction(wp, action)
     end
 
     drawTrack()
@@ -4629,30 +4849,19 @@ function DCAF_ServiceTrack:Execute(direct) -- direct = service will proceed dire
     if self:IsTanker() then
         local tankerTask = hasTankerTask()
         if not tankerTask or tankerTask > startWpIndex then
-            insertTask({
-                auto = false,
-                id = "Tanker",
-                enabled = true,
-                params = { },
-            })
+            insertWaypointTask(startWp, TankerTask())
         end
     end
 
     local setFrequencyTask = hasSetFrequencyTask()
     if self.Service.Frequency and (not setFrequencyTask or setFrequencyTask > startWpIndex) then
-        insertAction({ 
-            id = 'SetFrequency', 
-            params = { 
-                power = 10,
-                frequency = self.Service.Frequency * 1000000, 
-                modulation = radio.modulation.AM, 
-            }, 
-        })
+        insertWaypointAction(startWp, FrequencyAction(self.Service.Frequency))
     end
 
     local orbitTask = hasOrbitTask()
     if not orbitTask or orbitTask ~= startWpIndex then
-        insertTask(self.Service.Group:TaskOrbit(startWpCoord, trackAltitude, Knots(self.Service.TrackSpeed), endWpCoord))
+        insertWaypointTask(startWp, self.Service.Group:TaskOrbit(startWpCoord, trackAltitude, Knots(self.Service.TrackSpeed), endWpCoord))
+        -- insertTask(self.Service.Group:TaskOrbit(startWpCoord, trackAltitude, Knots(self.Service.TrackSpeed), endWpCoord)) obsolete
         if orbitTask and orbitTask ~= startWpIndex then
             Warning(self.Service.ClassName..":SetTrack :: there is an orbit task set to a different WP (" .. Dump(orbitTask) .. ") than the one starting the tanker track (" .. Dump(startWpIndex) .. ")") end
 
@@ -4662,10 +4871,14 @@ function DCAF_ServiceTrack:Execute(direct) -- direct = service will proceed dire
     local tacanWpIndex
     local tacanWpSpeed = UTILS.KnotsToKmph(self.Service.TrackSpeed)
 
-    if self:IsTanker() and not hasActivateBeaconTask() then
+    local isAlreadyActivated = false
+    if isNumber(self.Service._serviceWP) then
+        isAlreadyActivated = self.Service._serviceWP < startWpIndex
+    end
+    if self:IsTanker() and not hasActivateBeaconTask() and not isAlreadyActivated then
         -- ensure TACAN gets activated _before_ the first Track WP (some weird bug in DCS otherwise may cause it to not activate)
         -- inject a new waypoint 2 nm before the tanker track, or use the previous WP if < 10nm from the tanker track
-        local prevWp = route[startWpIndex-1]
+        local prevWp = waypoints[startWpIndex - wpOffset]
         local prevWpCoord = COORDINATE:NewFromWaypoint(prevWp)
         local distance = prevWpCoord:Get2DDistance(startWpCoord)
         local tacanWp
@@ -4676,40 +4889,37 @@ function DCAF_ServiceTrack:Execute(direct) -- direct = service will proceed dire
             local dirVec3 = prevWpCoord:GetDirectionVec3(startWpCoord)
             local heading = prevWpCoord:GetAngleDegrees(dirVec3)
             local tacanWpCoord = prevWpCoord:Translate(distance - NauticalMiles(2), heading, trackAltitude)
-            -- tacanWpCoord:SetAltitude(startWpCoord.y) obsolete
-            local tacanWp = tacanWpCoord:WaypointAir(
+            tacanWp = tacanWpCoord:WaypointAir(
                 COORDINATE.WaypointAltType.BARO, 
                 COORDINATE.WaypointType.TurningPoint,
                 COORDINATE.WaypointAction.TurningPoint,
                 tacanWpSpeed)
             tacanWp.alt = trackAltitude
-            table.insert(route, startWpIndex, tacanWp)
+            table.insert(waypoints, startWpIndex, tacanWp)
             tacanWpIndex = startWpIndex
+        end
+        if DCAF.Debug and not tacanWp.name then
+            tacanWp.name = "ACTIVATE"
         end
 
         local tacanSystem
         if self.TACANMode == "X" then
             tacanSystem = BEACON.System.TACAN_TANKER_X
-          else
+        else
             tacanSystem = BEACON.System.TACAN_TANKER_Y
-          end
-        insertAction({
-            id = "ActivateBeacon",
-            params = {
-                modeChannel = self.Service.TACANMode,
-                type = BEACON.Type.TACAN,
-                system = tacanSystem,
-                AA = false,
-                callsign = self.Service.TACANIdent,
-                channel = self.Service.TACANChannel,
-                bearing = true,
-                frequency = UTILS.TACANToFrequency(self.Service.TACANChannel, self.Service.TACANMode),
-            },
-        })
+        end
+
+        insertWaypointAction(tacanWp, ActivateTacanAction(
+            self.Service.TACANChannel,
+            self.Service.TACANMode,
+            self.Service.TACANIdent,
+            true,
+            false
+        ))
         startWpIndex = startWpIndex+1          
     end
 
-    if startWpIndex == #route or startWpIndex == #route-1 then
+    if startWpIndex == #waypoints or startWpIndex == #waypoints-1 then
         -- add waypoint for end of track ...
         local endWp = endWpCoord:WaypointAir(
             COORDINATE.WaypointAltType.BARO, 
@@ -4717,14 +4927,17 @@ function DCAF_ServiceTrack:Execute(direct) -- direct = service will proceed dire
             COORDINATE.WaypointAction.TurningPoint,
             tacanWpSpeed)
         endWp.alt = trackAltitude
-        table.insert(route, startWpIndex+1, endWp)
+        if DCAF.Debug then
+            endWp.name = "TRACK END"
+        end
+        table.insert(waypoints, startWpIndex+1, endWp)
     end
     if direct then
-        route = listCopy(route, nil, tacanWpIndex)
+        waypoints = listCopy(waypoints, nil, tacanWpIndex)
     end
--- Debug("nisse :: route for " .. self.Service.Group.GroupName ..": " .. DumpPrettyDeep(route))
-    self.Route = route
-    self.Service.Group:Route(route)
+    self.Route = waypoints
+-- Debug("nisse - route: " .. DumpPrettyDeep(route,2))
+    self.Service:SetRoute(route or waypoints)
 end
 
 local function setServiceTrack(service, nStartWp, nHeading, nLength, nBlock, rgbColor, sTrackName, direct)
@@ -4741,6 +4954,65 @@ local function setServiceTrack(service, nStartWp, nHeading, nLength, nBlock, rgb
     service.Track.Service = self
     service.Track:Execute(direct)
     return service
+end
+
+local function setAirServiceRoute(service, route)
+    if DCAF.AIR_ROUTE and isClass(DCAF.AIR_ROUTE.ClassName) then
+        service._waypoints = route.Waypoints
+        service._airRoute = route
+    elseif isTable(route) then
+        service._waypoints = route
+    end
+    service.Group:Route(service._waypoints)
+end
+
+local function getAirServiceWaypoints(service)
+    if isTable(service._waypoints) then
+        return service._waypoints, service._airRoute
+    else
+        return service.Group:CopyRoute()
+    end
+end
+
+function DCAF.Tanker:GetWaypoints()
+    return getAirServiceWaypoints(self)
+end
+
+function DCAF.Tanker:SetRoute(route)
+    setAirServiceRoute(self, route)
+end
+
+--- Activates Tanker at specified waypoint (if not set, the tanker will activate as it enters its track - see: SetTrack)
+--- Please note that the WP should preceed the Track start WP for this to make sense 
+function DCAF.Tanker:ActivateService(nServiceWp)
+    if not isNumber(nServiceWp) then
+        error("DCAF.Tanker:ActivateService :: `nActivateWp` must be number but was " .. type(nServiceWp)) end
+
+    if nServiceWp < 1 then 
+        error("DCAF.Tanker:ActivateService :: `nActivateWp` must be a positive non-zero value") end
+
+    nServiceWp = nServiceWp+1
+    local waypoints, route = self:GetWaypoints()
+    if nServiceWp > #waypoints then
+        error("DCAF.Tanker:ActivateService :: `nActivateWp` must be a WP of the (currently there are " .. #waypoints .. " waypoints in route") end
+
+    -- activate TACAN, Frequency and 'Tanker' task at specified WP
+    self._serviceWP = nServiceWp
+    local serviceWp = waypoints[nServiceWp]
+    if DCAF.Debug then
+        serviceWp.name = "ACTIVATE"
+    end
+    insertWaypointTask(serviceWp, TankerTask())
+    insertWaypointAction(serviceWp, ActivateTacanAction(
+        self.TACANChannel,
+        self.TACANMode,
+        self.TACANIdent,
+        true,
+        false
+    ))
+    insertWaypointAction(serviceWp, FrequencyAction(self.Frequency))
+    self:SetRoute(route or waypoints)
+    return self
 end
 
 function DCAF.Tanker:SetTrack(nStartWp, nHeading, nLength, nBlock, rgbColor, sTrackName, direct)
@@ -4952,6 +5224,7 @@ function RTBNow(controllable, airbase, onLandedFunc)
 end
 
 local function serviceRTB(service, airbase, onLandedFunc)
+    CommandDeactivateBeacon(service.Group)
     RTBNow(service.Group, airbase or service.RTBAirbase, onLandedFunc)
     return self
 end
@@ -4999,7 +5272,7 @@ function DCAF.AWACS:IsMissing()
     return not self.Group
 end
 
-function DCAF.AWACS:New(controllable, replicate)
+function DCAF.AWACS:New(controllable, replicate, callsign, callsignNumber)
     local awacs = DCAF.clone(replicate or DCAF.AWACS)
     awacs._isTemplate = false
     local group = getGroup(controllable)
@@ -5011,9 +5284,21 @@ function DCAF.AWACS:New(controllable, replicate)
 
     -- initiate AWACS ...
     awacs.Group = group
-    local callsign, callsignNumber = GetCallsign(group)
-    Trace("DCAF.AWACS:New :: callsign: " .. callsign .. " " .. Dump(callsignNumber))    
-    local defaults = DCAF_AWACS[CALLSIGN.AWACS:FromString(callsign)][callsignNumber]
+    local defaults
+    if callsign ~= nil then
+        if not isNumber(callsign) then
+            error("DCAF.AWACS:New :: `callsign` must be number but was " .. type(callsign))  end
+        if not isNumber(callsignNumber) then
+            error("DCAF.AWACS:New :: `callsignNumber` must be number but was " .. type(callsignNumber))  end
+        defaults = DCAF_AWACS[callsign][callsignNumber]
+    else
+        callsign, callsignNumber = GetCallsign(group)
+        defaults = DCAF_AWACS[CALLSIGN.AWACS:FromString(callsign)][callsignNumber]
+    end
+    Trace("DCAF.DCAF_AWACS:New :: callsign: " .. Dump(callsign) .. " " .. Dump(callsignNumber) .. " :: defaults: " .. DumpPrettyDeep(defaults))
+    -- local callsign, callsignNumber = GetCallsign(group)                                  obsolete
+    -- Trace("DCAF.AWACS:New :: callsign: " .. callsign .. " " .. Dump(callsignNumber))    
+    -- local defaults = DCAF_AWACS[CALLSIGN.AWACS:FromString(callsign)][callsignNumber]
     if defaults then
         awacs.TrackBlock = defaults.TrackBlock
         awacs.TrackSpeed = defaults.TrackSpeed
@@ -5076,6 +5361,10 @@ function DCAF.AWACS:NewFromCallsign(callsign, callsignNumber)
     return DCAF.AWACS:New(group)
 end
 
+function DCAF.AWACS:GetWaypoints()
+    return getAirServiceWaypoints(self)
+end
+
 function DCAF.AWACS:SetTrack(nStartWp, nHeading, nLength, nBlock, rgbColor, sTrackName, direct)
     if isBoolean(rgbColor) and rgbColor then
         rgbColor = { 0, 1, 1 }
@@ -5115,6 +5404,9 @@ function DCAF.AWACS:Start(delay)
     return self
 end
 
+function DCAF.AWACS:SetRoute(route)
+    setAirServiceRoute(self, route)
+end
 
 function DCAF.AWACS:RTB(airbase, onLandedFunc)
     return serviceRTB(self, airbase, onLandedFunc)
@@ -5127,6 +5419,95 @@ end
 
 function DCAF.AWACS:SpawnReplacement(funcOnSpawned, nDelay)
     return serviceSpawnReplacement(self)
+end
+
+-- /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+--                                                             MENU BUILDING - HELPERS
+-- /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DCAF.MENU = {}
+
+function DCAF.MENU:New(parentMenu, maxCount, count, nestedMenuCaption)
+    local menu = DCAF.clone(DCAF.MENU)
+    if not isNumber(maxCount) then
+        maxCount = 9
+    end
+    if not isNumber(count) then
+        count = 0
+    end
+    menu._maxCount = maxCount
+    menu._count = count
+    menu._parentMenu = parentMenu
+    menu._nestedMenuCaption = "(more)"
+    return menu
+end
+
+function DCAF.MENU:Blue(text)
+    if not isAssignedString(text) then
+        error("DCAF.MENU:Blue :: `text` must be assigned string") end
+
+    if self._count == self._maxCount then
+        self._parentMenu = MENU_COALITION:New(coalition.side.BLUE, self._nestedMenuCaption, self._parentMenu)
+        self._count = 1
+    else
+        self._count = self._count + 1
+    end
+    return MENU_COALITION:New(coalition.side.BLUE, text, self._parentMenu)
+end
+
+function DCAF.MENU:BlueCommand(text, func, ...)
+    if not isAssignedString(text) then
+        error("DCAF.MENU:Blue :: `text` must be assigned string") end
+
+    if not isFunction(func) then
+        error("DCAF.MENU:Blue :: `func` must be a function but was: " .. type(func)) end
+
+    if self._count == self._maxCount then
+        self._parentMenu = MENU_COALITION:New(coalition.side.BLUE, self._nestedMenuCaption, self._parentMenu)
+        self._count = 1
+    else
+        self._count = self._count + 1
+    end
+    return MENU_COALITION_COMMAND:New(coalition.side.BLUE, text, self._parentMenu, func, ...)
+end
+
+function DCAF.MENU:Group(group, text)
+    local testGroup = getGroup(group)
+    if not testGroup then
+        error("DCAF.MENU:Group :: cannot resolve group from: " .. DumpPretty(group)) end
+
+    if not isAssignedString(text) then
+        error("DCAF.MENU:Group :: `text` must be assigned string") end
+
+    group = testGroup
+    if self._count == self._maxCount then
+        self._parentMenu = MENU_GROUP:New(group, self._nestedMenuCaption, self._parentMenu)
+        self._count = 1
+    else
+        self._count = self._count + 1
+    end
+    return MENU_GROUP:New(group, text, self._parentMenu)
+end
+
+function DCAF.MENU:GroupCommand(group, text, func, ...)
+    local testGroup = getGroup(group)
+    if not testGroup then
+        error("DCAF.MENU:GroupCommand :: cannot resolve group from: " .. DumpPretty(group)) end
+
+    if not isAssignedString(text) then
+        error("DCAF.MENU:GroupCommand :: `text` must be assigned string") end
+
+    if not isFunction(func) then
+        error("DCAF.MENU:GroupCommand :: `func` must be a function but was: " .. type(func)) end
+
+    group = testGroup
+    if self._count == self._maxCount then
+        self._parentMenu = MENU_GROUP:New(group, self._nestedMenuCaption, self._parentMenu)
+        self._count = 1
+    else
+        self._count = self._count + 1
+    end
+    return MENU_GROUP_COMMAND:New(group, text, self._parentMenu, func, ...)
 end
 
 
@@ -5346,6 +5727,7 @@ end
 function DCAF.WeaponSimulation:Start(safetyDistance)
     local scheduler = SCHEDULER:New()
     self.__scheduler = scheduler
+    self.__countTrackedWeapons = 0
     if not isNumber(safetyDistance) then
         safetyDistance = self.Config.SafetyDistance
     else
@@ -5363,81 +5745,91 @@ function DCAF.WeaponSimulation:Start(safetyDistance)
 
     self.__monitorFunc = function(event)
 -- Debug("DCAF.WeaponSimulation:Start :: event: " .. DumpPrettyDeep(event, 2))
-      local wpn = event.weapon
-      local wpnType = wpn:getTypeName()
-      local tgt = wpn:getTarget()
-      local iniUnit = event.IniUnit
-      local tgtUnit = event.TgtUnit
+        local wpn = event.weapon
+        local wpnType = wpn:getTypeName()
+        local tgt = wpn:getTarget()
+        local iniUnit = event.IniUnit
+        local tgtUnit = event.TgtUnit
 
-      local isManaged, msg = self:IsManaged(wpn, iniUnit, tgtUnit, self.Config)
-      if not isManaged then
-         Debug("DCAF.WeaponSimulation(" .. self.Name .. ") :: is NOT managing '" .. wpnType .."' fired by '" .. iniUnit.UnitName .. "' at " .. tgtUnit.UnitName .. " (" .. msg .. ")")
-         return
-      end
+        local isManaged, msg = self:IsManaged(wpn, iniUnit, tgtUnit, self.Config)
+        if not isManaged then
+            Debug("DCAF.WeaponSimulation(" .. self.Name .. ") :: is NOT managing '" .. wpnType .."' fired by '" .. iniUnit.UnitName .. "' at " .. tgtUnit.UnitName .. " (" .. msg .. ")")
+            return
+        end
 
-      local isSimulated, msg = self:IsSimulated(wpn, iniUnit, tgtUnit, self.Config)
-      if not isSimulated then
-         Debug("DCAF.WeaponSimulation(" .. self.Name .. ") :: will NOT deactive '" .. wpnType .."' fired by '" .. iniUnit.UnitName .. "' at " .. tgtUnit.UnitName .. " (" .. msg .. ")")
-         return
-      end
+        local isSimulated, msg = self:IsSimulated(wpn, iniUnit, tgtUnit, self.Config)
+        if not isSimulated then
+            Debug("DCAF.WeaponSimulation(" .. self.Name .. ") :: will NOT deactive '" .. wpnType .."' fired by '" .. iniUnit.UnitName .. "' at " .. tgtUnit.UnitName .. " (" .. msg .. ")")
+            return
+        end
 
-      local scheduler = SCHEDULER:New(self)
-    --   local wpnSimulation = self
+        -- local scheduler = SCHEDULER:New(self)
+        --   local wpnSimulation = self
 
-      local function getDistance3D(pos1, pos2)
-          local xDiff = pos1.x - pos2.x
-          local yDiff = pos1.y - pos2.y
-          local zDiff = pos1.z - pos2.z
-          return math.sqrt(xDiff * xDiff + yDiff * yDiff + zDiff*zDiff)
-      end
+        local function getDistance3D(pos1, pos2)
+            local xDiff = pos1.x - pos2.x
+            local yDiff = pos1.y - pos2.y
+            local zDiff = pos1.z - pos2.z
+            return math.sqrt(xDiff * xDiff + yDiff * yDiff + zDiff*zDiff)
+        end
 
-      local function trackWeapon()
-         local mslAlive, mslPos = pcall(function() return wpn:getPoint() end)
-         if not mslAlive then
-            -- weapon missed/was defeated...
-            Debug("DCAF.WeaponSimulation(" .. self.Name .. ") :: weapon no longer alive :: IGNORES")
-            scheduler:Stop()
-            self:_OnWeaponMisses(wpnType, iniUnit, tgtUnit)
-            return 
-         end
+        local scheduleId
+        local function trackWeapon()
+            local mslAlive, mslPos = pcall(function() return wpn:getPoint() end)
+            if not mslAlive then
+                -- weapon missed/was defeated...
+                Debug("DCAF.WeaponSimulation(" .. self.Name .. ") :: weapon no longer alive :: IGNORES")
+                scheduler:Stop(scheduleId)
+                scheduler:Remove(scheduleId)
+                self.__countTrackedWeapons = self.__countTrackedWeapons - 1
+                self:_OnWeaponMisses(wpnType, iniUnit, tgtUnit)
+                return 
+            end
 
-         local tgtAlive, tgtPos = pcall(function() return tgt:getPoint() end)
-         if not tgtAlive then
-            -- target is (no longer) alive...
-            Debug("DCAF.WeaponSimulation(" .. self.Name .. ") :: target no longer alive :: IGNORES")
-            scheduler:Stop()
-            return 
-         end
+            local tgtAlive, tgtPos = pcall(function() return tgt:getPoint() end)
+            if not tgtAlive then
+                -- target is (no longer) alive...
+                Debug("DCAF.WeaponSimulation(" .. self.Name .. ") :: target no longer alive :: IGNORES")
+                scheduler:Stop(scheduleId)
+                scheduler:Remove(scheduleId)
+                self.__countTrackedWeapons = self.__countTrackedWeapons - 1
+                return 
+            end
 
-         local distance = getDistance3D(mslPos, tgtPos)
--- Debug("DCAF.WeaponSimulation(" .. self.Name .. ") :: distance: " .. Dump(distance))
+            local distance = getDistance3D(mslPos, tgtPos)
             if distance <= safetyDistance then
                 -- weapon hit ...
                 wpn:destroy()
                 Debug("DCAF.WeaponSimulation(" .. self.Name .. ") :: weapon would have hit " .. tgtUnit.UnitName .. " (fired by " .. iniUnit.UnitName .. ") :: END")
-                scheduler:Stop()
+                scheduler:Stop(scheduleId)
+                scheduler:Remove(scheduleId)
+                self.__countTrackedWeapons = self.__countTrackedWeapons - 1
                 self:_OnWeaponHits(wpn, iniUnit, tgtUnit)
             end
         end
 
-        scheduler:Schedule(self, trackWeapon, { }, 1, .05)
-        scheduler:Start()
+        scheduleId = scheduler:Schedule(self, trackWeapon, { }, 1, .05)
+        scheduler:Start(scheduleId)
+        self.__countTrackedWeapons = self.__countTrackedWeapons+1
     end
 
     MissionEvents:OnWeaponFired(self.__monitorFunc)
     table.insert( __wpnSim_simulations, self )
+    -- scheduler:Start()
     if isFunction(self.OnStarted) then
         self:OnStarted()
     end
-   return self
+    return self
 end
 
 function DCAF.WeaponSimulation:Stop()
-    if not self.__monitorFunc then
+    if not self.__scheduler then
         return end
-   
+
     MissionEvents:EndOnWeaponFired(self.__monitorFunc)
-    self.__scheduler:Stop()
+    if self.__countTrackedWeapons > 0 then
+        self.__scheduler:Clear()
+    end
     self.__monitorFunc = nil
     self.__scheduler = nil
     local idx = tableIndexOf(__wpnSim_simulations, self)
@@ -5447,6 +5839,10 @@ function DCAF.WeaponSimulation:Stop()
     if isFunction(self.OnStopped) then
         self:OnStopped()
     end
+end
+
+function DCAF.WeaponSimulation:IsActive()
+    return self.__scheduler ~= nil
 end
 
 function DCAF.WeaponSimulation:OnStarted()
