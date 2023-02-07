@@ -106,8 +106,10 @@ end
 
 function listReverse(list)
     if not isList(list) then
-        error("tableClone :: `list` must be a list") end
+        error("tableClone :: `list` must be a list, but was " .. type(list)) end
+
     local reversed = {}
+    local r = 1
     for i = #list, 1, -1 do
         table.insert(reversed, list[i])
     end
@@ -422,6 +424,15 @@ function dictCount(table)
         count = count+1
     end
     return count
+end
+
+function listRandomItem(table)
+    if not isTable(table) then
+        error("tableRandomItem :: `table` must be table but was " .. type(table)) end
+
+    local index = math.random(#table)
+    local item = table[index]
+    return item, index
 end
 
 function dictRandomKey(table, maxIndex)
@@ -863,9 +874,18 @@ local function isSubjectivelySameGroup( group1, group2 )
             and isSameAltitude(group1, group2) 
 end
 
+function COORDINATE:EnsureY(useDefaultY)
+    if self.y == nil then
+        self.y = useDefaultY or 0
+    end
+    return self
+end
+
 function COORDINATE:GetBearingTo(coordinate)
-    local dirVec3 = self:GetDirectionVec3(coordinate)
-    local bearing = self:GetAngleDegrees(dirVec3)
+    local from = self:EnsureY()
+    coordinate = coordinate:EnsureY()
+    local dirVec3 = from:GetDirectionVec3(coordinate)
+    local bearing = from:GetAngleDegrees(dirVec3)
     return bearing
 end
 
@@ -4648,12 +4668,12 @@ function DCAF_ServiceTrack:IsAWACS()
     return self.Service.ClassName == DCAF_SERVICE_TYPE.AWACS
 end
 
-local function insertWaypointTask(waypoint, task)
+function InsertWaypointTask(waypoint, task)
     task.number = #waypoint.task.params.tasks+1 
     table.insert(waypoint.task.params.tasks, task)
 end
 
-local function TankerTask()
+function TankerTask()
     return {
         auto = false,
         id = "Tanker",
@@ -4727,22 +4747,9 @@ local function ActivateTacanAction(nChannel, sModeChannel, sCallsign, bBearing, 
         tacanSystem, 
         bBearing, 
         bAA)
-    -- return {
-    --     id = "ActivateBeacon",
-    --     params = {
-    --         modeChannel = self.Service.TACANMode,
-    --         type = BEACON.Type.TACAN,
-    --         system = tacanSystem,
-    --         AA = false,
-    --         callsign = self.Service.TACANIdent,
-    --         channel = self.Service.TACANChannel,
-    --         bearing = true,
-    --         frequency = UTILS.TACANToFrequency(self.Service.TACANChannel, self.Service.TACANMode),
-    --     },
-    -- }
 end
 
-local function insertWaypointAction(waypoint, action)
+function InsertWaypointAction(waypoint, action)
     table.insert(waypoint.task.params.tasks, {
         number = #waypoint.task.params.tasks+1,
         auto = false,
@@ -4750,6 +4757,19 @@ local function insertWaypointAction(waypoint, action)
         enabled = true,
         params = { action = action },
       })
+end
+
+function ScriptAction(script)
+    if not isAssignedString(script) then
+        error("ScriptAction :: `script` must be assigned string, but was " .. type(script)) end
+
+    return {
+        id = "Script",
+        params = 
+        {
+            command = script
+        }
+    }
 end
 
 function DCAF_ServiceTrack:Execute(direct) -- direct = service will proceed direct to track
@@ -4834,14 +4854,14 @@ function DCAF_ServiceTrack:Execute(direct) -- direct = service will proceed dire
     local function hasDeactivateBeaconTask() return HasAction(self.Service.Group, "DeactivateBeacon") end  -- todo consider elevating this func to global
 
     -- local function insertTask(task)                                                   -- todo consider elevating this func to global
-    --     insertWaypointTask(startWp, task)
+    --     InsertWaypointTask(startWp, task)
     -- end
 
     local function insertAction(action, wpIndex)                                      -- todo consider elevating this func to global
         if wpIndex == nil then
             wpIndex = startWpIndex end
         local wp = waypoints[wpIndex]
-        insertWaypointAction(wp, action)
+        InsertWaypointAction(wp, action)
     end
 
     drawTrack()
@@ -4849,18 +4869,18 @@ function DCAF_ServiceTrack:Execute(direct) -- direct = service will proceed dire
     if self:IsTanker() then
         local tankerTask = hasTankerTask()
         if not tankerTask or tankerTask > startWpIndex then
-            insertWaypointTask(startWp, TankerTask())
+            InsertWaypointTask(startWp, TankerTask())
         end
     end
 
     local setFrequencyTask = hasSetFrequencyTask()
     if self.Service.Frequency and (not setFrequencyTask or setFrequencyTask > startWpIndex) then
-        insertWaypointAction(startWp, FrequencyAction(self.Service.Frequency))
+        InsertWaypointAction(startWp, FrequencyAction(self.Service.Frequency))
     end
 
     local orbitTask = hasOrbitTask()
     if not orbitTask or orbitTask ~= startWpIndex then
-        insertWaypointTask(startWp, self.Service.Group:TaskOrbit(startWpCoord, trackAltitude, Knots(self.Service.TrackSpeed), endWpCoord))
+        InsertWaypointTask(startWp, self.Service.Group:TaskOrbit(startWpCoord, trackAltitude, Knots(self.Service.TrackSpeed), endWpCoord))
         -- insertTask(self.Service.Group:TaskOrbit(startWpCoord, trackAltitude, Knots(self.Service.TrackSpeed), endWpCoord)) obsolete
         if orbitTask and orbitTask ~= startWpIndex then
             Warning(self.Service.ClassName..":SetTrack :: there is an orbit task set to a different WP (" .. Dump(orbitTask) .. ") than the one starting the tanker track (" .. Dump(startWpIndex) .. ")") end
@@ -4909,7 +4929,7 @@ function DCAF_ServiceTrack:Execute(direct) -- direct = service will proceed dire
             tacanSystem = BEACON.System.TACAN_TANKER_Y
         end
 
-        insertWaypointAction(tacanWp, ActivateTacanAction(
+        InsertWaypointAction(tacanWp, ActivateTacanAction(
             self.Service.TACANChannel,
             self.Service.TACANMode,
             self.Service.TACANIdent,
@@ -5002,15 +5022,15 @@ function DCAF.Tanker:ActivateService(nServiceWp)
     if DCAF.Debug then
         serviceWp.name = "ACTIVATE"
     end
-    insertWaypointTask(serviceWp, TankerTask())
-    insertWaypointAction(serviceWp, ActivateTacanAction(
+    InsertWaypointTask(serviceWp, TankerTask())
+    InsertWaypointAction(serviceWp, ActivateTacanAction(
         self.TACANChannel,
         self.TACANMode,
         self.TACANIdent,
         true,
         false
     ))
-    insertWaypointAction(serviceWp, FrequencyAction(self.Frequency))
+    InsertWaypointAction(serviceWp, FrequencyAction(self.Frequency))
     self:SetRoute(route or waypoints)
     return self
 end
