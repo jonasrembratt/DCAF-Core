@@ -468,12 +468,20 @@ end
 VariableValue = {
     ClassName = "VariableValue",
     Value = 100,           -- #number - fixed value)
-    Variance = 0           -- #number - variance (percent)
+    Variance = 0           -- #number - variance (0.0 --> 1.0)
 }
 
 function VariableValue:New(value, variance)
     if not isNumber(value) then
-        error("VariableValue:New :: `value` must be a number") end
+        error("VariableValue:New :: `value` must be a number but was " .. type(value)) end
+
+    if variance ~= nil then
+        if not isNumber(variance) then
+            error("VariableValue:New :: `variance` must be a number but was " .. type(variance)) end
+
+        if variance < 0 or variance > 1 then
+            error("VariableValue:New :: `variance` must be a number between 0 and 1.0, but was " .. Dump(variance)) end
+    end
     
     if variance == nil then
         variance = 0
@@ -481,7 +489,7 @@ function VariableValue:New(value, variance)
         if not isNumber(variance) then
             error("VariableValue:New :: `variance` must be a number") 
         end
-        variance = math.max(0, variance)
+        variance = math.max(1, math.abs(variance))
     end
         
     local vv = DCAF.clone(VariableValue)
@@ -494,7 +502,7 @@ function VariableValue:GetValue()
     if self.Variance == 0 then
         return self.Value
     end
-    local var = (math.random(self.Variance) / 100) * self.Value
+    local var = math.random(self.Variance) * self.Value
     if math.random(100) <= 50 then
         return self.Value - var
     else
