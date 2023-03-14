@@ -367,15 +367,16 @@ local SPAWNED_SAM_SITE = {
     }
 }
 
-function SPAWNED_SAM_SITE:New(template)
+function SPAWNED_SAM_SITE:New(template, alias)
     local s3 = DCAF.clone(SPAWNED_SAM_SITE)
-    s3.Spawner = SPAWN:New(template)
+    s3.Spawner = SPAWN:NewWithAlias(template, alias)
     return s3
 end
 
 function SPAWNED_SAM_SITE:IsManaged(group)
     for _, samSite in ipairs(self.SamSites) do
-        if samSite:IsManaged(group) then return true end
+        if samSite:IsManaged(group) then 
+            return true end
     end 
 end
 
@@ -440,11 +441,11 @@ local function spawnRandomAAA(area, samGroup)
         if countRetry == 0 then
             break end -- just protecting from locking the sim due to some unforseen use case where there's no land available (should never happen)
 
-        local index = math.random(1, #area.AAA)
-        local spawn = area.AAA[index]
+        local spawn = listRandomItem(area.AAA) --  math.random(1, #area.AAA) obsolete
+        -- local spawn = area.AAA[index] obsolete
         table.insert(aaaGroups, spawn:SpawnFromVec2(vec2))
     end
-    return aaaGroups
+    return aaaGroups 
 end
 
 local function spawnRandomMANPADS(area, samGroup)
@@ -517,8 +518,13 @@ local function spawnRandomSHORADs(area, samGroup)
     return shoradSites
 end
 
+local function makeAlias(area, template)
+    return template .. "@".. area.Name
+end
+
 local function spawnSAMSite(area, template, vec2, destroyExisting, shorads)
-    local s3 = area.SpawnedSamSites[template]
+    local alias = makeAlias(area, template)
+    local s3 = area.SpawnedSamSites[alias]
     if s3 then 
         if destroyExisting then
             for _, samSite in ipairs(s3.SamSites) do
@@ -526,8 +532,8 @@ local function spawnSAMSite(area, template, vec2, destroyExisting, shorads)
             end
         end
     else
-        s3 = SPAWNED_SAM_SITE:New(template)
-        area.SpawnedSamSites[template] = s3
+        s3 = SPAWNED_SAM_SITE:New(template, alias)
+        area.SpawnedSamSites[alias] = s3
     end
     local samGroup = s3.Spawner:SpawnFromVec2(vec2)
     local aaaGroups = spawnRandomAAA(area, samGroup)
@@ -576,6 +582,16 @@ end
 
 --- returns a value indicating whether a controllable is currently in the SAM_AREA
 function SAM_AREA:IsManaged(source)
+    local group = getGroup(source)
+-- Debug("nisse - SAM_AREA:IsManaged :: area: " .. self.Name .. " :: group: " .. Dump(group.GroupName))
+    if group ~= nil then
+        local key = string.gsub("@"..self.Name, "[(]+", "%%(")
+        key = string.gsub(key, "[)]+", "%%)")
+        local isManaged  = string.find(group.GroupName, key) ~= nil
+-- Debug("nisse - SAM_AREA:IsManaged : " .. Dump(isManaged))
+        return isManaged
+    end
+
     local location = DCAF.Location:Resolve(source)
     if not location then
         errorOnDebug("SAM_AREA:IsIn :: cannot resolve source: " .. DumpPretty(source))
@@ -651,17 +667,20 @@ function SAM_AREA:WithSAM(displayName, template)
 end
 
 function SAM_AREA:WithAAA(template)
-    table.insert(self.AAA, SPAWN:New(template))
+    local alias = makeAlias(self, template)
+    table.insert(self.AAA, SPAWN:NewWithAlias(template, alias))
     return self
 end
 
 function SAM_AREA:WithMANPAD(template)
-    table.insert(self.MANPAD, SPAWN:New(template))
+    local alias = makeAlias(self, template)
+    table.insert(self.MANPAD, SPAWN:NewWithAlias(template, alias))
     return self
 end
 
 function SAM_AREA:WithSHORAD(template)
-    table.insert(self.SHORAD, SPAWN:New(template))
+    local alias = makeAlias(self, template)
+    table.insert(self.SHORAD, SPAWN:NewWithAlias(template, alias))
     return self
 end
 
@@ -692,24 +711,24 @@ local function buildCoalitionSettings(gbad, menus, parentMenu, forCoalition)
         end)
     end
 
-    -- SAM missiles simulation...
-    if DCAF.GBAD.WeaponsSimulation then
-        local wpnSimMenuCaption = "Simulated SAM missiles: "
-        if DCAF.GBAD.WeaponsSimulation:IsActive() then
-            wpnSimMenuCaption = wpnSimMenuCaption .. "YES"
-        else
-            wpnSimMenuCaption = wpnSimMenuCaption .. "NO"
-        end
-        local wpnSimMenu = MENU_COALITION_COMMAND:New(forCoalition, wpnSimMenuCaption, menus.MainMenu, function() 
-            if DCAF.GBAD.WeaponsSimulation:IsActive() then
-                DCAF.GBAD.WeaponsSimulation:Stop()
-                _buildCoalitionSettings(gbad, menus, parentMenu, forCoalition)
-                return
-            end
-            DCAF.GBAD.WeaponsSimulation:Start()
-            _buildCoalitionSettings(gbad, menus, parentMenu, forCoalition)
-        end)
-    end
+    -- -- SAM missiles simulation... obsolete - moved to 
+    -- if DCAF.GBAD.WeaponsSimulation then
+    --     local wpnSimMenuCaption = "Simulated SAM missiles: "
+    --     if DCAF.GBAD.WeaponsSimulation:IsActive() then
+    --         wpnSimMenuCaption = wpnSimMenuCaption .. "YES"
+    --     else
+    --         wpnSimMenuCaption = wpnSimMenuCaption .. "NO"
+    --     end
+    --     local wpnSimMenu = MENU_COALITION_COMMAND:New(forCoalition, wpnSimMenuCaption, menus.MainMenu, function() 
+    --         if DCAF.GBAD.WeaponsSimulation:IsActive() then
+    --             DCAF.GBAD.WeaponsSimulation:Stop()
+    --             _buildCoalitionSettings(gbad, menus, parentMenu, forCoalition)
+    --             return
+    --         end
+    --         DCAF.GBAD.WeaponsSimulation:Start()
+    --         _buildCoalitionSettings(gbad, menus, parentMenu, forCoalition)
+    --     end)
+    -- end
 end
 _buildCoalitionSettings = buildCoalitionSettings
 
@@ -945,4 +964,7 @@ function DCAF.GBAD:BuildF10GroupMenus(parentMenu, group)
     end
 end
 
+-- //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+--                                                              SAM MISSILE SIMULATION BEHAVIOR
+-- //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 

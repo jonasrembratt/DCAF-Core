@@ -64,6 +64,16 @@ DCAF.AirAspect = {
     FlankingLeft = "Flanking Left",
 }
 
+DCAF.AirDeck = {
+    High = 12000,
+    MediumHigh = 10000,
+    Medium = 8000,
+    MediumLow = 6000,
+    Low = 4000,
+    VeryLow = 2000,
+    None = 0
+}
+
 local _airThreatRandomization
 
 local Spawners = { -- dictionary
@@ -286,6 +296,16 @@ function DCAF.AirOptions:SetStack(value)
     return self
 end
 
+function DCAF.AirOptions:GetDeck()
+    return self._deck or self._fallback._deck or DCAF.AirDeck.None, self._deck == nil and self._fallback._deck ~= nil
+end
+function DCAF.AirOptions:SetDeck(value)
+    self._deck = value
+    return self
+end
+
+
+
 function DCAF.AirCategory:New(sCategoryName)
     if not isAssignedString(sCategoryName) then
         error("DCAF.AirCategory:New :: `sCategoryName` must be an assigned string but was: " .. DumpPretty(sCategoryName)) end
@@ -406,12 +426,14 @@ end
 
 local function getCoordsAndheading(source, distance, position, offsetAngle, aspect)
     local behavior = source.Options:GetBehavior()
+    local groupHeading = source.Group:GetHeading()
     local angle = (source.Group:GetHeading() + offsetAngle) % 360
     local groupCoord = source.Group:GetCoordinate()
     
     local spawnCoord 
     if position == DCAF.AirPosition.Ahead then
-        spawnCoord = groupCoord:Translate(distance, angle, true)
+        -- just included to catch possible future additional AirPosition values
+        -- spawnCoord = groupCoord:Translate(distance, angle, true)
     elseif position == DCAF.AirPosition.Right then
         angle = (angle + 90) % 360
     elseif position == DCAF.AirPosition.Behind then
@@ -421,7 +443,7 @@ local function getCoordsAndheading(source, distance, position, offsetAngle, aspe
     else
         error("buildRoute_getStartCoord :: unsupported DCAF.AirPosition: " .. Dump(position))
     end
-    spawnCoord =  groupCoord:Translate(distance, angle, true)
+    spawnCoord = groupCoord:Translate(distance, angle, true)
 
     local taskCoord
     local endCoord
@@ -480,7 +502,6 @@ local function getAltitude(source, distance, altitude)
             altitude = math.max(Feet(300), Feet(altitude.MSL + variation))
         end
     end
--- Debug("nisse - getAltitude :: variation: " .. Dump(variation) .. " :: alt: " .. Dump(altitude) .. " :: own alt: " .. Dump(altitude))
     return altitude
 end
 
@@ -516,7 +537,7 @@ local function spawnGroup(info, size, source, distance, altitude, position, offs
 
     -- altitude ...
     altitude = getAltitude(source, distance, altitude)
-    spawnCoord:SetAltitude(altitude)
+    spawnCoord:SetAltitude(altitude, true)
 
     -- spawn and set route ...
     local spawner = info:Spawner()
@@ -527,7 +548,6 @@ local function spawnGroup(info, size, source, distance, altitude, position, offs
     local wp0 = route[1]
     local speedMps = wp0.Speed
     if isBFMSetup() then
-Debug("nisse - BFM setup :: matches speed")
         speedMps = source.Group:GetVelocityMPS()
         group:SetSpeed(speedMps)
     end
@@ -636,12 +656,10 @@ end
 
 function CoordinatedAttack:Stop()
     self._isEnded = true
--- Debug("nisse - CoordinatedAttack:Stop :: _onEndFunc: " .. Dump(self._onEndFunc))
     if isFunction(self._onEndFunc) then
         self._onEndFunc(self)
     end
     Delay(3, function()
-Debug("nisse - CoordinatedAttack:Stop :: timer stops")
         self._timer:Stop()
     end)
 end
@@ -653,7 +671,6 @@ local function supportedAttack(targetGroup)
         for _, group in ipairs(attack:GetAliveGroups()) do
             local isSupporting = attack._supportGroups[group.GroupName]
             if isSupporting then
--- Debug("nisse - finishAttack :: supporting groups attack " .. targetGroup.GroupName)
                 TaskAttackGroup(group, targetGroup)
             end
         end
@@ -691,7 +708,6 @@ local function supportedAttack(targetGroup)
         for _, supportingGroup in ipairs(supportingGroups) do
             local distanceToTGT = supportingGroup:GetCoordinate():Get2DDistance(targetGroup:GetCoordinate())
             if distanceToTGT < NauticalMiles(18) then
--- Debug("nisse - support group is inside 18nm :: ATTACKS")
                 finishAttack(attack)
                 return
             end
@@ -713,7 +729,6 @@ local function supportedAttack(targetGroup)
         MissionEvents:OnWeaponFired(attack._onMissileShot)
     end):OnEnd(function(attack) 
         if attack._onMissileShot then
--- Debug("nisse - ends monitoring weapons being fired")
             MissionEvents:EndOnWeaponFired(attack._onMissileShot)
         end
     end)
@@ -818,6 +833,22 @@ local function spawnStackedGroup(info, size, source, stack, distance, altitude, 
 end
 
 -- ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+--                                           EXPERIMENT :: HARD DECK MONITORING
+-- ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+local HARD_DECK_MONITOR = {
+    Scheduler = SCHEDULER:New(),
+    MonitoredUnits = {
+        -- list of #UNIT
+    }
+}
+
+function HARD_DECK_MONITOR:Monitor(unit)
+
+end
+
+
+-- ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 --                                                        MENUS
 -- ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -842,6 +873,8 @@ local function buildMenus(state)
             end
         end
 
+        local menu = DCAF.MENU:New(source.Menus.Options)
+
         -- Reset All Options
         MENU_GROUP_COMMAND:New(source.Group, "-- RESET --", source.Menus.Options, function()
             source.Options:Reset()
@@ -850,7 +883,7 @@ local function buildMenus(state)
         
         -- Distance
         local distance, isFallback = source.Options:GetDistance()
-        local distanceOptionsMenu = MENU_GROUP:New(source.Group, "Distance: " .. displayValue(distance, 'nm', isFallback), source.Menus.Options)
+        local distanceOptionsMenu = menu:Group(source.Group, "Distance: " .. displayValue(distance, 'nm', isFallback)) --  MENU_GROUP:New(source.Group, "Distance: " .. displayValue(distance, 'nm', isFallback), source.Menus.Options)
         for key, value in pairs(DCAF.AirDistance) do
             MENU_GROUP_COMMAND:New(source.Group, key, distanceOptionsMenu, function()
                 source.Options:SetDistance(value)
@@ -860,7 +893,7 @@ local function buildMenus(state)
 
         -- Position ...
         local position, isFallback = source.Options:GetPosition()
-        local positionOptionsMenu = MENU_GROUP:New(source.Group, "Position: " .. displayValue(position, '', isFallback), source.Menus.Options)
+        local positionOptionsMenu = menu:Group(source.Group, "Position: " .. displayValue(position, '', isFallback)) -- MENU_GROUP:New(source.Group, "Position: " .. displayValue(position, '', isFallback), source.Menus.Options)
         for k, value in pairs(DCAF.AirPosition) do
             MENU_GROUP_COMMAND:New(source.Group, Dump(value), positionOptionsMenu, function()
                 source.Options:SetPosition(value)
@@ -870,7 +903,7 @@ local function buildMenus(state)
 
         -- Aspect ...
         local aspect, isFallback = source.Options:GetAspect()
-        local aspectOptionsMenu = MENU_GROUP:New(source.Group, "Aspect: " .. displayValue(aspect, '', isFallback), source.Menus.Options)
+        local aspectOptionsMenu = menu:Group(source.Group, "Aspect: " .. displayValue(aspect, '', isFallback)) -- MENU_GROUP:New(source.Group, "Aspect: " .. displayValue(aspect, '', isFallback), source.Menus.Options)
         for k, value in pairs(DCAF.AirAspect) do
             MENU_GROUP_COMMAND:New(source.Group, Dump(value), aspectOptionsMenu, function()
                 source.Options:SetAspect(value)
@@ -881,9 +914,9 @@ local function buildMenus(state)
 
         -- Max Offset Angle ...
         local maxOffsetAngle, isFallback = source.Options:GetMaxOffsetAngle()
-        local maxOffsetAngleMenu = MENU_GROUP:New(source.Group, "Max offset angle: " .. displayValue(maxOffsetAngle, '°', isFallback), source.Menus.Options)
+        local maxOffsetAngleMenu = menu:Group(source.Group, displayValue(maxOffsetAngle, '°', isFallback)) -- MENU_GROUP:New(source.Group, "Max offset angle: " .. displayValue(maxOffsetAngle, '°', isFallback), source.Menus.Options)
         for angle = 0, 80, 20 do
-            MENU_GROUP_COMMAND:New(source.Group, Dump(angle) .. "°", maxOffsetAngleMenu, function()
+            MENU_GROUP_COMMAND:New(source.Group, "Max Offset: " .. Dump(angle) .. "°", maxOffsetAngleMenu, function()
                 source.Options:SetMaxOffsetAngle(angle)
                 buildOptionsMenus(source, parentMenu)
             end)
@@ -891,7 +924,7 @@ local function buildMenus(state)
 
         -- Altitude
         local altitude, isFallback = source.Options:GetAltitude()
-        local altitudeOptionsMenu = MENU_GROUP:New(source.Group, "Altitude: " .. displayValue(source.Options:GetAltitude().Name, '', isFallback), source.Menus.Options)
+        local altitudeOptionsMenu = menu:Group(source.Group, "Altitude: " .. displayValue(source.Options:GetAltitude().Name, '', isFallback)) -- MENU_GROUP:New(source.Group, "Altitude: " .. displayValue(source.Options:GetAltitude().Name, '', isFallback), source.Menus.Options)
         for key, value in pairs(DCAF.AirAltitude) do
             MENU_GROUP_COMMAND:New(source.Group, key, altitudeOptionsMenu, function()
                 source.Options:SetAltitude(value)
@@ -906,7 +939,7 @@ local function buildMenus(state)
         if distribution ~= DCAF.AirGroupDistribution.None and stack.Name ~= DCAF.AirStackHeight.None.Name then
             distributeMenuText = distributeMenuText .. ", " .. string.lower(stack.Name) .. " stack"
         end
-        local distributionOptionsMenu = MENU_GROUP:New(source.Group, distributeMenuText, source.Menus.Options)
+        local distributionOptionsMenu = menu:Group(source.Group, distributeMenuText) -- MENU_GROUP:New(source.Group, distributeMenuText, source.Menus.Options)
         for key, value in pairs(DCAF.AirGroupDistribution) do
             MENU_GROUP_COMMAND:New(source.Group, key, distributionOptionsMenu, function()
                 source.Options:SetGroupDistribution(value)
@@ -916,7 +949,7 @@ local function buildMenus(state)
 
         -- Stack
         if distribution ~= DCAF.AirGroupDistribution.None then
-            local stackOptionsMenu = MENU_GROUP:New(source.Group, "Stack: " .. displayValue(source.Options:GetStack().Name, '', isFallback), distributionOptionsMenu)
+            local stackOptionsMenu = menu:Group(source.Group, "Stack: " .. displayValue(source.Options:GetStack().Name, '', isFallback)) -- MENU_GROUP:New(source.Group, "Stack: " .. displayValue(source.Options:GetStack().Name, '', isFallback), distributionOptionsMenu)
             for key, value in pairs(DCAF.AirStackHeight) do
                 MENU_GROUP_COMMAND:New(source.Group, key, stackOptionsMenu, function()
                     source.Options:SetStack(value)
@@ -927,7 +960,7 @@ local function buildMenus(state)
 
         -- Behavior
         local behavior, isFallback = source.Options:GetBehavior()
-        local behaviorOptionsMenu = MENU_GROUP:New(source.Group, "Behavior: " .. displayValue(behavior, '', isFallback), source.Menus.Options)
+        local behaviorOptionsMenu = menu:Group(source.Group, "Behavior: " .. displayValue(behavior, '', isFallback)) -- MENU_GROUP:New(source.Group, "Behavior: " .. displayValue(behavior, '', isFallback), source.Menus.Options)
         for key, value in pairs(DCAF.AirBehavior) do
             MENU_GROUP_COMMAND:New(source.Group, value, behaviorOptionsMenu, function()
                 source.Options:SetBehavior(value)
@@ -935,6 +968,29 @@ local function buildMenus(state)
             end)
         end
 
+        -- Hard deck (experiment)
+        -- local hardDeck, isFallback = source.Options:GetDeck()
+        -- local valueText = displayValue(hardDeck, '', isFallback)
+        -- if hardDeck == DCAF.AirDeck.None then
+        --     valueText = "None"
+        -- end
+        -- local hardDeckOptionsMenu = MENU_GROUP:New(source.Group, "Hard deck: " .. valueText, source.Menus.Options)
+        -- for key, value in pairs(DCAF.AirDeck) do
+        --     valueText = tostring(value)
+        --     if value == DCAF.AirDeck.None then
+        --         valueText = "None"
+        --     end
+        --     if hardDeck == value then
+        --         valueText = "[" .. valueText .."]"
+        --     else
+        --         valueText = valueText
+        --     end
+        --     MENU_GROUP_COMMAND:New(source.Group, valueText, hardDeckOptionsMenu, function()
+        --         source.Options:SetDeck(value)
+        --         buildOptionsMenus(source, parentMenu)
+        --     end)
+        -- end
+        
     end
     -- uncategorized options ...
     buildOptionsMenus(state, state.Menus.Main)
@@ -1081,7 +1137,9 @@ function DCAF.AirCategory:WithGroup(sName, sGroup, nSize)
     return initGroup(self, sName, sGroup, nSize)
 end
 
---------------------------------- RANDOMIZED AIR THREATS ---------------------------------
+-- ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+--                                                      EXPERIMENT :: RANDOMIZED AIR THREATS
+-- ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DCAF.Air.Randomization = {
     ClassName = "DCAF.Air.Randomization",
@@ -1215,7 +1273,6 @@ function DCAF.Air.Randomization:StartForGroupState(state)
 
     local function getNextEventTime()
         local timeToNext = math.random(self.MinInterval, self.MaxInterval)
---Debug("nisse - air threat randomize :: next event: " .. UTILS.SecondsToClock(timeToNext + UTILS.SecondsOfToday()) )
         return timeToNext
     end
 
