@@ -1,4 +1,4 @@
--- //AirServiceAvailability///////////////////////////////////////////////////////////////////////////////////////////////////
+-- //SmokeerviceAvailability///////////////////////////////////////////////////////////////////////////////////////////////////
 --                                     DCAF.Core - The DCAF Lua foundation (relies on MOOSE)
 --                                              Digital Coalition Air Force
 --                                                        2022
@@ -49,18 +49,27 @@ function DCAF.clone(template, deep, suppressDebugData)
     return cloned
 end
 
+VariableValue = {
+    ClassName = "VariableValue",
+    Value = 100,           -- #number - fixed value)
+    Variance = 0           -- #number - variance (0.0 --> 1.0)
+}
+
 function isString( value ) return type(value) == "string" end
 function isBoolean( value ) return type(value) == "boolean" end
 function isNumber( value ) return type(value) == "number" end
 function isTable( value ) return type(value) == "table" end
 function isFunction( value ) return type(value) == "function" end
 function isClass( value, class ) return isTable(value) and value.ClassName == class end
-function isUnit( value ) return isClass(value, "UNIT") end
-function isGroup( value ) return isClass(value, "GROUP") end
-function isZone( value ) return isClass(value, "ZONE") or isClass(value, "ZONE_POLYGON_BASE") end
-function isCoordinate( value ) return isClass(value, "COORDINATE") end
-function isAirbase( value ) return isClass(value, "AIRBASE") end
+function isUnit( value ) return isClass(value, UNIT.ClassName) end
+function isGroup( value ) return isClass(value, GROUP.ClassName) end
+function isZone( value ) return isClass(value, ZONE.ClassName) or isClass(value, ZONE_POLYGON_BASE.ClassName) end
+function isCoordinate( value ) return isClass(value, COORDINATE.ClassName) end
+function isVec2( value ) return isClass(value, POINT_VEC2.ClassName) end
+function isVec3( value ) return isClass(value, POINT_VEC3.ClassName) end
+function isAirbase( value ) return isClass(value, AIRBASE.ClassName) end
 function isStatic( value ) return isClass(value, STATIC.ClassName) end
+function isVariableValue( value ) return isClass(value, VariableValue.ClassName) end
 
 function getTableType(table)
     if not isTable(table) then
@@ -213,7 +222,6 @@ function isUnitInstanceOf( unit, unitTemplate )
 
     if unit.UnitName == unitTemplate.UnitName then
         return true end
-
     
     return isGroupNameInstanceOf( unit:GetGroup().GroupName, unitTemplate:GetGroup().GroupName )
 end
@@ -504,33 +512,17 @@ function dictGetKeyFor(table, criteria)
     end
 end
 
-VariableValue = {
-    ClassName = "VariableValue",
-    Value = 100,           -- #number - fixed value)
-    Variance = 0           -- #number - variance (0.0 --> 1.0)
-}
-
 function VariableValue:New(value, variance)
     if not isNumber(value) then
         error("VariableValue:New :: `value` must be a number but was " .. type(value)) end
 
-    if variance ~= nil then
-        if not isNumber(variance) then
-            error("VariableValue:New :: `variance` must be a number but was " .. type(variance)) end
-
+    if isNumber(variance) then
         if variance < 0 or variance > 1 then
             error("VariableValue:New :: `variance` must be a number between 0 and 1.0, but was " .. Dump(variance)) end
-    end
-    
-    if variance == nil then
-        variance = 0
     else
-        if not isNumber(variance) then
-            error("VariableValue:New :: `variance` must be a number") 
-        end
         variance = math.max(1, math.abs(variance))
     end
-        
+    
     local vv = DCAF.clone(VariableValue)
     vv.Value = value
     vv.Variance = variance
@@ -541,7 +533,8 @@ function VariableValue:GetValue()
     if self.Variance == 0 then
         return self.Value
     end
-    local var = math.random(self.Variance) * self.Value
+    local rndVar = math.random(self.Variance * 100) / 100
+    local var = rndVar * self.Value
     if math.random(100) <= 50 then
         return self.Value - var
     else
@@ -746,6 +739,17 @@ function Coalition.ToNumber(coalitionValue)
     return -1
 end
 
+function Coalition.FromNumber(coalitionValue)
+    if coalitionValue == coalition.side.RED then
+        return Coalition.Red end
+
+    if coalitionValue == coalition.side.BLUE then
+        return Coalition.Blue end
+        
+    if coalitionValue == coalition.side.NEUTRAL then
+        return Coalition.Neutral end   
+end
+
 function Coalition.Equals(a, b)
     if isAssignedString(a) then
         a = Coalition.ToNumber(a)
@@ -864,7 +868,8 @@ function getGroup( source )
     if (isUnit(source)) then 
         return sourBuildF10MenusForCoalitionForCoalition 
     end
-    if (not isString(source)) then return nil end
+    if (not isAssignedString(source)) then 
+        return end
 
     local group = GROUP:FindByName( source )
     if (group ~= nil) then 
@@ -874,6 +879,19 @@ function getGroup( source )
     if (unit ~= nil) then 
         return unit:GetGroup() 
     end
+end
+
+function getStatic( source )
+    if isStatic(source) then
+        return source end
+    if not isAssignedString(source) then
+        return end
+
+    local static
+    pcall(function() 
+        static = STATIC:FindByName(source)
+    end)
+    return static
 end
 
 function getAirbase( source )
@@ -949,34 +967,37 @@ end
 
 DCAF.Location = {
     ClassName = "DCAF.Location",  
-    Provider = nil,    -- #COORDINATE, #GROUP, #AIRBASE, or #STATIC
+    Source = nil,      -- #COORDINATE, #GROUP, #AIRBASE, or #STATIC
     Coordinate = nil   -- COORDINATE
 }
 
-function DCAF.Location:New(source, throwOnInvalidType)
+function DCAF.Location:New(source, throwOnFail)
     if source == nil then
         error("DCAF.Location:New :: `source` cannot be unassigned") end
 
-    if not isBoolean(throwOnInvalidType) then
-        throwOnInvalidType = true
+    if not isBoolean(throwOnFail) then
+        throwOnFail = true
     end
     local location = DCAF.clone(DCAF.Location)
-    location.Provider = source
-    if isClass(source, COORDINATE.ClassName) then
-        local location = DCAF.clone(DCAF.Location)
-        location.Provider = source
+    location.Source = source
+    location.IsAir = false
+    if isCoordinate(source) then
         location.Coordinate = source
-        location.IsAir = false
+        return location
+    elseif isZone(source) then
+        location.Coordinate = source:GetCoordinate()
+        return location
+    elseif isVec2(source) then
+        location.Coordinate = COORDINATE:NewFromVec2(source)
+        return location
+    elseif isVec3(source) then
+        location.Coordinate = COORDINATE:NewFromVec3(source)
         return location
     elseif isAirbase(source) then
-        local location = DCAF.clone(DCAF.Location)
-        location.Provider = source
         location.Coordinate = source:GetCoordinate()
         location.IsAir = false
         return location
     elseif isGroup(source) or isUnit(source) or isAirbase(source) or isStatic(source) then
-        local location = DCAF.clone(DCAF.Location)
-        location.Provider = source
         location.Coordinate = source:GetCoordinate()
         location.IsAir = source:IsAir()
         return location
@@ -986,17 +1007,22 @@ function DCAF.Location:New(source, throwOnInvalidType)
         if group then return DCAF.Location:New(group) end
         local unit = getUnit(source)
         if unit then return DCAF.Location:New(unit) end
+        local zone = getZone(source)
+        if zone then return DCAF.Location:New(zone) end
         local airbase = getAirbase(source)
         if airbase then return DCAF.Location:New(airbase) end
         local static = getStatic(source)
         if static then return DCAF.Location:New(static) end
-        if throwOnInvalidType then
+        if throwOnFail then
             error("DCAF.Location:New :: `source` is unexpected value: " .. DumpPretty(source))
         end
     end
 end
 
 function DCAF.Location:Resolve(source)
+    if isClass(location, DCAF.Location.ClassName) then
+        return source
+    end
     local d = DCAF.Location:New(source, false)
     if d then
         return d
@@ -1008,8 +1034,8 @@ function DCAF.Location:GetCoordinate()
 end
 
 function DCAF.Location:GetAGL()
-    if isUnit(self.Provider) or isGroup(self.Provider) then
-        return self.Provider:GetAltitude(true)
+    if isUnit(self.Source) or isGroup(self.Source) then
+        return self.Source:GetAltitude(true)
     end
 
     return self.Coordinate.y - self.Coordinate:GetLandHeight()
@@ -1287,7 +1313,7 @@ function getControllable( source )
 end
 
 function getZone( source )
-
+    return ZONE:FindByName( source )
 end
 
 function GetOtherCoalitions( controllable, excludeNeutral )
@@ -4942,6 +4968,44 @@ function ScriptAction(script)
     }
 end
 
+local DCAF_CALLBACK_INFO = {
+    ClassName = "DCAF_CALLBACK_INFO",
+    NextId = 1,
+    Id = 0,              -- #int
+    Func = nil           -- #function
+}
+
+local DCAF_CALLBACKS = { -- dictionary
+    -- key   = #string
+    -- value = #AIR_ROUTE_CALLBACK_INFO
+}
+
+function DCAF_CALLBACK_INFO:New(func)
+    local info = DCAF.clone(DCAF_CALLBACK_INFO)
+    info.Func = func
+    DCAF_CALLBACK_INFO.NextId = DCAF_CALLBACK_INFO.NextId + 1
+    info.Id = DCAF_CALLBACK_INFO.NextId
+    DCAF_CALLBACKS[tostring(info.Id)] = info
+    return info
+end
+
+function DCAF_CALLBACKS:Remove()
+    DCAF_CALLBACKS[tostring(self.Id)] = nil
+end
+
+function DCAF_CALLBACKS:Callback(id)
+end
+
+function InsertWaypointCallback(waypoint, func)
+    local callback
+    callback = DCAF_CALLBACK_INFO:New(function() 
+        func(waypoint)
+        callback:Remove()
+    end)
+    InsertWaypointAction(waypoint, ScriptAction("DCAF_CALLBACKS:Callback(" ..Dump(callback.Id) .. ")"))
+end
+
+
 function DCAF_ServiceTrack:Execute(direct) -- direct = service will proceed direct to track
     if not isBoolean(direct) then
         direct = false
@@ -5796,7 +5860,7 @@ function DCAF.AvailableTanker:FromAirbase(airbase, depRoutes, arrRoutes)
     if not isList(arrRoutes) then
         if DCAF.AIRAC then
             arrRoutes = DCAF.AIRAC:GetArrivalRoutes(airbase)
-Debug("nisse - DCAF.AvailableTanker:FromAirbase :: arrRoutes: " .. DumpPretty(arrRoutes))
+-- Debug("nisse - DCAF.AvailableTanker:FromAirbase :: arrRoutes: " .. DumpPretty(arrRoutes))
         elseif hasRoutes then
             -- use reversed routes for RTB...
             arrRoutes = {}
@@ -6462,7 +6526,7 @@ local function buildTankerMenus(caption, scope)
                 local tanker = tankerInfo.Tanker
 
                 local function sendTankerHome(airbaseName, route)
-                    MessageTo(nil, "nisse - " .. tanker.DisplayName .. " is RTB (" .. airbaseName .. ")")
+-- Debug("nisse - " .. tanker.DisplayName .. " is RTB (" .. airbaseName .. ")")
                     local airbase = AIRBASE:FindByName(airbaseName)
                     track:RemoveTanker(tankerInfo)
                     tanker:RTB(airbase, nil, route)
