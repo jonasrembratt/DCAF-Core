@@ -145,7 +145,7 @@ function Skill.Validate(value)
         return false end
 
     local testValue = string.lower(value)
-    for k, v in pairs(value) do
+    for k, v in pairs(Skill) do
         if isAssignedString(v) and string.lower(v) == testValue then
             if v == Skill.Random then
                 local i = math.random(4)
@@ -998,7 +998,8 @@ function COORDINATE:GetBearingTo(coordinate)
 end
 
 DCAF.Location = {
-    ClassName = "DCAF.Location",  
+    ClassName = "DCAF.Location", 
+    Name = nil,        -- #string 
     Source = nil,      -- #COORDINATE, #GROUP, #AIRBASE, or #STATIC
     Coordinate = nil   -- COORDINATE
 }
@@ -1015,22 +1016,28 @@ function DCAF.Location:New(source, throwOnFail)
     location.IsAir = false
     if isCoordinate(source) then
         location.Coordinate = source
+        location.Name = source:ToStringLLDDM()
         return location
     elseif isZone(source) then
         location.Coordinate = source:GetCoordinate()
+        location.Name = source:GetName()
         return location
     elseif isVec2(source) then
         location.Coordinate = COORDINATE:NewFromVec2(source)
+        location.Name = "(x="..Dump(source.x)..",y=" .. Dump(source.y) .. ")"
         return location
     elseif isVec3(source) then
         location.Coordinate = COORDINATE:NewFromVec3(source)
+        location.Name = "(x="..Dump(source.x)..",y=" .. Dump(source.y) .. ", z=" .. Dump(source.z) .. ")"
         return location
     elseif isAirbase(source) then
         location.Coordinate = source:GetCoordinate()
+        location.Name = source.AirbaseName
         location.IsAir = false
         return location
     elseif isGroup(source) or isUnit(source) or isAirbase(source) or isStatic(source) then
         location.Coordinate = source:GetCoordinate()
+        location.Name = source.GroupName
         location.IsAir = source:IsAir()
         return location
     else
@@ -1362,19 +1369,23 @@ function GetOtherCoalitions( controllable, excludeNeutral )
 
     local c = group:GetCoalition()
 
+Debug("nisse - GetOtherCoalitions :: c: " .. Dump(c))
+
+
     if excludeNeutral == nil then 
         excludeNeutral = false end
 
-    if c == "red" or c == coalition.side.RED then
+    if c == Coalition.Red or c == coalition.side.RED then
         if excludeNeutral then 
-            return { "blue" } end
-        return { "blue", "neutral" }
-    elseif c == "blue" or c == coalition.side.BLUE then
+            return { Coalition.Blue } end
+        return { Coalition.Blue, Coalition.Neutral }
+    elseif c == Coalition.Blue or c == coalition.side.BLUE then
+Debug("nisse - GetOtherCoalitions :: Blue")
         if excludeNeutral then 
-            return { "red" } end
-        return { "red", "neutral" }
-    elseif c == "neutral" or c == coalition.side.NEUTRAL then
-        return { "red", "blue" }
+            return { Coalition.Red } end
+        return { Coalition.Red, Coalition.Neutral }
+    elseif c == Coalition.Neutral or c == coalition.side.NEUTRAL then
+        return { Coalition.Red, Coalition.Blue }
     end
 end
 
