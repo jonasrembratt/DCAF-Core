@@ -1,24 +1,30 @@
 DCAF.Smoke = {
-    ClassName = "DCAF.CSAR_Smoke",
+    ClassName = "DCAF.Smoke",
     Color = SMOKECOLOR.Red,
     Remaining = 1
 }
 
 local DCAF_CSAR_State = {
     Initializing = "Initializing",      -- Group has not yet been activated
-    Stopped = "Stopped",                -- Group is stopped (hiding or waiting to be rescued)
-    Moving = "Moving",                  -- Group is moving toward escape goal
-    Attracting = "Attracting",          -- Group is attracting attention
-    Captured = "Captured",              -- Group was captured (by CarrierUnit)
-    RTB = "RTB",                        -- Group was rescued but is not yet safely returned
-    Rescued = "Rescued"                 -- Group was successfully rescued 
+    Stopped = "Stopped",                -- Group is stopped (eg. pursued group is hiding or waiting to be rescued)
+    Moving = "Moving",                  -- Group is moving
+    Attracting = "Attracting",          -- Pursued group is attracting attention
+    Captured = "Captured",              -- Pursued group was captured (by CarrierUnit)
+    RTB = "RTB",                        -- Group is RTB (eg. pursued group was rescued but is not yet safely returned)
+    Rescued = "Rescued"                 -- Pursued group was successfully rescued 
 }
 
 local CSAR_Scheduler                    -- #SCHEDULER
 local CSAR_Scheduler_isRunning = false
 
-DCAF.CSAR = {
-    ClassName = "DCAF.CSAR",
+DCAF.CSAR = {}
+
+-- //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+--                                                                     PURSUED GROUP
+-- //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DCAF.CSAR.PursuedGroup = {
+    ClassName = "DCAF.CSAR.PursuedGroup",
     Name = nil,         -- #string
     Template = nil,     -- #string - group template name
     Group = nil,        -- #GROUP in distress, to be rescued
@@ -34,7 +40,7 @@ DCAF.CSAR = {
     RangeEnemies = NauticalMiles(10),      -- if Group detects unfriendlies inside this range it will abstain from attracting attention, regardless of nearby friendlies
     AttractAttentionTime = Minutes(30),    -- #number - distressed group will try and attract attention for this amount of time; then go back to waiting/looking again 
     Coalition = nil,                       -- #Coalition - (string, small letters; "red", "blue", "neutral") 
-    Smoke = nil         -- #DCAF.CSAR_Smoke
+    Smoke = nil         -- #DCAF.Smoke
 }
 
 local function setState(csar, state)
@@ -49,7 +55,7 @@ local function stopAndSpawn(csar)
         csar.Group:Activate()
     end
     if not csar.Group:IsAlive() then
-        error("DCAF.CSAR:Wait :: cannot activate CSAR for dead group: " .. csar.Group.GroupName) end
+        error("DCAF.CSAR.PursuedGroup:Wait :: cannot activate CSAR for dead group: " .. csar.Group.GroupName) end
 
     setState(csar, DCAF_CSAR_State.Stopped)
     return csar
@@ -134,14 +140,17 @@ local function move(csar)
         return coord:Translate(distance, hdg), hdg
     end
 
-    local function tryDifferentHeading(left, coord, distance)
+    local function tryDifferentHeading(mainHdg, left, coord, distance, maxHdgDeviation)
         local inc, minMaxHdg
+        if not isNumber(maxHdgDeviation) then
+            maxHdgDeviation = 120
+        end
         if left == true then 
             inc = -10
-            minMaxHdg = mainHdg - 120
+            minMaxHdg = mainHdg - maxHdgDeviation
         else
             inc = 10
-            minMaxHdg = mainHdg + 120
+            minMaxHdg = mainHdg + maxHdgDeviation
         end
         local coordNext = coord
 
@@ -157,12 +166,25 @@ local function move(csar)
     local sprintLength = NauticalMiles(1)
     local coordNext, hdgNext = getDestination(sprintLength)
     if not isDryPath(coordNext) then
+        if csar._followWaterHdg then
+            local left = math.random(100) < 40
+            coordNext, hdgNext = tryDifferentHeading(csar._followWaterHdg, left, coord, sprintLength, 60)
+            if not coordNext then
+                coordNext, hdgNext = tryDifferentHeading(csar._followWaterHdg, not left, coord, sprintLength, 60)
+            end
+        end
+
         -- randomly try left/right direction ...
         local left = math.random(100) < 10
-        coordNext, hdgNext = tryDifferentHeading(left, coord, sprintLength)
+        coordNext, hdgNext = tryDifferentHeading(mainHdg, left, coord, sprintLength)
         if not coordNext then
-            coordNext, hdgNext = tryDifferentHeading(not left, coord, sprintLength)
+            coordNext, hdgNext = tryDifferentHeading(mainHdg, not left, coord, sprintLength)
         end
+        if hdgNext then
+            csar._followWaterHdg = hdgNext
+        end
+    else
+        csar._followWaterHdg = nil
     end
 
     if coordNext then
@@ -197,7 +219,6 @@ local function startScheduler(csar)
     end
 
     csar.SchedulerID = CSAR_Scheduler:Schedule(csar, function()
-        -- Trace("CSAR :: " .. csar.Name .. " ::  " .. name .. " detecting...")
         local zoneEnemies = ZONE_GROUP:New(csar.Name .. "_enemies", csar.Group, csar.RangeEnemies)
         move(csar)
         local coord = csar:GetCoordinate(false)
@@ -281,7 +302,7 @@ local function despawnAndMove(csar)
     return move(csar)
 end
 
--- @smoke       :: #DCAF.CSAR_Smoke
+-- @smoke       :: #DCAF.Smoke
 function DCAF.Smoke:Pop(coordinate)
     if not isCoordinate(coordinate) then
         error("DCAF.Smoke:Pop :: `coordinate` must be " .. COORDINATE.ClassName .. ", but was: " .. DumpPretty(coordinate)) end
@@ -294,47 +315,50 @@ function DCAF.Smoke:Pop(coordinate)
     return self
 end
 
--- @smoke       :: #DCAF.CSAR_Smoke
-function DCAF.CSAR:New(name, sDistressedTemplate, location, bCanBeCaptured, smoke)
-    local group = getGroup(sDistressedTemplate)
+-- @sTemplate
+-- @location            :: #DCAF.Location - start location for pursued group
+-- @bCanBeCaptured      :: #bool
+-- @smoke               :: #DCAF.Smoke
+function DCAF.CSAR.PursuedGroup:New(name, sTemplate, location, bCanBeCaptured, smoke)
+    local group = getGroup(sTemplate)
     if not group then
-        error("DCAF.CSAR:New :: cannot resolve group from: " .. DumpPretty(sDistressedTemplate)) end
+        error("DCAF.CSAR.PursuedGroup:New :: cannot resolve group from: " .. DumpPretty(sTemplate)) end
 
     local testLocation = DCAF.Location:Resolve(location)
     if not testLocation then
-        error("DCAF.CSAR:Start :: cannot resolve location from: " .. DumpPretty(location)) end
+        error("DCAF.CSAR.PursuedGroup:Start :: cannot resolve location from: " .. DumpPretty(location)) end
 
     local coord = testLocation.Coordinate
     if isZone(testLocation.Source) then
         -- randomize location within zone...
-        Debug("DCAF.CSAR:New :: " .. name .. " :: starts at random location in zone " .. DumpPrettyDeep(location))
+        Debug("DCAF.CSAR.PursuedGroup:New :: " .. name .. " :: starts at random location in zone " .. DumpPrettyDeep(location))
         coord = testLocation.Source:GetRandomPointVec2()
     end
     location = testLocation
     
-    local csar = DCAF.clone(DCAF.CSAR)
+    local csar = DCAF.clone(DCAF.CSAR.PursuedGroup)
     csar.Name = name
-    csar.Template = sDistressedTemplate
+    csar.Template = sTemplate
     csar.Group = group
     csar.Smoke = smoke or DCAF.Smoke:New()
     csar.Coalition = Coalition.FromNumber(group:GetCoalition())
     csar._isMoving = false
     csar._lastCoordinate = coord
     csar._lastCoordinateTime = UTILS.SecondsOfToday()
-Debug("nisse -  DCAF.CSAR:New :: csar: " .. DumpPretty(csar))    
+Debug("nisse -  DCAF.CSAR.PursuedGroup:New :: csar: " .. DumpPretty(csar))    
     return csar
 end
 
-function DCAF.CSAR:WithBeacon(beaconTemplate, timeActive, timeInactive)
+function DCAF.CSAR.PursuedGroup:WithBeacon(beaconTemplate, timeActive, timeInactive)
     if isAssignedString(beaconTemplate) then
         self.BeaconTemplate = beaconTemplate
-        self.BeaconTimeActive = timeActive or DCAF.CSAR.BeaconTimeActive
-        self.BeaconTimeInactive = timeInactive or DCAF.CSAR.BeaconTimeInactive
+        self.BeaconTimeActive = timeActive or DCAF.CSAR.PursuedGroup.BeaconTimeActive
+        self.BeaconTimeInactive = timeInactive or DCAF.CSAR.PursuedGroup.BeaconTimeInactive
     end
     return self
 end
 
-function DCAF.CSAR:IsBeaconAvailable()
+function DCAF.CSAR.PursuedGroup:IsBeaconAvailable()
     if not self.BeaconTemplate or self.BeaconGroup then
         return false 
     end
@@ -344,11 +368,11 @@ function DCAF.CSAR:IsBeaconAvailable()
     return true
 end
 
-function DCAF.CSAR:IsBeaconActive()
+function DCAF.CSAR.PursuedGroup:IsBeaconActive()
     return self.BeaconGroup
 end
 
-function DCAF.CSAR:ActivateBeacon()
+function DCAF.CSAR.PursuedGroup:ActivateBeacon()
 
     local function getBeaconNextActiveTime()
         local timeInactive
@@ -376,7 +400,7 @@ function DCAF.CSAR:ActivateBeacon()
         local timeActive
         if isVariableValue(self.BeaconTimeActive) then
             timeActive = self.BeaconTimeActive:GetValue()
-            Debug("DCAF.CSAR:ActivateBeacon :: " .. self.Name .. " :: timeActive: " .. Dump(timeActive))
+            Debug("DCAF.CSAR.PursuedGroup:ActivateBeacon :: " .. self.Name .. " :: timeActive: " .. Dump(timeActive))
         elseif isNumber(self.BeaconTimeActive) then
             timeActive = self.BeaconTimeActive
         end
@@ -385,22 +409,22 @@ function DCAF.CSAR:ActivateBeacon()
                 self:DeactivateBeacon()
                 self.BeaconNextActive = getBeaconNextActiveTime()
                 local timeInactive = self.BeaconNextActive - UTILS.SecondsOfToday()
-                Debug("DCAF.CSAR:DeactivateBeacon :: timeInactive: " .. Dump(timeInactive) .. ":: next active time: " .. Dump(UTILS.SecondsToClock(self.BeaconNextActive)))
+                Debug("DCAF.CSAR.PursuedGroup:DeactivateBeacon :: timeInactive: " .. Dump(timeInactive) .. ":: next active time: " .. Dump(UTILS.SecondsToClock(self.BeaconNextActive)))
             end)
         end    
     end
 end
 
-function DCAF.CSAR:DeactivateBeacon()
+function DCAF.CSAR.PursuedGroup:DeactivateBeacon()
     if self.BeaconGroup then
         self.BeaconGroup:Destroy()
         self.BeaconGroup = nil
     end
 end
 
-function DCAF.CSAR:Start()
+function DCAF.CSAR.PursuedGroup:Start()
     if self.State ~= DCAF_CSAR_State.Initializing then
-        error("DCAF.CSAR:Start :: cannot activate group in distress (CSAR story already activated)") end
+        error("DCAF.CSAR.PursuedGroup:Start :: cannot activate group in distress (CSAR story already activated)") end
 
     if self._targetLocation then
         despawnAndMove(self)
@@ -411,7 +435,7 @@ function DCAF.CSAR:Start()
     return self
 end
 
-function DCAF.CSAR:GetCoordinate(update)
+function DCAF.CSAR.PursuedGroup:GetCoordinate(update)
     if self.State ~= DCAF_CSAR_State.Moving or (isBoolean(update) and not update) then
         return self._lastCoordinate end
 
@@ -422,17 +446,16 @@ function DCAF.CSAR:GetCoordinate(update)
     end
 
     local distance = self._speedMps * elapsedTime
-Debug("nisse - DCAF.CSAR:GetCoordinate :: heading: " .. Dump(self._heading))    
     self._lastCoordinate = self._lastCoordinate:Translate(self._speedMps * elapsedTime, self._heading)
     self._lastCoordinateTime = now
     return self._lastCoordinate
 end
 
-function DCAF.CSAR:MoveTo(location, speedKmph)
+function DCAF.CSAR.PursuedGroup:MoveTo(location, speedKmph)
     local coord
     local testLocation = DCAF.Location:Resolve(location)
     if not testLocation then
-        error("DCAF.CSAR:MoveTo :: cannot resolve location: " .. DumpPretty(location)) end
+        error("DCAF.CSAR.PursuedGroup:MoveTo :: cannot resolve location: " .. DumpPretty(location)) end
 
     coord = testLocation:GetCoordinate(false)
     if not isNumber(speedKmph) then
@@ -447,8 +470,8 @@ function DCAF.CSAR:MoveTo(location, speedKmph)
     return self
 end
 
-function DCAF.CSAR:OnTargetReached(targetLocation)
-    Debug("DCAF.CSAR:OnTargetReached :: '" .. self.Group.GroupName .. "'")
+function DCAF.CSAR.PursuedGroup:OnTargetReached(targetLocation)
+    Debug("DCAF.CSAR.PursuedGroup:OnTargetReached :: '" .. self.Group.GroupName .. "'")
 end
 
 function DCAF.Smoke:New(color, remaining)
@@ -464,7 +487,7 @@ function DCAF.Smoke:New(color, remaining)
     return smoke
 end
 
-function DCAF.CSAR:PopSmoke(radius)
+function DCAF.CSAR.PursuedGroup:PopSmoke(radius)
     self:DeactivateBeacon()
     if self.Smoke and self.Smoke.Remaining > 0 then
         local coordinate = self:GetCoordinate(false)
@@ -476,12 +499,12 @@ function DCAF.CSAR:PopSmoke(radius)
     return self
 end
 
-function DCAF.CSAR:OnActivateBeacon(friendlyUnit)
+function DCAF.CSAR.PursuedGroup:OnActivateBeacon(friendlyUnit)
     self:ActivateBeacon()
 end
 
-function DCAF.CSAR:AttractAttention(friendlyUnit)
-Debug("nisse - DCAF.CSAR:OnAttractAttention :: " .. self.Name .. " :: friendlyUnit: " .. friendlyUnit.UnitName)
+function DCAF.CSAR.PursuedGroup:AttractAttention(friendlyUnit)
+Debug("nisse - DCAF.CSAR.PursuedGroup:OnAttractAttention :: " .. self.Name .. " :: friendlyUnit: " .. friendlyUnit.UnitName)
     Delay(math.random(15, 60), function()
         self:PopSmoke(30)
     end)
@@ -489,7 +512,7 @@ Debug("nisse - DCAF.CSAR:OnAttractAttention :: " .. self.Name .. " :: friendlyUn
 end 
 
 -- @friendlyUnit       :: #UNIT - a friendly unit to try and attract attention from
-function DCAF.CSAR:OnAttractAttention(friendlyUnit)
+function DCAF.CSAR.PursuedGroup:OnAttractAttention(friendlyUnit)
     stopAndSpawn(self)
     if self.State == DCAF_CSAR_State.Stopped then
         stopScheduler(self)
@@ -503,17 +526,253 @@ function DCAF.CSAR:OnAttractAttention(friendlyUnit)
     end
 end
 
-function DCAF.CSAR:OnFriendlyDetectedInBeaconRange(friendlyUnit)
-Debug("nisse - DCAF.CSAR:OnFriendlyDetectedInSmokeRange :: " .. self.Name .. " :: friendlyUnit: " .. friendlyUnit.UnitName)
+function DCAF.CSAR.PursuedGroup:OnFriendlyDetectedInBeaconRange(friendlyUnit)
+Debug("nisse - DCAF.CSAR.PursuedGroup:OnFriendlyDetectedInSmokeRange :: " .. self.Name .. " :: friendlyUnit: " .. friendlyUnit.UnitName)
     self:OnActivateBeacon(friendlyUnit)
 end
     
-function DCAF.CSAR:OnFriendlyDetectedInSmokeRange(friendlyUnit)
-Debug("nisse - DCAF.CSAR:OnFriendlyDetectedInSmokeRange :: " .. self.Name .. " :: friendlyUnit: " .. friendlyUnit.UnitName)
+function DCAF.CSAR.PursuedGroup:OnFriendlyDetectedInSmokeRange(friendlyUnit)
+Debug("nisse - DCAF.CSAR.PursuedGroup:OnFriendlyDetectedInSmokeRange :: " .. self.Name .. " :: friendlyUnit: " .. friendlyUnit.UnitName)
     self:OnAttractAttention(friendlyUnit)
 end
 
-function DCAF.CSAR:OnEnemyDetected(enemyUnit)
-Debug("nisse - DCAF.CSAR:OnEnemyDetected :: " .. self.Name .. " :: enemyUnit: " .. enemyUnit.UnitName)
+function DCAF.CSAR.PursuedGroup:OnEnemyDetected(enemyUnit)
+Debug("nisse - DCAF.CSAR.PursuedGroup:OnEnemyDetected :: " .. self.Name .. " :: enemyUnit: " .. enemyUnit.UnitName)
     -- do nothing (stay hidden)
+end
+
+-- //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+--                                                                     PURSUING GROUP
+-- //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DCAF.CSAR.PursuingGroup = {
+    ClassName = "DCAF.CSAR.PursuingGroup",
+    Name = nil,         -- #string
+    Template = nil,     -- #string - group template name
+    Group = nil,        -- #GROUP in distress, to be rescued
+    State = DCAF_CSAR_State.Initializing,
+    Coalition = nil,    -- #Coalition - (string, small letters; "red", "blue", "neutral")
+    RtbAirbase = nil    -- #AIRBASE 
+}
+
+
+function DCAF.CSAR.PursuingGroup:New(name, sTemplate, pursued, startLocation, skill)
+    local group = getGroup(sTemplate)
+    if not group then
+        error("DCAF.CSAR.PursuingGroup:New :: cannot resolve group from: " .. DumpPretty(sTemplate)) end
+
+    if not isClass(pursued, DCAF.CSAR.PursuedGroup.ClassName) then
+        error("DCAF.CSAR.PursuingGroup:New :: `pursued` must be #" .. DCAF.CSAR.PursuedGroup.ClassName ..", but was: " .. DumpPretty(pursued)) end
+
+    if startLocation then
+        local testLocation = DCAF.Location:Resolve(startLocation)
+        if not testLocation then
+            error("DCAF.CSAR.PursuingGroup:Start :: cannot resolve location from: " .. DumpPretty(startLocation)) end
+
+        local coord = testLocation.Coordinate
+        if testLocation:IsZone() then
+            -- randomize location within zone...
+            Debug("DCAF.CSAR.PursuingGroup:New :: " .. name .. " :: starts at random location in zone " .. DumpPrettyDeep(startLocation))
+            coord = testLocation.Source:GetRandomPointVec2()
+        end
+        startLocation = testLocation
+    end
+    skill = Skill.Validate(skill)
+    if not skill then
+        skill = group:GetSkill()
+    end
+    
+    local pg = DCAF.clone(DCAF.CSAR.PursuingGroup)
+    pg.Name = name
+    pg.Template = sTemplate
+    pg.Group = group
+    pg.Coalition = Coalition.FromNumber(group:GetCoalition())
+    pg.Skill = skill
+    pg.StartLocation = startLocation
+    pg.PursuedGroup = pursued
+    pg.DetectedBeacon = nil
+    if startLocation and startLocation:IsAirbase() then
+       pg.RtbAirbase = startLocation.Source     
+    end
+Debug("nisse -  DCAF.CSAR.PursuingGroup:New :: pg: " .. DumpPretty(pg))
+    return pg
+end
+
+local function getAirSearchStarPattern(coordCenter, initialHdg, radius, altitude, altType, speed, angle, count)
+    if not isNumber(count) then
+        count = 5
+    else
+        count = math.max(2, count)
+    end
+    if not isNumber(angle) then
+        angle = (360 / count) * 2
+    end
+    local coordNext = coordCenter:Translate(radius, initialHdg)
+    local waypoints = {
+        coordNext:WaypointAirTurningPoint(altType, speed)
+    }
+    local angleNext = (initialHdg + angle) % 360
+    for i = 1, count, 1 do
+        coordNext = coordCenter:Translate(radius, angleNext)
+        table.insert(waypoints, coordNext:WaypointAirTurningPoint(altType, speed))
+        angleNext = (angleNext + angle) % 360
+    end
+    return waypoints
+end
+
+local function getSearchPatternCenterAndRadius(pg)
+    local minDistance
+    local maxDistance
+    local radius
+    if pg.Skill == Skill.Excellent then
+        minDistance = 0
+        maxDistance = 5
+        radius = NauticalMiles(10)
+    elseif pg.Skill == Skill.High then
+        minDistance = 5
+        maxDistance = 15
+        radius = NauticalMiles(15)
+    elseif pg.Skill == Skill.Good then
+        minDistance = 8
+        maxDistance = 20
+        radius = NauticalMiles(20)
+    elseif pg.Skill == Skill.Average then
+        minDistance = 12
+        maxDistance = 30
+        radius = NauticalMiles(30)
+    else
+        error("getSearchPatternRadius :: unsupported skill: '" .. pg.Skill .. "'")
+    end
+    local offset = math.random(minDistance, maxDistance)
+    local coordCenter = pg.PursuedGroup:GetCoordinate():Translate(NauticalMiles(offset), math.random(360))
+    return coordCenter, radius
+end
+
+local function testRtbCriteria(pg, waypoints)
+    if pg.BingoFuelState == nil then
+        return end
+
+    for _, wp in ipairs(waypoints) do
+        InsertWaypointCallback(wp, function() 
+            local fuelState = pg.Group:GetFuel()
+Debug("nisse - testRtbCriteria :: fuelState: " .. Dump(fuelState))            
+            if fuelState <= pg.BingoFuelState then
+                RTBNow(pg.Group, pg.RtbLocation.Source)
+            end
+        end)
+    end
+end
+
+local function startPursuingAir(pg)
+    local coord0
+    local wp0
+    local initialHdg
+    local spawn = getSpawn(pg.Template)
+    local patternCenter, radius = getSearchPatternCenterAndRadius(pg)
+    spawn:InitSkill(pg.Skill)
+    local group
+    if not pg.StartLocation then
+        -- spawn at random location 1 nm outside search pattern...
+        local randomAngle = math.random(360)
+        local coord0 = patternCenter:Translate(radius + NauticalMiles(1), math.random(360))
+        initialHdg = coord0:HeadingTo(patternCenter)
+        spawn:InitHeading(initialHdg)
+        group = spawn:SpawnFromCoordinate(coord0)
+    elseif pg.StartLocation:IsAirbase() then
+        local coordAirbase = pg.StartLocation:GetCoordinate()
+        coord0 = pg.StartLocation:GetCoordinate()
+        initialHdg = coord0:HeadingTo(patternCenter)
+        group = spawn:SpawnAtAirbase(pg.StartLocation.Source, SPAWN.Takeoff.Hot)
+    elseif pg.StartLocation:IsZone() then
+        coord0 = pg.StartLocation.Source:GetRandomPointVec2()
+        initialHdg = coord0:HeadingTo(patternCenter)
+        spawn:InitHeading(initialHdg)
+        group = spawn:SpawnFromCoordinate(coord0)
+    else
+        local randomAngle = math.random(360)
+        coord0 = pg.PursuedGroup:GetCoordinate():Translate(radius, randomAngle)
+        initialHdg = coord0:HeadingTo(patternCenter)
+        spawn:InitHeading(initialHdg)
+        group = spawn:SpawnFromCoordinate(coord0)
+    end
+
+    local function debug_drawSearchArea(patternCenter)
+        if not DCAF.Debug then return end
+        if pg._debugSearchZoneMarkID then
+            patternCenter:RemoveMark(pg._debugSearchZoneMarkID)
+        end
+        pg._debugSearchZoneMarkID = patternCenter:CircleToAll(radius)
+    end
+
+    local _expandAgain
+    local function expandSearchPatternWhenSearchComplete(searchPattern)
+        local lastWP = searchPattern[#searchPattern]
+        InsertWaypointCallback(lastWP, function() 
+            Debug("DCAF.CSAR.PursuingGroup :: last search waypoint reached :: expands search area")
+            radius = radius + NauticalMiles(5)
+            initialHdg = COORDINATE_FromWaypoint(lastWP):HeadingTo(patternCenter)
+            local searchPattern = getAirSearchStarPattern(patternCenter, initialHdg, radius, pg.Altitude, pg.AltitudeType, pg.Speed)
+            _expandAgain(searchPattern)
+            if pg.BingoFuelState then
+                testRtbCriteria(pg, searchPattern)
+            end
+            group:Route(searchPattern)
+            debug_drawSearchArea(patternCenter)
+        end)
+    end
+    _expandAgain = expandSearchPatternWhenSearchComplete
+
+    local searchPattern = getAirSearchStarPattern(patternCenter, initialHdg, radius, pg.Altitude, pg.AltitudeType, pg.Speed)
+    local lastWP = searchPattern[#searchPattern]
+    expandSearchPatternWhenSearchComplete(searchPattern)
+    group:Route(searchPattern)
+    debug_drawSearchArea(patternCenter)
+    if pg.BingoFuelState then
+        testRtbCriteria(pg, searchPattern)
+    end
+    return group
+end
+
+function DCAF.CSAR.PursuingGroup:Start(speed, alt, altType)
+    if not isNumber(alt) then
+        if self.Group:IsHelicopter() then
+            alt = Feet(math.random(300, 800))
+        elseif self.Group:IsAirPlane() then
+            alt = Feet(math.random(600, 1200))
+        end
+    end
+    if not isAssignedString(altType) then
+        if self.Group:IsHelicopter() then
+            altType = COORDINATE.WaypointAltType.RADIO
+        elseif self.Group:IsAirPlane() then
+            altType = COORDINATE.WaypointAltType.BARO
+        end
+    end
+    self.Altitude = alt
+    self.AltitudeType = altType
+    if self.Group:IsAir() then
+        self.Group = startPursuingAir(self)
+        return self
+    elseif self.Group:IsGround() then
+        return startPursuingGround(self)
+    else
+        error("DCAF.CSAR.PursuingGroup:Start :: invalid group type (expected helicopter, airplane or ground group): " .. self.Template)
+    end
+end
+
+function DCAF.CSAR.PursuingGroup:WithRTB(rtbLocation, bingoFuelState)
+    local testLocation = DCAF.Location:Resolve(rtbLocation)
+    if not testLocation then
+        error("DCAF.CSAR.PursuingGroup:WithRTB :: cannot resolve `rtbLocation` from: " .. DumpPretty(rtbLocation)) end
+
+    if self.Group:IsAirPlane() and not rtbLocation:IsAirbase() then
+        error("DCAF.CSAR.PursuingGroup:WithRTB :: `rtbLocation` must be airbase") 
+    end
+    rtbLocation = testLocation
+    if not isNumber(bingoFuelState) then
+        bingoFuelState = .20
+    end
+    self.RtbLocation = rtbLocation
+    self.BingoFuelState = bingoFuelState
+    return self
 end

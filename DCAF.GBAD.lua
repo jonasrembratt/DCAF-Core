@@ -597,7 +597,7 @@ function SAM_AREA:IsManaged(source)
         errorOnDebug("SAM_AREA:IsIn :: cannot resolve source: " .. DumpPretty(source))
         return
     end
-    local provider = location.Provider
+    local provider = location.Source
     for _, s3 in pairs(self.SpawnedSamSites) do
         if s3:IsManaged(provider) then return true end
     end

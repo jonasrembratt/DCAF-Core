@@ -132,6 +132,38 @@ function isAssignedString( value )
     return string.len(value) > 0 
 end
 
+Skill = {
+    Average = "Average",
+    High = "High",
+    Good = "Good",
+    Excellent = "Excellent",
+    Random = "Random"
+}
+
+function Skill.Validate(value)
+    if not isAssignedString(value) then
+        return false end
+
+    local testValue = string.lower(value)
+    for k, v in pairs(value) do
+        if isAssignedString(v) and string.lower(v) == testValue then
+            if v == Skill.Random then
+                local i = math.random(4)
+                if i == 1 then
+                    return Skill.Average
+                elseif i == 2 then
+                    return Skill.High
+                elseif i == 3 then
+                    return Skill.Good
+                elseif i == 4 then
+                    return Skill.Excellent
+                end
+            end
+            return v
+        end
+    end
+end
+
 function DCAF.trimInstanceFromName( name, qualifierAt )
     if not isNumber(qualifierAt) then
         qualifierAt = string.find(name, "#%d")
@@ -1020,9 +1052,9 @@ function DCAF.Location:New(source, throwOnFail)
 end
 
 function DCAF.Location:Resolve(source)
-    if isClass(location, DCAF.Location.ClassName) then
-        return source
-    end
+    if isClass(source, DCAF.Location.ClassName) then
+        return source end
+
     local d = DCAF.Location:New(source, false)
     if d then
         return d
@@ -1058,6 +1090,12 @@ end
 function DCAF.Location:IsGrounded(errorMargin)
     return not self:IsAirborne(errorMargin)
 end
+
+function DCAF.Location:IsCoordinate() return isCoordinate(self.Source) end
+function DCAF.Location:IsVec2() return isVec2(self.Source) end
+function DCAF.Location:IsVec3() return isVec3(self.Source) end
+function DCAF.Location:IsZone() return isZone(self.Source) end
+function DCAF.Location:IsAirbase() return isAirbase(self.Source) end
 
 function GetBearingAndDistance(from, to)
     local dFrom = DCAF.Location:Resolve(from)
@@ -4980,31 +5018,43 @@ local DCAF_CALLBACKS = { -- dictionary
     -- value = #AIR_ROUTE_CALLBACK_INFO
 }
 
-function DCAF_CALLBACK_INFO:New(func)
+function DCAF_CALLBACK_INFO:New(func, oneTime)
     local info = DCAF.clone(DCAF_CALLBACK_INFO)
+    if not isBoolean(oneTime) then
+        oneTime = true
+    end
     info.Func = func
-    DCAF_CALLBACK_INFO.NextId = DCAF_CALLBACK_INFO.NextId + 1
     info.Id = DCAF_CALLBACK_INFO.NextId
+    info.OneTime = oneTime
     DCAF_CALLBACKS[tostring(info.Id)] = info
+    DCAF_CALLBACK_INFO.NextId = DCAF_CALLBACK_INFO.NextId + 1
     return info
 end
 
-function DCAF_CALLBACKS:Remove()
-    DCAF_CALLBACKS[tostring(self.Id)] = nil
-end
-
 function DCAF_CALLBACKS:Callback(id)
+    local key = tostring(id)
+    local info = DCAF_CALLBACKS[key]
+    if not info then
+        Warning("DCAF_CALLBACKS:Callback :: no callback found with id: " .. Dump(id) .. " :: IGNORES")
+        return
+    end
+    info.Func()
+    if info.OneTime then
+        DCAF_CALLBACKS[key] = nil
+    end
 end
 
-function InsertWaypointCallback(waypoint, func)
-    local callback
-    callback = DCAF_CALLBACK_INFO:New(function() 
+function ___dcaf_callback___(id)
+    DCAF_CALLBACKS:Callback(id)
+end
+
+function InsertWaypointCallback(waypoint, func, oneTime)
+    local info
+    info = DCAF_CALLBACK_INFO:New(function() 
         func(waypoint)
-        callback:Remove()
-    end)
-    InsertWaypointAction(waypoint, ScriptAction("DCAF_CALLBACKS:Callback(" ..Dump(callback.Id) .. ")"))
+    end, oneTime)
+    InsertWaypointAction(waypoint, ScriptAction("___dcaf_callback___(" ..Dump(info.Id) .. ")"))
 end
-
 
 function DCAF_ServiceTrack:Execute(direct) -- direct = service will proceed direct to track
     if not isBoolean(direct) then
