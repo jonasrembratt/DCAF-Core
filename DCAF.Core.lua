@@ -52,7 +52,7 @@ end
 VariableValue = {
     ClassName = "VariableValue",
     Value = 100,           -- #number - fixed value)
-    Variance = 0           -- #number - variance (0.0 --> 1.0)
+    VarianSearchGroup      -- #number - variance (0.0 --> 1.0)
 }
 
 function isString( value ) return type(value) == "string" end
@@ -5438,7 +5438,7 @@ function IsOnAirbase(source, airbase)
     return coordClosestAirbase:Get2DDistance(location.Coordinate) < NauticalMiles(2.5)
 end
 
-function RTBNow(controllable, airbase, onLandedFunc)
+function RTBNow(controllable, airbase, onLandedFunc, altitude, altitudeType)
     if IsOnAirbase(controllable, airbase) then
         -- controllable is already on specified airbase - despawn
         local group = getGroup(controllable)
@@ -5469,7 +5469,7 @@ function RTBNow(controllable, airbase, onLandedFunc)
 
         local route = {}
         local arriveWP
-        local approachWp
+        local approachWP
         landingWp = landingWp or WaypointLandAt(airbase)
         if not landingWp then
             error("RTBNow-"..group.GroupName.." :: cannot create landing waypoint for airbase: " .. DumpPretty(airbase)) end
@@ -5503,9 +5503,11 @@ function RTBNow(controllable, airbase, onLandedFunc)
         local initialCoord = approachCoord:Translate(NauticalMiles(1), bearing, approachAltitude)
         initialCoord:SetAltitude(math.max(group:GetAltitude(), Feet(15000)))
         local initialWP = initialCoord:WaypointAirTurningPoint(appoachAltType, initialVelocity)
-        approachWp = approachCoord:WaypointAirTurningPoint(appoachAltType, Knots(250))
+        approachWP = approachCoord:WaypointAirTurningPoint(appoachAltType, Knots(250))
+        initialWP.name = "INITIAL"
+        approachWP.name = "APPROACH"
         table.insert(route, initialWP)
-        table.insert(route, approachWp)
+        table.insert(route, approachWP)
         table.insert(route, landingWp)
         return route
     end
@@ -5531,8 +5533,9 @@ function RTBNow(controllable, airbase, onLandedFunc)
             end
         end
     end
-    local route = buildRoute(airbase, landingWp)
-    group:Route(route)
+    local waypoints = buildRoute(airbase, landingWp)
+Debug("nisse - RTBNow :: group: " .. group.GroupName .. " :: route: " .. DumpPrettyDeep(waypoints))
+    group:Route(waypoints)
     return group
 end
 
