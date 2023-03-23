@@ -53,6 +53,16 @@ DCAF.CSAR.DistressedGroup = {
     Smoke = nil                            -- #DCAF.Smoke
 }
 
+DCAF.CSAR.SearchGroupsTemnplate = {
+    Skill = Skill.Random,
+    SearchGroupTemplates = {
+        -- list of #string - search group template names
+    },
+    StartLocations = {
+        -- list of #DCAF.Location
+    }
+}
+
 local CSAR_SearchGroup = {  -- note : this template is used both for #DCAF.CSAR.HunterGroup and #DCAF.CSAR.RescueGroup
     State = CSAR_State.Initializing,
     Name = nil,             -- #string
@@ -61,27 +71,55 @@ local CSAR_SearchGroup = {  -- note : this template is used both for #DCAF.CSAR.
     SkillFactor = 1,        -- #number (0.0 --> 1.0) : resolved by getSkillFactor()
     Coalition = nil,        -- #Coalition - (string, small letters; "red", "blue", "neutral")
     RtbLocation = nil,      -- #DCAF.Location
-    IsDistressBeaconTuned = false,    -- #boolean - true - group will detect beacon as son as it comes online
+    -- IsBeaconTuned = false,    -- #boolean - true - group will detect beacon as son as it comes online
     BeaconDetection = nil,  -- #DCAF.CSAR.BeaconDetection
     CanPickup = true       -- #boolean - true = group can capture distressed group (eg. transport capable helicopter or ground vechicles
 }
 
 DCAF.CSAR.HunterGroup = {
-    ClassName = "DCAF.CSAR.SearchGroup",
-    -- inherites all from #DCAF.CSAR.HunterGroup
+    ClassName = "DCAF.CSAR.HunterGroup",
+    -- inherites all from #CSAR_SearchGroup
 }
 
 DCAF.CSAR.RescueGroup = {
     ClassName = "DCAF.CSAR.RescueGroup",
-    -- inherites all from #DCAF.CSAR.HunterGroup
+    -- inherites all from #CSAR_SearchGroup
 }
 
 DCAF.CSAR.BeaconDetection = {
+    IsBeaconTuned = false,              -- #boolean - true - group will detect beacon as son as it comes online
     DetectionInterval = 20,             -- check for prey becaon every 'N' seconds
     RefinementInterval = Minutes(10),   -- refine beacon location precison every 'N' seconds
     Probability = .02,                  -- probability (0,1) hunter will detect prey's beacon
     ProbabilityInc = .01,               -- increase probability of beacon detection every 'N' seonds
     NextCheck = nil,                    -- next time to check whether beacon is detected
+}
+
+local CSAR_RescueResources = {
+    -- list of #DCAF.CSAR.RescueResource
+}
+
+local CSAR_CaptureResources = {
+    -- list of #DCAF.CSAR.CaptureResource
+}
+
+local CSAR_SearchResource = {
+    Template = nil,             -- #string - eg. "RED Pursuing Heli-escort"
+    Locations = nil,            -- #table of-, or #DCAF.Location - eg. Mesquite
+    MaxAvailable = 999,
+    MaxRange = NauticalMiles(200),   -- #number - default = 100nm
+    Skill = Skill.Random,
+    IsBeaconTuned = false,      -- default = false
+}
+
+DCAF.CSAR.RescueResource = {
+    ClassName = "DCAF.CSAR.RescueResource",
+    -- inherits rest from CSAR_SearchResource
+}
+
+DCAF.CSAR.CaptureResource = {
+    ClassName = "DCAF.CSAR.CaptureResource",
+    -- inherits rest from CSAR_SearchResource
 }
 
 local CSAR_Scheduler = SCHEDULER:New()
@@ -109,10 +147,13 @@ end
 --                                                                     DISTRESSED GROUP
 -- //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-local function setState(csar, state)
-    csar.State = state
+local function setState(sg, state)
+    if state == sg.State then
+        return end
+
+    sg.State = state
 if DCAF.Debug then
-    MessageTo(nil, "Distressed group state: " .. state)
+    MessageTo(nil, "CSAR group '" .. sg.Name .. "' state: " .. state)
 end
 end
 
@@ -132,17 +173,20 @@ local function getSkillFactor(skill)
     return factor
 end
 
-local function stopAndSpawn(csar)
-    local spawn = getSpawn(csar.Group.GroupName)
-    csar.Group = spawn:SpawnFromCoordinate(csar._lastCoordinate)
-    if not csar.Group:IsActive() then
-        csar.Group:Activate()
-    end
-    if not csar.Group:IsAlive() then
-        error("DCAF.CSAR.DistressedGroup:Wait :: cannot activate CSAR for dead group: " .. csar.Group.GroupName) end
+local function stopAndSpawn(dg)
+    if dg:IsStopped() then
+        return end
 
-    setState(csar, CSAR_State.Stopped)
-    return csar
+    local spawn = getSpawn(dg.Group.GroupName)
+    dg.Group = spawn:SpawnFromCoordinate(dg._lastCoordinate)
+    if not dg.Group:IsActive() then
+        dg.Group:Activate()
+    end
+    if not dg.Group:IsAlive() then
+        error("DCAF.CSAR.DistressedGroup:Wait :: cannot activate CSAR for dead group: " .. dg.Group.GroupName) end
+
+    setState(dg, CSAR_State.Stopped)
+    return dg
 end
 
 local function debug_markLocation(dg)
@@ -298,7 +342,7 @@ local function scheduleDistressedGroup(dg) -- dg : #DCAF.CSAR.DistressedGroup
         return dg.BeaconGroup and dg.BeaconGroup.GroupName == unit:GetGroup().GroupName
     end
 
-    dg.SchedulerID = CSAR_Scheduler:Schedule(dg, function()
+    dg._schedulerID = CSAR_Scheduler:Schedule(dg, function()
         local zoneEnemies = ZONE_GROUP:New(dg.Name .. "_enemies", dg.Group, dg.RangeEnemies)
         move(dg)
         local coord = dg:GetCoordinate(false)
@@ -363,10 +407,7 @@ local function scheduleDistressedGroup(dg) -- dg : #DCAF.CSAR.DistressedGroup
 -- Debug("nisse - closestFriendly: " .. DumpPretty(closestFriendly) .. " :: distance: " .. Dump(closestFriendlyDistance))
         if closestFriendly and closestFriendlyDistance < dg.RangeSmoke and coord:IsLOS(closestFriendly:GetCoordinate()) then
 -- Debug("nisse - closestFriendly: " .. DumpPretty(closestFriendly.UnitName) .. " :: distance: " .. Dump(closestFriendlyDistance))
-            if dg:IsAttractingAttention() then
-                return end 
-
-            dg:OnAttractAttention(closestFriendly)
+            dg:OnFriendlyDetectedInSmokeRange(closestFriendly)
             return
         end
 
@@ -382,9 +423,13 @@ local function scheduleDistressedGroup(dg) -- dg : #DCAF.CSAR.DistressedGroup
     CSAR_Scheduler:Run()
 end
 
-local function stopDistressedGroupScheduler(dg)
-    CSAR_Scheduler:Stop(dg.SchedulerID)
-    dg.SchedulerID = nil
+local function stopScheduler(sg)
+    if not sg._schedulerID then
+        return end
+
+-- Debug("nisse - stops scheduler for " .. sg.Name .. " :: sg._schedulerID: " .. Dump(sg._schedulerID))
+    CSAR_Scheduler:Stop(sg._schedulerID)
+    sg._schedulerID = nil
 end
 
 local function despawnAndMove(dg)
@@ -413,15 +458,12 @@ end
 -- @location            :: #DCAF.Location - start location for distressed group
 -- @bCanBeCaptured      :: #bool
 -- @smoke               :: #DCAF.Smoke
-function DCAF.CSAR.DistressedGroup:New(name, csar, sTemplate, location, bCanBeCaptured, smoke)
+function DCAF.CSAR.DistressedGroup:New(name, sTemplate, location, csar, bCanBeCaptured, smoke)
     local group = getGroup(sTemplate)
-    if not isClass(csar, DCAF.CSAR.ClassName) then
-        csar = DCAF.CSAR        
-    end
     if not group then
         error("DCAF.CSAR.DistressedGroup:New :: cannot resolve group from: " .. DumpPretty(sTemplate)) end
 
-    local testLocation = DCAF.Location:Resolve(location)
+    local testLocation = DCAF.Location.Resolve(location)
     if not testLocation then
         error("DCAF.CSAR.DistressedGroup:Start :: cannot resolve location from: " .. DumpPretty(location)) end
 
@@ -429,7 +471,15 @@ function DCAF.CSAR.DistressedGroup:New(name, csar, sTemplate, location, bCanBeCa
     if isZone(testLocation.Source) then
         -- randomize location within zone...
         Debug("DCAF.CSAR.DistressedGroup:New :: " .. name .. " :: starts at random location in zone " .. testLocation.Name)
-        coord = testLocation.Source:GetRandomPointVec2()
+        while coord:IsSurfaceTypeWater() do
+            coord = testLocation.Source:GetRandomPointVec2()
+        end
+    end
+    if not isBoolean(bCanBeCaptured) then
+        bCanBeCaptured = true
+    end
+    if not isClass(smoke, DCAF.Smoke.ClassName) then
+        smoke = DCAF.Smoke:New()
     end
     location = testLocation
     
@@ -438,12 +488,16 @@ function DCAF.CSAR.DistressedGroup:New(name, csar, sTemplate, location, bCanBeCa
     dg.CSAR = csar
     dg.Template = sTemplate
     dg.Group = group
-    dg.Smoke = smoke or DCAF.Smoke:New()
+    dg.Smoke = smoke
     dg.Coalition = Coalition.FromNumber(group:GetCoalition())
+    dg.CanBeCatured = bCanBeCaptured
     dg._isMoving = false
     dg._lastCoordinate = coord
     dg._lastCoordinateTime = UTILS.SecondsOfToday()
-Debug("nisse -  DCAF.CSAR.DistressedGroup:New :: csar: " .. DumpPretty(dg))    
+Debug("nisse -  DCAF.CSAR.DistressedGroup:New :: csar: " .. DumpPretty(dg))
+if not isClass(csar, DCAF.CSAR.ClassName) then
+    csar = DCAF.CSAR:New(name, dg)
+end
     return dg
 end
 
@@ -575,7 +629,7 @@ end
 
 function DCAF.CSAR.DistressedGroup:MoveTo(location, speedKmph)
     local coord
-    local testLocation = DCAF.Location:Resolve(location)
+    local testLocation = DCAF.Location.Resolve(location)
     if not testLocation then
         error("DCAF.CSAR.DistressedGroup:MoveTo :: cannot resolve location: " .. DumpPretty(location)) end
 
@@ -627,17 +681,22 @@ end
 
 function DCAF.CSAR.DistressedGroup:AttractAttention(friendlyUnit)
 Debug("nisse - DCAF.CSAR.DistressedGroup:OnAttractAttention :: " .. self.Name .. " :: friendlyUnit: " .. friendlyUnit.UnitName)
+    if self._isDelayedAttractAttention then
+        return end
+
+    self._isDelayedAttractAttention = true
     Delay(math.random(15, 60), function()
         self:PopSmoke(30)
+        setState(self, CSAR_State.Attracting)
+        self._isDelayedAttractAttention = nil
     end)
-    setState(self, CSAR_State.Attracting)
 end 
 
 -- @friendlyUnit       :: #UNIT - a friendly unit to try and attract attention from
 function DCAF.CSAR.DistressedGroup:OnAttractAttention(friendlyUnit)
     stopAndSpawn(self)
     if self.State == CSAR_State.Stopped then
-        stopDistressedGroupScheduler(self)
+        stopScheduler(self)
         self:AttractAttention(friendlyUnit)
 
         Delay(self.AttractAttentionTime, function() 
@@ -646,6 +705,30 @@ function DCAF.CSAR.DistressedGroup:OnAttractAttention(friendlyUnit)
             end
         end)
     end
+end
+
+function DCAF.CSAR.DistressedGroup:Pickup(sg)
+    local searchUnits = sg.Group:GetUnits()
+    self.CarrierUnit = listRandomItem(searchUnits)
+    if isClass(sg, DCAF.CSAR.RescueGroup.ClassName) then
+        setState(self, CSAR_State.Rescued)
+        self:OnRescued(sg)
+    else
+        setState(self, CSAR_State.Captured)
+        self:OnCaptured(sg)
+    end
+end
+
+function DCAF.CSAR.DistressedGroup:OnRescued(rescueGroup)
+    Debug(self.Name .. " was rescued by " .. sg.Name)
+end
+
+function DCAF.CSAR.DistressedGroup:OnCaptured(rescueGroup)
+    Debug(self.Name .. " was captured by " .. sg.Name)
+end
+
+function DCAF.CSAR.DistressedGroup:IsStopped()
+    return self.State == CSAR_State.Stopped
 end
 
 function DCAF.CSAR.DistressedGroup:IsAttractingAttention()
@@ -659,6 +742,9 @@ end
     
 function DCAF.CSAR.DistressedGroup:OnFriendlyDetectedInSmokeRange(friendlyUnit)
 Debug("nisse - DCAF.CSAR.DistressedGroup:OnFriendlyDetectedInSmokeRange :: " .. self.Name .. " :: friendlyUnit: " .. friendlyUnit.UnitName)
+    if self:IsAttractingAttention() then
+        return end 
+
     self:OnAttractAttention(friendlyUnit)
 end
 
@@ -677,7 +763,7 @@ local function newSearchGroup(template, name, sTemplate, distressedGroup, startL
         error(className .. ":New :: `distressedGroup` must be #" .. DCAF.CSAR.DistressedGroup.ClassName ..", but was: " .. DumpPretty(distressedGroup)) end
 
     if startLocation then
-        local testLocation = DCAF.Location:Resolve(startLocation)
+        local testLocation = DCAF.Location.Resolve(startLocation)
         if not testLocation then
             error(className .. ":Start :: cannot resolve location from: " .. DumpPretty(startLocation)) end
 
@@ -715,7 +801,7 @@ local function newSearchGroup(template, name, sTemplate, distressedGroup, startL
     return sg
 end
 
-local function withCapabilities(sg, bCanPickup, bInfraredSensor, bIsDistressBeaconTuned)
+local function withCapabilities(sg, bCanPickup, bInfraredSensor, bIsBeaconTuned)
     if isBoolean(bCanPickup) then
         sg.CanPickup = bCanPickup
     else
@@ -725,8 +811,8 @@ local function withCapabilities(sg, bCanPickup, bInfraredSensor, bIsDistressBeac
     if isBoolean(bInfraredSensor) then
         sg.InfraredSensor = bInfraredSensor
     end
-    if isBoolean(bIsDistressBeaconTuned) then
-        sg.IsDistressBeaconTuned = bIsDistressBeaconTuned
+    if isBoolean(bIsBeaconTuned) then
+        sg.BeaconDetection.IsBeaconTuned = bIsBeaconTuned
     end
     return sg
 end
@@ -784,7 +870,7 @@ local function tryDetectDistressBeaconCoordinate(sg)
         return end
 
     local probability 
-    if sg.IsDistressBeaconTuned then
+    if sg.BeaconDetection.IsBeaconTuned then
         probability = .95 * sg.SkillFactor * 100
     else
         probability = sg.BeaconDetection.Probability * sg.SkillFactor * 100
@@ -793,7 +879,7 @@ local function tryDetectDistressBeaconCoordinate(sg)
     sg.BeaconDetection.Probability = sg.BeaconDetection.Probability + sg.BeaconDetection.ProbabilityInc
     sg.BeaconDetection.NextCheck = now + sg.BeaconDetection.DetectionInterval
     local rnd = math.random(100)
-Debug("tryDetectDistressBeaconCoordinate :: time: " .. time .. " :: IsDistressBeaconTuned: " .. Dump(sg.IsDistressBeaconTuned) .. " probability: " .. Dump(probability) .. " :: rnd: " .. Dump(rnd))
+-- Debug("tryDetectDistressBeaconCoordinate :: time: " .. time .. " :: IsBeaconTuned: " .. Dump(sg.BeaconDetection.IsBeaconTuned) .. " probability: " .. Dump(probability) .. " :: rnd: " .. Dump(rnd))
     if rnd > probability then
         return end
 
@@ -836,7 +922,8 @@ local function scheduleSearchGroupDetection(sg) -- sg : #DCAF.CSAR.HunterGroup o
     -- controls behavior of distressed group, looking for friendlies/enemies, moving, hiding, attracting attention etc...
     local name = sg.Group.GroupName
 
-    sg.SchedulerID = CSAR_Scheduler:Schedule(sg, function()
+    sg._schedulerID = CSAR_Scheduler:Schedule(sg, function()
+Debug("nisse - scheduleSearchGroupDetection :: " .. name .. " :: sg._schedulerID: " .. Dump(sg._schedulerID))
         local now = UTILS.SecondsOfToday()
 
         if not sg.BeaconDetection or now > sg.BeaconDetection.NextCheck then
@@ -862,20 +949,23 @@ local function scheduleSearchGroupDetection(sg) -- sg : #DCAF.CSAR.HunterGroup o
         local coordPreyActual = sg.Prey:GetCoordinate(false, 1)
         local coordOwn = sg.Group:GetCoordinate()
         if not sg.Group:GetCoordinate():IsLOS(coordPreyActual) then
+-- Debug("nisse - scheduleSearchGroupDetection :: " .. name .. " (obscured)")
             -- prey is obscured
             return end
 
         -- we have LOS to prey. Take other factors into accound for actual visual detection...
         -- local revSkillFactor = 1 / hunter.SkillFactor
         local maxVisualDistance
+        local attractionFactor = 1
         if sg.Prey:IsAttractingAttention() then
-            maxVisualDistance = NauticalMiles(10)
+            maxVisualDistance = NauticalMiles(12)
+            attractionFactor = 1.5
         else
             maxVisualDistance = NauticalMiles(2)
         end
         maxVisualDistance = maxVisualDistance * sg.Prey.SizeDetectionFactor * sg.SkillFactor -- todo Make max distance configurable
--- Debug("runHunterDetectionScheduler :: maxVisualDistance: " .. Dump(maxVisualDistance))
         local actualDistance = coordOwn:Get2DDistance(coordPreyActual)
+Debug("nisse - scheduleSearchGroupDetection :: " .. name .. "  :: maxVisualDistance: " .. Dump(maxVisualDistance) .. " :: actualDistance: " .. Dump(actualDistance))
         if actualDistance > maxVisualDistance then
             return end
 
@@ -884,16 +974,18 @@ local function scheduleSearchGroupDetection(sg) -- sg : #DCAF.CSAR.HunterGroup o
 
         -- debug_drawHunterCircle(maxVisualDistance)
 
-        if math.random() > distanceFactor then
-            return end
-
-        if math.random() > sg.SkillFactor then
+        -- if math.random() > distanceFactor then
+        --     return end
+        local rnd = math.random()
+Debug("nisse -scheduleSearchGroupDetection :: sg.SkillFactor * attractionFactor: " .. Dump(sg.SkillFactor * attractionFactor) .. " :: rnd: " .. Dump(rnd))
+        if rnd > sg.SkillFactor * attractionFactor then
             return end
 
         -- todo Weather (rain/fog reduces probability of detection)
 
         -- prey was visually acquired - start capture...
-        CSAR_Scheduler:Stop(sg._schedulerID)
+Debug("nisse - CSAR :: " .. name .. " :: sg._schedulerID: " .. Dump(sg._schedulerID))
+-- CSAR_Scheduler:Stop(sg._schedulerID)
         if isClass(sg, DCAF.CSAR.HunterGroup.ClassName) then
 Debug("nisse - CSAR :: hunter " .. sg.Name .. " has spotted " .. sg.Prey.Group.GroupName .. "!")
             sg.CSAR:DirectCapableHuntersToCapture() 
@@ -1028,7 +1120,7 @@ local function startSearch(sg, speed, alt, altType)
 end
 
 local function withRTB(sg, rtbLocation, bingoFuelState)
-    local testLocation = DCAF.Location:Resolve(rtbLocation)
+    local testLocation = DCAF.Location.Resolve(rtbLocation)
     if not testLocation then
         error(sg.ClassName .. ":WithRTB :: cannot resolve `rtbLocation` from: " .. DumpPretty(rtbLocation)) end
 
@@ -1045,6 +1137,7 @@ local function withRTB(sg, rtbLocation, bingoFuelState)
 end
 
 local function landAndPickup(sg)
+    sg.Prey:Pickup(sg)
     local coord = sg.Prey:GetCoordinate(false, 1):Translate(40, math.random(360))
     local landWP = coord:WaypointAirFlyOverPoint(sg.AltitudeType, sg.Speed)
     local setPrey = SET_GROUP:New()
@@ -1053,13 +1146,12 @@ local function landAndPickup(sg)
     coord = coord:Translate(50, math.random(360))
     local takeOffWP = coord:WaypointAirFlyOverPoint(sg.AltitudeType, sg.Speed)
     local waypoints = { landWP, takeOffWP }
+    
     InsertWaypointCallback(landWP, function() 
         if sg.Prey.CarrierUnit then
             return end
 
         sg.Prey.Group:Destroy()
-        local hunterUnits = sg.Group:GetUnits()
-        sg.Prey.CarrierUnit = listRandomItem(hunterUnits)
         Debug("CSAR :: '" .. sg.Prey.Group.GroupName .. "' was captured by '" .. sg.Prey.CarrierUnit.UnitName .. "'")
         if isClass(sg, DCAF.CSAR.HunterGroup.ClassName) then
             sg.CSAR:RTBHunters()
@@ -1120,6 +1212,7 @@ Debug("DCAF.CSAR :: '" .. hunter.Group.GroupName .. "' is orbiting over '" .. hu
     end
 
     for _, sg in ipairs(groups) do
+        stopScheduler(sg)
         if canPickup(sg) then
             pickup(sg)
         else
@@ -1152,8 +1245,8 @@ function DCAF.CSAR.HunterGroup:New(name, sTemplate, distressedGroup, startLocati
     return withCapabilities(hg, true, false, false)
 end
 
-function DCAF.CSAR.HunterGroup:WithCapabilities(bCanPickup, bInfraredSensor, bIsDistressBeaconTuned)
-    return withCapabilities(self, bCanPickup, bInfraredSensor, bIsDistressBeaconTuned)
+function DCAF.CSAR.HunterGroup:WithCapabilities(bCanPickup, bInfraredSensor, bIsBeaconTuned)
+    return withCapabilities(self, bCanPickup, bInfraredSensor, bIsBeaconTuned)
 end
 
 function DCAF.CSAR.HunterGroup:Start(speed, alt, altType)
@@ -1173,21 +1266,20 @@ end
 -- //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 --- Creates and initialises a new #DCAF.CSAR.RescueGroup
--- @name            :: #string : internal name of rescue group
 -- @sTemplate       :: #string : name of rescue group template (late activated)
 -- @distressedGroup :: #DCAF.CSAR.DistressedGroup : this is what the rescuer is trying to locate and rescue
 -- @startLocation   :: (optional) #DCAF.Location : name of rescue group template (late activated) :: default = random location just outside of search area
 -- @skill           :: (optional) #Skill : used to control precision in search effort :: default = spawned #GROUP skill (set from Mission Editor)
-function DCAF.CSAR.RescueGroup:New(name, sTemplate, distressedGroup, startLocation, skill)
-    local rg = newSearchGroup(DCAF.CSAR.RescueGroup, name, sTemplate, distressedGroup, startLoation, skill)
-    table.insert(rg.CSAR.RescueGroups, rg)
+function DCAF.CSAR.RescueGroup:New(csar, sTemplate, distressedGroup, startLocation, skill)
+    local rg = newSearchGroup(DCAF.CSAR.RescueGroup, name, sTemplate, distressedGroup, startLocation, skill)
+    table.insert(csar.RescueGroups, rg)
     rg = withCapabilities(rg, true, false, true)
-    Debug("nisse - DCAF.CSAR.RescueGroup:New :: rg: " .. DumpPretty(rg))
+Debug("nisse - DCAF.CSAR.RescueGroup:New :: rg: " .. DumpPretty(rg))
     return rg
 end
 
-function DCAF.CSAR.RescueGroup:WithCapabilities(bCanPickup, bInfraredSensor, bIsDistressBeaconTuned)
-    return withCapabilities(self, bCanPickup, bInfraredSensor, bIsDistressBeaconTuned)
+function DCAF.CSAR.RescueGroup:WithCapabilities(bCanPickup, bInfraredSensor, bIsBeaconTuned)
+    return withCapabilities(self, bCanPickup, bInfraredSensor, bIsBeaconTuned)
 end
 
 function DCAF.CSAR.RescueGroup:Start(speed, alt, altType)
@@ -1206,32 +1298,108 @@ end
 --                                                                     DCAS (general)
 -- //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-function DCAF.CSAR:New(name, distressedGroup, csar)
+local CSAR_Ongoing = {
+    -- list of #DCAF.CSAR
+}
+
+
+DCAF.CSAR.Options = {
+    ClassName = "DCAF.CSAR.Options",
+    NotifyScope = nil,          -- #GROUP (, group name,) or #Coalition
+    BeaconChannels = { "17", "27Y", "37Y", "47Y", "57Y", "67Y", "77Y" },
+    Codewords = nil
+}
+
+function DCAF.CSAR:New(name, distressedGroupTemplate, startLocation, bCanBeCaptured, smoke)
     CSAR_Counter = CSAR_Counter+1
     if not isAssignedString(name) then
-        name = "CSAR-" .. tostring(CSAR_Counter)
+        name = DCAF.CSAR:GetNextRandomCodeword()
     end
-    local dg = DCAF.clone(DCAF.CSAR)
-    dg.Name = name
-    dg.Weather = DCAF.Weather:Static()
-    dg.DistressedGroup = distressedGroup
-    if not isClass(csar, DCAF.CSAR.ClassName) then
-        dg.CSAR = DCAF.CSAR:Default(name)
-    end
-    dg.CSAR.DistressedGroup = dg
-    return dg
-end
-
-function DCAF.CSAR:NewEmpty(name)
-    CSAR_Counter = CSAR_Counter+1
-    if not isAssignedString(name) then
-        name = "CSAR-" .. tostring(CSAR_Counter)
-    end
-
     local csar = DCAF.clone(DCAF.CSAR)
     csar.Name = name
+    csar.Weather = DCAF.Weather:Static()
+    csar.DistressedGroup = DCAF.CSAR.DistressedGroup:New(name, csar, distressedGroupTemplate, startLocation, bCanBeCaptured, smoke)
+    table.insert(CSAR_Ongoing, csar)
+Debug("nisse - CSAR was created")
+    DCAF.CSAR:OnCreated(csar)
     return csar
 end
+
+function DCAF.CSAR:Start(name, distressedGroupTemplate, startLocation, bCanBeCaptured, smoke)
+    
+end
+
+function DCAF.CSAR:OnCreated(csar)
+end
+
+local CRSA_DefaultCodewords = { "Cinderella", "Snow White", "Ariel", "Anastasia", "Princess Leia", "Sleeping Beauty", "Fiona" }
+
+function DCAF.CSAR.Options:New(notifyScope, codewords, beaconChannels)
+    local options = DCAF.clone(DCAf.CSAR.Options)
+    options.NotifyScope = notifyScope
+    if isListOfAssignedStrings(beaconChannels) then
+        options.BeaconChannels = beaconChannels
+    end
+    if not codewords then
+        if DCAF.Codewords then
+            options.Codewords = DCAF.Codewords:RandomTheme()
+        else
+            options.Codewords = CRSA_DefaultCodewords
+        end
+    end
+    return options
+end
+
+function DCAF.CSAR:NewOnPilotEjects(options)
+    MissionEvents:OnEjection(function(event) 
+
+    end)
+end
+
+function DCAF.CSAR:UseRandomCodewords(codewords)
+    if DCAF.Codewords then
+        if isClass(codewords, DCAF.CodewordTheme.ClassName) then
+            self.Codewords = codewords
+        elseif isListOfAssignedStrings(codewords) then
+            self.Codewords = DCAF.CSAR.CodewordTheme:New(codewords)
+        else
+            error("DCAF.CSAR:UseRandomCodewords :: codewords must be either a list of strings or #DCAF.CSAR.CodewordTheme, but was: " .. DumpPretty(codewords))
+        end
+    elseif not isListOfAssignedStrings(codewords) then
+        error("DCAF.CSAR:UseRandomCodewords :: codewords must be a list of strings, but was: " .. DumpPretty(codewords))
+    end
+end
+
+function DCAF.CSAR:GetNextRandomCodeword(singleUse)
+    if not self.Codewords then
+        CSAR_Counter = CSAR_Counter + 1
+        return "CSAR-" .. CSAR_Counter
+    end
+    if DCAF.Codewords and isClass(self.Codewords, DCAF.CodewordTheme.ClassName) then
+        return self.Codewords:GetNextRandom()
+    end
+    if isList(self.Codewords) then
+        local codeword, index = listRandomItem(self.Codewords)
+        if not isBoolean(singleUse) then
+            singleUse = true
+        end
+        if singleUse then 
+            table.remove(self.Codewords, index) 
+        end
+        return codeword
+    end
+end
+
+-- function DCAF.CSAR:NewEmpty(name)
+--     CSAR_Counter = CSAR_Counter+1
+--     if not isAssignedString(name) then
+--         name = "CSAR-" .. tostring(CSAR_Counter)
+--     end
+
+--     local csar = DCAF.clone(DCAF.CSAR)
+--     csar.Name = name
+--     return csar
+-- end
 
 function DCAF.CSAR:DirectCapableHuntersToCapture()
     directCapableGroupsToPickup(self.HunterGroups)
@@ -1253,4 +1421,131 @@ function DCAF.CSAR:RTBRescuers()
 Debug("nisse - DCAF.CSAR:RTBHunters :: rescuer: " .. rescuer.Group.GroupName)
         rescuer:RTBNow()
     end
+end
+
+DCAF.CSAR:UseRandomCodewords(CRSA_DefaultCodewords)
+
+-- //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+--                                                                     CSAR RESOURCES
+-- //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+function DCAF.CSAR:AddResource(resource)
+    if isClass(rescue, DCAF.CSAR.RescueResource.ClassName) then
+        table.insert(CSAR_RescueResources, resource)
+    elseif isClass(rescue, DCAF.CSAR.CaptureResource.ClassName) then
+        table.insert(CSAR_CaptureResources, resource)
+    else
+        error("DCAF.CSAR:AddResource :: resource must be either #" .. DCAF.CSAR.RescueResource.ClassName .. " or " .. DCAF.CSAR.CaptureResource.ClassName .. ", but was: " .. DumpPretty(resource)) 
+    end
+end
+
+local CSAR_DistressBeaconTemplate = {
+    BeaconTemplate = nil,
+    BeaconTimeActive = VariableValue:New(90, .3),            -- #number or #VariableValue (seconds)
+    BeaconTimeInactive = VariableValue:New(Minutes(5), .3),  -- #number/#VariableValue - time (seconds) to keep beacon silent between active periods
+}
+
+local CSAR_DistressBeaconTemplates = {
+    -- list of #CSAR_DistressBeaconTemplate
+}
+
+function CSAR_DistressBeaconTemplate:New(template, timeActive, timeInactive)
+    local spawn = getSpawn(template)
+    if not spawn then
+        error("CSAR_DistressBeaconTemplate:New :: cannot resolve beacon template from: " .. DumpPretty(template)) end
+
+    if not isNumber(timeActive) and not isClass(timeActive, VariableValue.ClassName) then
+        timeActive = CSAR_DistressBeaconTemplate.BeaconTimeActive
+    end
+    if not isNumber(timeInactive) and not isClass(timeInactive, VariableValue.ClassName) then
+        timeInactive = CSAR_DistressBeaconTemplate.BeaconTimeInactive
+    end
+    local template = DCAF.clone(CSAR_DistressBeaconTemplate)
+    template.Spawn = spawn
+    template.BeaconTimeActive = timeActive
+    template.BeaconTimeInactive = timeInactive
+    return template
+end
+
+function DCAf.CSAR:AddDistressBeacon(beaconTemplate, timeActive, timeInactive)
+    local template = CSAR_DistressBeaconTemplate:New(beaconTemplate, timeActive, timeInactive)
+    if isAssignedString(beaconTemplate) then
+        self.BeaconTemplate = beaconTemplate
+        self.BeaconTimeActive = timeActive or DCAF.CSAR.DistressedGroup.BeaconTimeActive
+        self.BeaconTimeInactive = timeInactive or DCAF.CSAR.DistressedGroup.BeaconTimeInactive
+    end
+    return self
+end
+
+local function newSearchResource(resource, sTemplate, locations, maxAvailable, maxRange, skill, isBeaconTuned)
+    local spawn = getSpawn(sTemplate)
+    if not spawn then 
+        error(resource.ClassName .. ":New :: cannot resolve group from: " .. DumpPretty(sTemplate)) end
+
+    local listLocations
+    if not isList(locations) then
+        local testLocation = DCAF.Location.Resolve()
+        if not testLocation then
+            error(resource.ClassName .. ":New :: cannot resolve location from: " .. locations) end
+
+        listLocations = { testLocation }
+    else
+        listLocations = {}
+        for i, location in ipairs(locations) do
+            local testLocation = DCAF.Location.Resolve(location)
+            if not testLocation then
+                error(resource.ClassName .. ":New :: cannot resolve locations[" .. Dump(i) .. "]: " .. locations) end
+
+            table.insert(listLocations, testLocation)
+        end
+    end
+    resource.TemplateName = sTemplate
+    resource.Spawn = spawn
+    resource.Locations = listLocations
+    if not isNumber(maxAvailable) then
+        resource.MaxAvailable = CSAR_SearchResource.MaxAvailable
+    end
+    if not isNumber(maxRange) then
+        resource.MaxRange = CSAR_SearchResource.MaxRange
+    end
+    local testSkill = Skill.Validate(skill)
+    if not testSkill then 
+        skill = Skill.Validate(Skill.Random)
+    end
+    resource.Skill = skill
+    if not isBoolean(isBeaconTuned) then
+        resource.IsBeaconTuned = CSAR_SearchResource.IsBeaconTuned
+    end
+    return resource
+end
+
+function DCAF.CSAR.RescueResource:New(sTemplate, locations, maxAvailable, maxRange, skill, isBeaconTuned)
+    if not isBoolean(isBeaconTuned) then
+        isBeaconTuned = true end
+
+    return newSearchResource(DCAF.clone(DCAF.CSAR.RescueResource), sTemplate, locations, maxAvailable, maxRange, skill, isBeaconTuned)
+end
+
+function DCAF.CSAR.CaptureResource:New(sTemplate, locations, maxAvailable, maxRange, skill, isBeaconTuned)
+    if not isBoolean(isBeaconTuned) then
+        isBeaconTuned = true end
+
+    return newSearchResource(DCAF.clone(DCAF.CSAR.CaptureResource), sTemplate, locations, maxAvailable, maxRange, skill, isBeaconTuned)
+end
+
+-- //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+--                                                                     CSAR F10 MENUS
+-- //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+local CSAR_Menu = {
+    BlueCoalitionMenu = nil, -- #MENU_COALIITON
+    GroupMenus = {  -- dictionary
+        -- key   = name of group
+        -- value = #MENU_GROUP
+    }
+}
+
+function DCAF.CSAR:BuildF10CoalitionMenus(parentMenu, forCoalition)
+    -- add 'CSAR' menu when distressed group is created
+    -- start CSAR mission
 end

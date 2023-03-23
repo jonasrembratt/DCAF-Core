@@ -5,10 +5,28 @@ local Mesquite = AIRBASE:FindByName(AIRBASE.Nevada.Mesquite)
 
 local w = DCAF.Weather:Static()
 
+function DCAF.CSAR:OnCreated(csar)
+    Debug("CSAR was created: " .. csar.Name)
+end
+
+local nellisAndGroomLake = { Nellis, GroomLake }
+DCAf.CSAR:AddDistressBeacon("Downed Pilot-Beacon")
+DCAF.CSAR:AddResource(DCAF.CSAR.RescueResource:New("BLUE Rescue Blackhawk", nellisAndGroomLake, 2))
+DCAF.CSAR:AddResource(DCAF.CSAR.RescueResource:New("BLUE Rescue Apache", nellisAndGroomLake, 2))
+
+DCAF.CSAR:AddResource(DCAF.CSAR.CaptureResource:New("RED Pursuing Heli-transport", Mesquite, 2))
+DCAF.CSAR:AddResource(DCAF.CSAR.CaptureResource:New("RED Pursuing Heli-escort", Mesquite, 2))
+
+
+-- actively create CSAR story (for testing) ...
+local csar = DCAF.CSAR:New(nil, "Downed Pilot", "CSAR-1"):StartRescue():StartCapture()
+
 -- GROUP IN DISTRESS...
-local distressed = DCAF.CSAR.DistressedGroup:New("CSAR-1", nil, "Downed Pilot", "CSAR-1")
+
+local distressed = DCAF.CSAR.DistressedGroup:New(nil, "Downed Pilot", "CSAR-1")
                  :WithBeacon("Downed Pilot-Beacon"):MoveTo(Nellis, 6)
                  :Start()
+local csar = distressed.CSAR
 
 -- HUNTERS...
 -- DCAF.CSAR.HunterGroup:New("Hunter 1", "RED Pursuing Heli-transport", distressed) --, Mesquite)
@@ -23,14 +41,14 @@ local distressed = DCAF.CSAR.DistressedGroup:New("CSAR-1", nil, "Downed Pilot", 
 --                      :Start(Knots(250))
 
 -- RESCUERS...                    
-DCAF.CSAR.RescueGroup:New("Rescue 1", "BLUE Rescue Blackhawk", distressed) --, Nellis)
+DCAF.CSAR.RescueGroup:New(csar, "BLUE Rescue Blackhawk", distressed) --, Nellis)
                      :WithRTB(Nellis)
                      :Start(Knots(300))
-DCAF.CSAR.RescueGroup:New("Rescue 2", "BLUE Rescue Apache", distressed) --, Nellis)
+DCAF.CSAR.RescueGroup:New(csar, "BLUE Rescue Apache", distressed) --, Nellis)
                      :WithRTB(Nellis)
                      :WithCapabilities(false) -- cannot pickup unit (Apaches can't transport)
                      :Start(Knots(300))
-DCAF.CSAR.RescueGroup:New("Rescue 3", "BLUE Rescue Apache", distressed) --, Nellis)
+DCAF.CSAR.RescueGroup:New(csar, "BLUE Rescue Apache", distressed) --, Nellis)
                      :WithRTB(Nellis)
                      :WithCapabilities(false) -- cannot pickup unit (Apaches can't transport)
                      :Start(Knots(300))
