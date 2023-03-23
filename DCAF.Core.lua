@@ -1,4 +1,4 @@
--- //SmokeerviceAvailability///////////////////////////////////////////////////////////////////////////////////////////////////
+-- //CodeWordseAvailability///////////////////////////////////////////////////////////////////////////////////////////////////
 --                                     DCAF.Core - The DCAF Lua foundation (relies on MOOSE)
 --                                              Digital Coalition Air Force
 --                                                        2022
@@ -87,6 +87,23 @@ end
 function isList( value ) 
     local tableType = getTableType(value)
     return tableType == "list"
+end
+
+function isListOfAssignedStrings(list, ignoreFunctions)
+    if not isList(list) then
+        return false end
+
+    if not isBoolean(ignoreFunctions) then
+        ignoreFunctions = true
+    end
+    for _, v in ipairs(list) do
+        if not ignoreFunctions and isFunction(v) then
+            return false end
+
+        if not isAssignedString(v) then
+            return false end
+    end
+    return true
 end
 
 function isDictionary( value ) 
@@ -418,6 +435,14 @@ function listJoin(list, otherList)
     return newList
 end
 
+-- function listIndexOf(list, item)
+--     if not isList(list) then
+--         error("listIndexOf :: unexpected type for table: " .. type(list)) end
+    
+--     if item == nil then
+--         error("listIndexOf :: item was unassigned") end
+-- end
+
 function tableCopy(source, target, deep)
     local count = 0
     if not isTable(target) then
@@ -438,10 +463,10 @@ end
 
 function tableIndexOf( table, itemOrFunc )
     if not isTable(table) then
-        error("indexOfItem :: unexpected type for table: " .. type(table)) end
+        error("tableIndexOf :: unexpected type for table: " .. type(table)) end
 
     if itemOrFunc == nil then
-        error("indexOfItem :: item was unassigned") end
+        error("tableIndexOf :: item was unassigned") end
 
     for index, value in ipairs(table) do
         if isFunction(itemOrFunc) and itemOrFunc(value) then
@@ -454,10 +479,10 @@ end
 
 function tableKeyOf( table, item )
     if not isTable(table) then
-        error("indexOfItem :: unexpected type for table: " .. type(table)) end
+        error("tableKeyOf :: unexpected type for table: " .. type(table)) end
 
     if item == nil then
-        error("indexOfItem :: item was unassigned") end
+        error("tableKeyOf :: item was unassigned") end
 
     for key, value in pairs(table) do
         if isFunction(item) and item(value) then
@@ -505,12 +530,19 @@ function dictCount(table)
     return count
 end
 
-function listRandomItem(list)
+function listRandomItem(list, ignoreFunctions)
     if not isTable(list) then
         error("tableRandomItem :: `list` must be table but was " .. type(list)) end
 
+    if not isBoolean(ignoreFunctions) then
+        ignoreFunctions = true
+    end
     local index = math.random(#list)
     local item = list[index]
+    while ignoreFunctions and isFunction(item) do
+        index = math.random(#list)
+        item = list[index]
+    end
     return item, index
 end
 
@@ -574,8 +606,28 @@ function VariableValue:GetValue()
     end
 end
 
+function Vec3_FromBullseye(aCoalition)
+    local c
+    local isValid, testCoalition = Coalition.IsValid(aCoalition)
+    if testCoalition then
+        c = Coalition.ToNumber(testCoalition)
+    elseif isNumber(aCoalition) then 
+        c = aCoalition
+    end
+    if c then
+        return coalition.getMainRefPoint(c)
+    end
+end
+
 function COORDINATE_FromWaypoint(wp)
     return COORDINATE:New(wp.x, wp.alt, wp.y)
+end
+
+function COORDINATE_FromBullseye(anyCoalition)
+    local vec3 = Vec3_FromBullseye(anyCoalition)
+    if vec3 then
+        return COORDINATE:NewFromVec3(vec3)
+    end
 end
 
 function Debug_DrawWaypoints(waypoints)
@@ -1058,7 +1110,7 @@ function DCAF.Location:New(source, throwOnFail)
     end
 end
 
-function DCAF.Location:Resolve(source)
+function DCAF.Location.Resolve(source)
     if isClass(source, DCAF.Location.ClassName) then
         return source end
 
@@ -1105,11 +1157,11 @@ function DCAF.Location:IsZone() return isZone(self.Source) end
 function DCAF.Location:IsAirbase() return isAirbase(self.Source) end
 
 function GetBearingAndDistance(from, to)
-    local dFrom = DCAF.Location:Resolve(from)
+    local dFrom = DCAF.Location.Resolve(from)
     if not dFrom then
         error("GetBearing :: cannot resolve `from`: " .. DumpPretty(from)) end
 
-    local dTo = DCAF.Location:Resolve(to)
+    local dTo = DCAF.Location.Resolve(to)
     if not dTo then
         error("GetBearing :: cannot resolve `to`: " .. DumpPretty(dTo)) end
 
@@ -1120,7 +1172,7 @@ function GetBearingAndDistance(from, to)
 end
 
 function COORDINATE:GetHeadingTo(location)
-    local d = DCAF.Location:Resolve(location)
+    local d = DCAF.Location.Resolve(location)
     if d then 
         return self:GetCoordinate():GetBearingTo(d:GetCoordinate()) end
 
