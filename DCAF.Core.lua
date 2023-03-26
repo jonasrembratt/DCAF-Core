@@ -15,6 +15,29 @@ DCAF = {
     }
 }
 
+DCAF.DateTime = {
+    ClassName = "DCAF.DateTime",
+    Year = nil,         -- #number
+    Month = nil,        -- #number
+    Day = nil,          -- #number
+    Hour = 0,           -- #number
+    Minute = 0,         -- #number
+    Second = 0,         -- #number
+    IsDST = false       -- #bool - true = is Daylight Saving time
+}
+
+DCAF.Smoke = {
+    ClassName = "DCAF.Smoke",
+    Color = SMOKECOLOR.Red,
+    Remaining = 1
+}
+
+DCAF.Flares = {
+    ClassName = "DCAF.Flares",
+    Color = SMOKECOLOR.Red,
+    Remaining = 1
+}
+
 local _debugId = 0
 local function get_next_debugId()
     _debugId = _debugId + 1
@@ -619,6 +642,147 @@ function Vec3_FromBullseye(aCoalition)
     end
 end
 
+function DCAF.DateTime:New(year, month, day, hour, minute, second)
+    local date = DCAF.clone(DCAF.DateTime)
+    date.Year = year
+    date.Month = month
+    date.Day = day
+    date.Hour = hour or DCAF.DateTime.Hour
+    date.Minute = minute or DCAF.DateTime.Minute
+    date.Second = second or DCAF.DateTime.Second
+    local t = { year = date.Year, month = date.Month, day = date.Day, hour = date.Hour, min = date.Minute, sec = date.Second }
+    date._timeStamp = os.time(t)
+    local d = os.date("*t", date._timeStamp)
+    date.IsDST = d.isdst
+    date.IsUTC = false
+-- Debug("nisse - DCAF.DateTime:NewSignalmpPretty(date) .. " :: d: " .. DumpPretty(d))
+    return date
+end
+
+function DCAF.DateTime:ParseDate(sYMD)
+    local sYear, sMonth, sDay = string.match(sYMD, "(%d+)/(%d+)/(%d+)")
+    return DCAF.DateTime:New(tonumber(sYear), tonumber(sMonth), tonumber(sDay))
+end
+
+function DCAF.DateTime:ParseDateTime(sYMD_HMS)
+    local sYear, sMonth, sDay, sHour, sMinute, sSecond = string.match(sYMD_HMS, "(%d+)/(%d+)/(%d+) (%d+):(%d+):(%d+)")
+    return DCAF.DateTime:New(tonumber(sYear), tonumber(sMonth), tonumber(sDay), tonumber(sHour), tonumber(sMinute), tonumber(sSecond))
+end
+
+function DCAF.DateTime:Now()
+    return DCAF.DateTime:ParseDateTime(UTILS.GetDCSMissionDate() .. " " .. UTILS.SecondsToClock(UTILS.SecondsOfToday()))
+end
+
+function DCAF.DateTime:TotalHours()
+    return self.Hour + self.Minute / 60 + self.Second / 3600
+end
+
+function DCAF.DateTime:AddSeconds(seconds)
+    local timestamp = self._timeStamp + seconds
+    local d = os.date("*t", timestamp)
+    return DCAF.DateTime:New(d.year, d.month, d.day, d.hour, d.min, d.sec)
+end
+
+function DCAF.DateTime:AddMinutes(minutes)
+    return self:AddSeconds(minutes * 60)
+end
+
+function DCAF.DateTime:AddHours(hours)
+    return self:AddSeconds(hours * 3600)
+end
+
+function DCAF.DateTime:ToUTC()
+    local diff = UTILS.GMTToLocalTimeDifference()
+    if self.IsDST then
+        diff = diff + 1
+    end
+    return self:AddHours(diff)
+end
+
+function DCAF.DateTime:ToString()
+    return Dump(self.Year) .. "/" .. Dump(self.Month) .. "/" ..Dump(self.Day) .. " " .. Dump(self.Hour) .. ":" .. Dump(self.Minute) .. ":" .. Dump(self.Second)
+end
+
+
+local Deg2Rad = math.pi / 180.0;
+local Rad2Deg = 180.0 / math.pi
+
+function COORDINATE:SunPosition(dateTime)
+    if not isClass(dateTime, DCAF.DateTime.ClassName) then
+        -- dateTime = DCAF.DateTime:Now():AddHours(-1)--:ToUTC()
+        dateTime = DCAF.DateTime:Now()--:ToUTC()
+    -- elseif not dateTime.IsUTC then
+    --     dateTime = dateTime:ToUTC()
+    --     -- dateTime = dateTime:AddHours(-1)--:ToUTC()
+    end
+    if dateTime.IsDST then
+        dateTime = dateTime:AddHours(-1)
+    end
+-- Debug("nisse - COORDINATE:SunPosition :: dateTime: " .. DumpPretty(dateTime))
+    -- Get latitude and longitude as radians
+    local latitude, longitude = self:GetLLDDM()
+    latitude = math.rad(latitude)
+    longitude = math.rad(longitude)
+-- Debug("nisse . latitude: " .. Dump(latitude) .. " :: longitude: " .. Dump(longitude) .. " :: text coords: " .. self:ToStringLLDMS())
+
+    local function correctAngle(angleInRadians)
+        if angleInRadians < 0 then
+            return 2 * math.pi - (math.abs(angleInRadians) % (2 * math.pi)) end
+        if angleInRadians > 2 * math.pi then
+            return angleInRadians % (2 * math.pi) end
+
+        return angleInRadians
+    end
+
+    local julianDate = 367 * dateTime.Year -
+            ((7.0 / 4.0) * (dateTime.Year +
+                    ((dateTime.Month + 9.0) / 12.0))) +
+            ((275.0 * dateTime.Month) / 9.0) +
+            dateTime.Day - 730531.5
+    local julianCenturies = julianDate / 36525.0
+    local siderealTimeHours = 6.6974 + 2400.0513 * julianCenturies
+    local siderealTimeUT = siderealTimeHours + (366.2422 / 365.2422) * dateTime:TotalHours()
+    local siderealTime = siderealTimeUT * 15 + longitude
+    -- Refine to number of days (fractional) to specific time.
+    julianDate = julianDate + dateTime:TotalHours()
+    julianCenturies = julianDate / 36525.0
+
+    -- Solar Coordinates
+    local meanLongitude = correctAngle(Deg2Rad * (280.466 + 36000.77 * julianCenturies))
+    local meanAnomaly = correctAngle(Deg2Rad * (357.529 + 35999.05 * julianCenturies))
+    local equationOfCenter = Deg2Rad * ((1.915 - 0.005 * julianCenturies) * math.sin(meanAnomaly) + 0.02 * math.sin(2 * meanAnomaly))
+    local elipticalLongitude = correctAngle(meanLongitude + equationOfCenter)
+    local obliquity = (23.439 - 0.013 * julianCenturies) * Deg2Rad
+
+    -- Right Ascension
+    local rightAscension = math.atan(
+            math.cos(obliquity) * math.sin(elipticalLongitude),
+            math.cos(elipticalLongitude))
+    local declination = math.asin(math.sin(rightAscension) * math.sin(obliquity))
+
+    -- Horizontal Coordinates
+    local hourAngle = correctAngle(siderealTime * Deg2Rad) - rightAscension
+    if hourAngle > math.pi then
+        hourAngle = hourAngle - 2 * math.pi
+    end
+
+    local altitude = math.asin(math.sin(latitude * Deg2Rad) *
+            math.sin(declination) + math.cos(latitude * Deg2Rad) *
+            math.cos(declination) * math.cos(hourAngle))
+
+    -- Nominator and denominator for calculating Azimuth
+    -- angle. Needed to test which quadrant the angle is in.
+    local aziNominator = -math.sin(hourAngle);
+    local aziDenominator = math.tan(declination) * math.cos(latitude * Deg2Rad) - math.sin(latitude * Deg2Rad) * math.cos(hourAngle)
+    local azimuth = math.atan(aziNominator / aziDenominator)
+    if aziDenominator < 0 then -- In 2nd or 3rd quadrant
+        azimuth = azimuth + math.pi
+    elseif (aziNominator < 0) then -- In 4th quadrant
+        azimuth = azimuth + 2 * math.pi
+    end
+    return altitude * Rad2Deg, azimuth * Rad2Deg
+end
+
 function COORDINATE_FromWaypoint(wp)
     return COORDINATE:New(wp.x, wp.alt, wp.y)
 end
@@ -895,6 +1059,61 @@ function GroupType.IsAny(groupType, table)
     end
 end
 
+function DCAF.Smoke:New(color, remaining)
+    if not isNumber(color) then
+        color = SMOKECOLOR.Red
+    end
+    if not isNumber(remaining) then
+        remaining = 1
+    end
+    local smoke = DCAF.clone(DCAF.Smoke)
+    smoke.Color = color
+    smoke.Remaining = remaining
+    return smoke
+end
+
+function DCAF.Flares:Shoot(coordinate)
+    if not isCoordinate(coordinate) then
+        error("DCAF.Flares:Pop :: `coordinate` must be " .. COORDINATE.ClassName .. ", but was: " .. DumpPretty(coordinate)) end
+
+    if self.Remaining == 0 then
+        return end
+
+Debug("nisse - DCAF.Flares:Shoot!")
+MessageTo(nil, "nisse - DCAF.Flares:Shoot!")
+
+    coordinate:Flare(self.Color)
+    self.Remaining = self.Remaining-1
+    return self
+end
+
+function DCAF.Flares:New(color, remaining)
+    if not isNumber(color) then
+        color = SMOKECOLOR.Red
+    end
+    if not isNumber(remaining) then
+        remaining = 1
+    end
+    local smoke = DCAF.clone(DCAF.Flares)
+    smoke.Color = color
+    smoke.Remaining = remaining
+    return smoke
+end
+
+-- @smoke       :: #DCAF.Smoke
+function DCAF.Smoke:Pop(coordinate)
+    if not isCoordinate(coordinate) then
+        error("DCAF.Smoke:Pop :: `coordinate` must be " .. COORDINATE.ClassName .. ", but was: " .. DumpPretty(coordinate)) end
+
+    if self.Remaining == 0 then
+        return end
+
+    coordinate:Smoke(self.Color)
+    self.Remaining = self.Remaining-1
+    return self
+end
+
+
 local SPAWNS = { -- dictionary
     -- key   = template name
     -- value = #SPAWN
@@ -1111,6 +1330,8 @@ function DCAF.Location:New(source, throwOnFail)
 end
 
 function DCAF.Location.Resolve(source)
+-- Debug("DCAF.Location.Resolve :: source: " .. DumpPretty(source))
+
     if isClass(source, DCAF.Location.ClassName) then
         return source end
 
@@ -1975,9 +2196,6 @@ end
 
 function GetAGL( source )
     local location = DCAF.Location:New(source)
-
-
-
     if isClass(source, DCAF.Location.ClassName) then
         coord = source.Coordinate
     else

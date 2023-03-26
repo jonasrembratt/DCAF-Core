@@ -1,9 +1,3 @@
-DCAF.Smoke = {
-    ClassName = "DCAF.Smoke",
-    Color = SMOKECOLOR.Red,
-    Remaining = 1
-}
-
 DCAF.Weather = {
     Factor = 1,
 }
@@ -396,32 +390,19 @@ local function despawnAndMove(dg)
     return move(dg)
 end
 
--- @smoke       :: #DCAF.Smoke
-function DCAF.Smoke:Pop(coordinate)
-    if not isCoordinate(coordinate) then
-        error("DCAF.Smoke:Pop :: `coordinate` must be " .. COORDINATE.ClassName .. ", but was: " .. DumpPretty(coordinate)) end
-
-    if self.Remaining == 0 then
-        return end
-
-    coordinate:Smoke(self.Color)
-    self.Remaining = self.Remaining-1
-    return self
-end
-
 -- @sTemplate
 -- @location            :: #DCAF.Location - start location for distressed group
 -- @bCanBeCaptured      :: #bool
 -- @smoke               :: #DCAF.Smoke
-function DCAF.CSAR.DistressedGroup:New(name, csar, sTemplate, location, bCanBeCaptured, smoke)
+function DCAF.CSAR.DistressedGroup:New(name, csar, sTemplate, location, bCanBeCaptured, smoke, flares)
     local group = getGroup(sTemplate)
     if not isClass(csar, DCAF.CSAR.ClassName) then
-        csar = DCAF.CSAR        
+        csar = DCAF.CSAR
     end
     if not group then
         error("DCAF.CSAR.DistressedGroup:New :: cannot resolve group from: " .. DumpPretty(sTemplate)) end
 
-    local testLocation = DCAF.Location:Resolve(location)
+    local testLocation = DCAF.Location.Resolve(location)
     if not testLocation then
         error("DCAF.CSAR.DistressedGroup:Start :: cannot resolve location from: " .. DumpPretty(location)) end
 
@@ -438,12 +419,12 @@ function DCAF.CSAR.DistressedGroup:New(name, csar, sTemplate, location, bCanBeCa
     dg.CSAR = csar
     dg.Template = sTemplate
     dg.Group = group
-    dg.Smoke = smoke or DCAF.Smoke:New()
+    dg.Smoke = smoke or DCAF.Smoke:New(nil, 2)
+    dg.Flares = flares or DCAF.Flares:New(nil, 4)
     dg.Coalition = Coalition.FromNumber(group:GetCoalition())
     dg._isMoving = false
     dg._lastCoordinate = coord
     dg._lastCoordinateTime = UTILS.SecondsOfToday()
-Debug("nisse -  DCAF.CSAR.DistressedGroup:New :: csar: " .. DumpPretty(dg))    
     return dg
 end
 
@@ -553,7 +534,7 @@ function DCAF.CSAR.DistressedGroup:GetCoordinate(update, skillOrSkillFactor)
             return self._lastCoordinate
         end
         local offset = NauticalMiles(3) * (1 / skillFactor)
-Debug("DCAF.CSAR.DistressedGroup:GetCoordinate :: offset: " .. Dump(offset))        
+Debug("DCAF.CSAR.DistressedGroup:GetCoordinate :: offset: " .. Dump(offset))
         return self._lastCoordinate:Translate(offset, math.random(360))
     end
     
@@ -575,7 +556,7 @@ end
 
 function DCAF.CSAR.DistressedGroup:MoveTo(location, speedKmph)
     local coord
-    local testLocation = DCAF.Location:Resolve(location)
+    local testLocation = DCAF.Location.Resolve(location)
     if not testLocation then
         error("DCAF.CSAR.DistressedGroup:MoveTo :: cannot resolve location: " .. DumpPretty(location)) end
 
@@ -596,27 +577,47 @@ function DCAF.CSAR.DistressedGroup:OnTargetReached(targetLocation)
     Debug("DCAF.CSAR.DistressedGroup:OnTargetReached :: '" .. self.Group.GroupName .. "'")
 end
 
-function DCAF.Smoke:New(color, remaining)
-    if not isNumber(color) then
-        color = SMOKECOLOR.Red
-    end
-    if not isNumber(remaining) then
-        remaining = 1
-    end
-    local smoke = DCAF.clone(DCAF.Smoke)
-    smoke.Color = color
-    smoke.Remaining = remaining
-    return smoke
-end
-
-function DCAF.CSAR.DistressedGroup:PopSmoke(radius)
+function DCAF.CSAR.DistressedGroup:UseSignal(radius)
     self:DeactivateBeacon()
-    if self.Smoke and self.Smoke.Remaining > 0 then
+    local coord = self:GetCoordinate(false)
+
+    local function shootFlares()
+        if not self.Flares or self.Flares.Remaining < 1 then
+            return end        
+
+        local i = 10
+        local flare
+
+        local function _flare()
+            self.Flares:Shoot(coord)
+            if self.Flares.Remaining == 0 then
+                return end
+
+            Delay(math.random(50, 180), function() 
+                flare()
+            end)
+        end
+        flare = _flare
+        flare()
+    end
+
+    local function popSmoke()
+        if not self.Smoke or self.Smoke.Remaining < 1 then
+            return end
+
         local coordinate = self:GetCoordinate(false)
         if isNumber(radius) then
             coordinate = coordinate:Translate(radius, math.random(360))
         end
         self.Smoke:Pop(coordinate)
+    end
+
+    local sunPosition = coord:SunPosition()
+Debug("nisse - DCAF.CSAR.DistressedGroup:UseSignal :: sunPosition: " .. Dump(sunPosition))    
+    if sunPosition < 5 then
+        shootFlares()
+    else
+        popSmoke()
     end
     return self
 end
@@ -628,7 +629,7 @@ end
 function DCAF.CSAR.DistressedGroup:AttractAttention(friendlyUnit)
 Debug("nisse - DCAF.CSAR.DistressedGroup:OnAttractAttention :: " .. self.Name .. " :: friendlyUnit: " .. friendlyUnit.UnitName)
     Delay(math.random(15, 60), function()
-        self:PopSmoke(30)
+        self:UseSignal(30)
     end)
     setState(self, CSAR_State.Attracting)
 end 
@@ -677,7 +678,7 @@ local function newSearchGroup(template, name, sTemplate, distressedGroup, startL
         error(className .. ":New :: `distressedGroup` must be #" .. DCAF.CSAR.DistressedGroup.ClassName ..", but was: " .. DumpPretty(distressedGroup)) end
 
     if startLocation then
-        local testLocation = DCAF.Location:Resolve(startLocation)
+        local testLocation = DCAF.Location.Resolve(startLocation)
         if not testLocation then
             error(className .. ":Start :: cannot resolve location from: " .. DumpPretty(startLocation)) end
 
@@ -1028,7 +1029,7 @@ local function startSearch(sg, speed, alt, altType)
 end
 
 local function withRTB(sg, rtbLocation, bingoFuelState)
-    local testLocation = DCAF.Location:Resolve(rtbLocation)
+    local testLocation = DCAF.Location.Resolve(rtbLocation)
     if not testLocation then
         error(sg.ClassName .. ":WithRTB :: cannot resolve `rtbLocation` from: " .. DumpPretty(rtbLocation)) end
 
@@ -1250,7 +1251,7 @@ end
 
 function DCAF.CSAR:RTBRescuers()
     for _, rescuer in ipairs(self.RescueGroups) do
-Debug("nisse - DCAF.CSAR:RTBHunters :: rescuer: " .. rescuer.Group.GroupName)
+Debug("nisse - DCAF.CSAR:RTBRescuers :: rescuer: " .. rescuer.Group.GroupName)
         rescuer:RTBNow()
     end
 end
