@@ -1108,6 +1108,9 @@ function DCAF.Smoke:Pop(coordinate)
     if self.Remaining == 0 then
         return end
 
+Debug("nisse - DCAF.Smoke:Pop!")
+MessageTo(nil, "nisse - DCAF.Smoke:Pop!")
+        
     coordinate:Smoke(self.Color)
     self.Remaining = self.Remaining-1
     return self

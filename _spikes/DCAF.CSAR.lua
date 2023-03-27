@@ -613,10 +613,11 @@ function DCAF.CSAR.DistressedGroup:UseSignal(radius)
     end
 
     local sunPosition = coord:SunPosition()
-Debug("nisse - DCAF.CSAR.DistressedGroup:UseSignal :: sunPosition: " .. Dump(sunPosition))    
+Debug("nisse - DCAF.CSAR.DistressedGroup:UseSignal :: sunPosition: " .. Dump(sunPosition))
     if sunPosition < 5 then
         shootFlares()
-    else
+    end
+    if sunPosition > 0 then
         popSmoke()
     end
     return self
