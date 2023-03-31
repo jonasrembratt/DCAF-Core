@@ -631,7 +631,7 @@ end
 
 function Vec3_FromBullseye(aCoalition)
     local c
-    local isValid, testCoalition = Coalition.IsValid(aCoalition)
+    local testCoalition = Coalition.Resolve(aCoalition)
     if testCoalition then
         c = Coalition.ToNumber(testCoalition)
     elseif isNumber(aCoalition) then 
@@ -958,20 +958,36 @@ AiSkill = {
     Excellent = "Excellent"
 }
 
-function Coalition.IsValid(value)
+function Coalition.Resolve(value, returnDCS)
+    local resolvedCoalition
     if isAssignedString(value) then
         local test = string.lower(value)
-        if test == Coalition.Blue then return true, Coalition.Blue end
-        if test == Coalition.Red then return true, Coalition.Red end
-        if test == Coalition.Neutral then return true, Coalition.Neutral end
+        if test == Coalition.Blue then resolvedCoalition = Coalition.Blue 
+        elseif test == Coalition.Red then resolvedCoalition = Coalition.Red
+        elseif test == Coalition.Neutral then resolvedCoalition = Coalition.Neutral end
     elseif isList(value) then
         local isValid, coalition
         for _, v in ipairs(value) do
-            isValid, coaltion = Coalition.IsValid(v)
-            if not isValie then
-                return false end
+            resolvedCoalition = Coalition.Resolve(v)
+            if resolvedCoalition then
+                break end
         end
-        return isValid, coalition
+        return resolvedCoalition
+    elseif isNumber(value) then
+        if value == coalition.side.BLUE then
+            resolvedCoalition = Coalition.Blue 
+        elseif value == coalition.side.RED then
+            resolvedCoalition = Coalition.Red
+        elseif value == coalition.side.NEUTRAL then
+            resolvedCoalition = Coalition.Neutral
+        end
+    end
+    if resolvedCoalition and returnDCS then
+        if resolvedCoalition == Coalition.Blue then return coalition.side.BLUE end
+        if resolvedCoalition == Coalition.Red then return coalition.side.RED end
+        if resolvedCoalition == Coalition.Neutral then return coalition.side.NEUTRAL end
+    else
+        return resolvedCoalition
     end
 end
 
@@ -1059,12 +1075,12 @@ function GroupType.IsAny(groupType, table)
     end
 end
 
-function DCAF.Smoke:New(color, remaining)
-    if not isNumber(color) then
-        color = SMOKECOLOR.Red
-    end
+function DCAF.Smoke:New(remaining, color)
     if not isNumber(remaining) then
         remaining = 1
+    end
+    if not isNumber(color) then
+        color = SMOKECOLOR.Red
     end
     local smoke = DCAF.clone(DCAF.Smoke)
     smoke.Color = color
@@ -1087,12 +1103,12 @@ MessageTo(nil, "nisse - DCAF.Flares:Shoot!")
     return self
 end
 
-function DCAF.Flares:New(color, remaining)
-    if not isNumber(color) then
-        color = SMOKECOLOR.Red
-    end
+function DCAF.Flares:New(remaining, color)
     if not isNumber(remaining) then
         remaining = 1
+    end
+    if not isNumber(color) then
+        color = SMOKECOLOR.Red
     end
     local smoke = DCAF.clone(DCAF.Flares)
     smoke.Color = color
@@ -1278,7 +1294,7 @@ DCAF.Location = {
     Coordinate = nil   -- COORDINATE
 }
 
-function DCAF.Location:New(source, throwOnFail)
+function DCAF.Location:NewNamed(name, source, throwOnFail)
     if source == nil then
         error("DCAF.Location:New :: `source` cannot be unassigned") end
 
@@ -1332,6 +1348,10 @@ function DCAF.Location:New(source, throwOnFail)
     end
 end
 
+function DCAF.Location:New(source, throwOnFail)
+    return DCAF.Location:NewNamed(nil, source, throwOnFail)
+end
+
 function DCAF.Location.Resolve(source)
     if isClass(source, DCAF.Location.ClassName) then
         return source end
@@ -1344,6 +1364,10 @@ end
 
 function DCAF.Location:GetCoordinate()
     return self.Coordinate
+end
+
+function DCAF.Location:Translate(distance, angle, keepAltitude)
+    return DCAF.Location:New(self.Coordinate:Translate(distance, angle, keepAltitude))
 end
 
 function DCAF.Location:GetAGL()
@@ -1372,11 +1396,165 @@ function DCAF.Location:IsGrounded(errorMargin)
     return not self:IsAirborne(errorMargin)
 end
 
+DCAF.ClosestUnits = {
+    ClassName = "DCAF.ClosestUnits",
+    Count = 0,
+    Units = { -- dictionary 
+        -- key = #Coalition
+        -- value = { Unit = #UNIT, Distance = #number (meters)}
+    }
+}
+
+function DCAF.ClosestUnits:New()
+    return DCAF.clone(DCAF.ClosestUnits)        
+end
+
+function DCAF.ClosestUnits:Get(coalition)
+    local testCoaliton = Coalition.Resolve(coalition)
+    if not testCoaliton then
+        error("DCAF.ClosestUnits:Get :: cannot resolve #Coalition from: " .. DumpPretty(coalition)) end
+
+    return self.Units[testCoaliton]
+end
+
+function DCAF.ClosestUnits:Set(unit, distance)
+    local coalition = Coalition.Resolve(unit:GetCoalition())
+    local info = self.Units[coalition]
+    if not info then
+        info = { Unit = unit, Distance = distance }
+        self.Units[coalition] = info
+        self.Count = self.Count+1
+    else
+        info.Unit = unit
+        info.Distance = distance
+    end
+    return self
+end
+
+--- Gets the closest units for specified coalition(s)
+-- @maxDistance : #numeric (meters)
+-- @coalitions : #Coalition (#string), #number (DCS) or table of these types
+-- returns #DCAF.ClosestUnits
+function DCAF.Location:GetClosestUnits(maxDistance, coalitions, filterFunc)
+
+-- Debug("nisse - DCAF.Location:GetClosestUnits :: " .. DumpPretty(coalitions))
+if #coalitions > 0 and isNumber(coalitions[1]) then
+    error("NISSE!") end
+
+
+    if not isNumber(maxDistance) then
+        maxDistance = NauticalMiles(50)
+    end
+    local isMultipleCoalitions = false
+    if isNumber(coalitions) then
+        local testCoalition = Coalition.Resolve(coalitions)
+        if not testCoalition then
+            error("DCAF.Location:GetClosestUnit :: cannot resolve coalition from: " .. DumpPretty(coalitions)) end
+        
+        coalitions = testCoalition
+    elseif isList(coalitions) then
+        local cList = {}
+        for i, c in ipairs(coalitions) do
+            local testCoalition = Coalition.Resolve(c)
+            if not testCoalition then
+                error("DCAF.Location:GetClosestUnit :: cannot resolve coalition #" .. Dump(i) .. "; from: " .. DumpPretty(c)) end
+            
+            table.insert(cList, testCoalition)
+        end
+        if #cList > 1 then
+            coalitions = cList
+            isMultipleCoalitions = true
+        else
+            coalitions = cList[1]
+        end
+    else
+        local testCoalition = Coalition.Resolve(coalitions)
+        if not testCoalition then
+            error("DCAF.Location:GetClosestUnit :: cannot resolve coalition from: " .. DumpPretty(coalitions)) end
+
+        coalitions = testCoalition
+    end
+
+    local closest = DCAF.ClosestUnits:New()
+
+    local units = self.Coordinate:ScanUnits(maxDistance)
+-- Debug("DCAF.Location:GetClosestUnits :: coalitions: " .. DumpPretty(coalitions))
+
+    local function isCoalition(unitCoalition)
+
+-- Debug("DCAF.Location:GetClosestUnits :: unitCoalition: " .. DumpPretty(unitCoalition))
+
+        if not isMultipleCoalitions then
+            return unitCoalition == coalitions
+        end
+        for _, testCoalition in ipairs(coalitions) do
+            if testCoalition == unitCoalition then
+                return true
+            end
+        end
+    end
+    local hasFilterFunc = isFunction(filterFunc)
+    units:ForEachUnit(function(u) 
+
+-- Debug("DCAF.Location:GetClosestUnits :: unit: " .. DumpPretty(u.UnitName))
+
+        if not u:IsAlive() then
+            return end
+            
+        local unitCoalition = Coalition.Resolve(u:GetCoalition())
+        if not isCoalition(unitCoalition) then
+-- Debug("DCAF.Location:GetClosestUnits :: unit: " .. DumpPretty(u.UnitName) .. " is not filtered coalition")
+            return end
+
+        local distance = self.Coordinate:Get3DDistance(u:GetCoordinate())
+        if not hasFilterFunc or filterFunc(u, distance) then
+            local info = closest:Get(unitCoalition)
+            if not info or info.Distance > distance then 
+-- Debug("DCAF.Location:GetClosestUnits_ForEachUnit :: sets closest: " .. DumpPretty(u.UnitName) .. " : distance: " .. Dump(distance))
+                closest:Set(u, distance)
+            end
+        end
+    end)
+-- Debug("DCAF.Location:GetClosestUnits_ForEachUnit :: closest: " .. DumpPretty(closest))
+    return closest
+end
+
 function DCAF.Location:IsCoordinate() return isCoordinate(self.Source) end
 function DCAF.Location:IsVec2() return isVec2(self.Source) end
 function DCAF.Location:IsVec3() return isVec3(self.Source) end
 function DCAF.Location:IsZone() return isZone(self.Source) end
 function DCAF.Location:IsAirbase() return isAirbase(self.Source) end
+
+function GetClosestFriendlyUnit(source, maxDistance, ownCoalition)
+    local coord
+    local unit = getUnit(source)
+    if unit then 
+        coord = unit:GetCoordinate()
+    else
+        local group = getGroup(source)
+        if not group then
+            error("GetClosestFriendlyUnit :: cannot resolve UNIT or GROUp from: " .. DumpPretty(source)) end
+
+        coord = group:GetCoordinate()
+    end
+    if not isNumber(maxDistance) then
+        maxDistance = NauticalMiles(50)
+    end
+    local ownCoalition = ownCoalition or unit:GetCoalition()
+    local closestDistance = maxDistance
+    local closestFriendlyUnit
+    local units = coord:ScanUnits(maxDistance)
+    for _, u in ipairs(units) do
+        if u:GetCoalition() == ownCoalition then
+            local distance = coord:Get3DDistance(u:GetCoordinate())
+            if distance < closestDistance then
+                closestDistance = distance
+                closestFriendlyUnit = u
+            end
+        end
+    end
+    return closestFriendlyUnit, closestDistance
+end
 
 function GetBearingAndDistance(from, to)
     local dFrom = DCAF.Location.Resolve(from)
@@ -1399,6 +1577,52 @@ function COORDINATE:GetHeadingTo(location)
         return self:GetCoordinate():GetBearingTo(d:GetCoordinate()) end
 
     return errorOnDebug("COORDINATE:GetHeadingTo :: cannot resolve location: " .. DumpPretty(location))
+end
+
+-- returns : #COORDINATE (or nil)
+function COORDINATE:ScanSurfaceType(surfaceType, startAngle, maxDistance, scanOutward, angleInterval, scanInterval)
+    -- surfaceTye = land.SurfaceType (numeric: LAND=1, SHALLOW_WATER=2, WATER=3, ROAD=4, RUNWAY=5)
+    if not isNumber(surfaceType) then
+        error("COORDINATE:GetClosesSurfaceType :: `surfaceType` must be #number, but was: " .. DumpPretty(surfaceType)) end
+
+    local testSurfaceType = self:GetSurfaceType()
+    if surfaceType == testSurfaceType then
+        return self end
+
+    if not isNumber(maxDistance) then
+        maxDistance = 500 
+    end
+    if not isBoolean(scanOutward) then
+        scanOutward = false
+    end
+    if not isNumber(angleInterval) then
+        angleInterval = 10
+    end
+    if not isNumber(scanInterval) then
+        scanInterval = 10
+    end
+    if not isNumber(startAngle) then
+        startAngle = math.random(360)
+    end
+    local distanceStart
+    local distanceEnd
+    if scanOutward then
+        distanceStart = scanInterval
+        distanceEnd = maxDistance
+    else
+        distanceStart = maxDistance
+        scanInterval = -math.abs(scanInterval)
+        distanceEnd = scanInterval
+    end
+    for angle = startAngle, (startAngle-1) % 360, angleInterval do
+        for distance = distanceStart, distanceEnd, scanInterval do
+            local coordTest = self:Translate(distance, angle)
+            testSurfaceType = coordTest:GetSurfaceType()
+            if surfaceType == testSurfaceType then
+                return coordTest 
+            end
+        end
+    end
 end
 
 function IsHeadingFor( source, target, maxDistance, tolerance )
@@ -1635,17 +1859,25 @@ function getZone( source )
     return ZONE:FindByName( source )
 end
 
-function GetOtherCoalitions( controllable, excludeNeutral )
-    local group = getGroup( controllable )
-    if (group == nil) then
-        return exitWarning("GetOtherCoalitions :: group not found: "..Dump(controllable))
+function GetOtherCoalitions( source, excludeNeutral )
+    local c
+    if isAssignedString(source) then
+        local group = getGroup( source )
+        if group then
+            c = Coalition.Resolve(group:GetCoalition())
+        else
+            c = Coalition.Resolve(source)
+        end
+    elseif isGroup(source) then
+        c = Coalition.Resolve(source:GetCoalition())
+    else
+        c = Coalition.Resolve(source)
     end
-
-    local c = group:GetCoalition()
-
-Debug("nisse - GetOtherCoalitions :: c: " .. Dump(c))
-
-
+    if (c == nil) then
+        return exitWarning("GetOtherCoalitions :: cannot resolve coalition from: " .. DumpPretty(source))
+    end
+    
+-- Debug("nisse - GetOtherCoalitions :: c: " .. Dump(c))
     if excludeNeutral == nil then 
         excludeNeutral = false end
 
@@ -1654,7 +1886,7 @@ Debug("nisse - GetOtherCoalitions :: c: " .. Dump(c))
             return { Coalition.Blue } end
         return { Coalition.Blue, Coalition.Neutral }
     elseif c == Coalition.Blue or c == coalition.side.BLUE then
-Debug("nisse - GetOtherCoalitions :: Blue")
+-- Debug("nisse - GetOtherCoalitions :: Blue")
         if excludeNeutral then 
             return { Coalition.Red } end
         return { Coalition.Red, Coalition.Neutral }
@@ -1744,18 +1976,18 @@ function MessageTo(recipient, message, duration )
             MessageTo(group, message, duration)
             return
         end
-        local isCoalition, c = Coalition.IsValid(recipient)
-        if isCoalition then
+        local testCoalition = Coalition.Resolve(recipient)
+        if testCoalition then
             if (string.match(message, ".\.ogg") or string.match(message, ".\.wav")) then
                 local audio = USERSOUND:New(message)
-                if c == Coalition.Blue then
+                if testCoalition == Coalition.Blue then
                     audio:ToCoalition(coalition.side.BLUE)
-                elseif c == Coalition.Red then
+                elseif testCoalition == Coalition.Red then
                     audio:ToCoalition(coalition.side.RED)
                 end
                 return
             end
-            if c == Coalition.Blue then
+            if testCoalition == Coalition.Blue then
                 MessageToBlue(message, duration)
             elseif coalition == Coalition.Red then
                 MessageToRed(message, duration)
@@ -3195,7 +3427,7 @@ function _e:onEvent( event )
         if event.TgtUnit == nil and dcsTarget ~= nil then
             event.TgtUnit = UNIT:Find(dcsTarget)
             if not event.TgtUnit then
-                Warning("_e:onEvent :: event: " .. Dump(event.id) .. " :: could not resolve TgtUnit from DCS object" )
+                Warning("_e:onEvent :: event: " .. Dump(event.id) .. " :: could not resolve TgtUnit from DCS object")
                 return event
             end
             event.TgtUnitName = event.TgtUnit.UnitName
@@ -3293,7 +3525,7 @@ function _e:onEvent( event )
     end
 
     if event.id == world.event.S_EVENT_EJECTION then
-        MissionEvents:Invoke( _missionEventsHandlers._ejectionHandlers, event)
+        MissionEvents:Invoke(_missionEventsHandlers._ejectionHandlers, addInitiatorAndTarget(event))
         return
     end
 
@@ -3869,7 +4101,7 @@ function ZoneFilter:Coalitions(...)
     for i = 1, select("#", ...) do
         local v = select(i, ...)
         if v ~= nil then
-            if not Coalition.IsValid(v) then
+            if not Coalition.Resolve(v) then
                 error("ZoneOptions:Coalitions :: invalid coalition: " .. Dump(v)) 
             end
             table.insert(coalitions, v)
@@ -6814,16 +7046,16 @@ local function buildTankerMenus(caption, scope)
     if not isAssignedString(caption) then
         caption = "Tankers"
     end
-    local isCoalitionScope, coalition = Coalition.IsValid(scope)
+    local testCoalition = Coalition.Resolve(scope, true)
     local group
-    if not isCoalitionScope then
+    if not testCoalition then
         group = getGroup(scope)
         if not group then
             error("buildTankerMenus :: unrecognized `scope` (expected #Coalition or #GROUP/group name): " .. DumpPretty(scope)) end
 
-        coalition = group:GetCoalition()
-    else
-        coalition = Coalition.ToNumber(coalition)
+        testCoalition = group:GetCoalition()
+    -- else
+    --     testCoalition = Coalition.ToNumber(testCoalition)
     end
     local tracks = sortedTracks()
     if _tanker_menu then
@@ -6832,7 +7064,7 @@ local function buildTankerMenus(caption, scope)
         if group then
             _tanker_menu = MENU_GROUP:New(group, caption)
         else
-            _tanker_menu = MENU_COALITION:New(coalition, caption)
+            _tanker_menu = MENU_COALITION:New(testCoalition, caption)
         end
     end
     for _, track in ipairs(tracks) do
@@ -6840,7 +7072,7 @@ local function buildTankerMenus(caption, scope)
         if group then
             menuTrack = MENU_GROUP:New(group, track.Name, _tanker_menu)
         else
-            menuTrack = MENU_COALITION:New(coalition, track.Name, _tanker_menu)
+            menuTrack = MENU_COALITION:New(testCoalition, track.Name, _tanker_menu)
         end
 
         if not track:IsBlocked() then
@@ -6852,7 +7084,7 @@ local function buildTankerMenus(caption, scope)
                 if group then
                     MENU_GROUP_COMMAND:New(group, "DEACTIVATE", menuTrack, deactivateTrack)
                 else
-                    MENU_COALITION_COMMAND:New(coalition, "DEACTIVATE", menuTrack, deactivateTrack)
+                    MENU_COALITION_COMMAND:New(testCoalition, "DEACTIVATE", menuTrack, deactivateTrack)
                 end
             end
             
@@ -6881,7 +7113,7 @@ local function buildTankerMenus(caption, scope)
                     if group then
                         rtbMenu = MENU_GROUP:New(group, "RTB " .. tanker.DisplayName, menuTrack)
                     else
-                        rtbMenu = MENU_COALITION:New(coalition, "RTB " .. tanker.DisplayName, menuTrack)
+                        rtbMenu = MENU_COALITION:New(testCoalition, "RTB " .. tanker.DisplayName, menuTrack)
                     end
                 end
                 for _, airServiceBase in ipairs(airdromes) do
@@ -6893,14 +7125,14 @@ local function buildTankerMenus(caption, scope)
                              if group then
                                 rtbMenu:GroupCommand(group, menuText .. " (" .. rtbRoute.Name .. ")", sendTankerHome, airbaseName, rtbRoute)
                              else
-                                rtbMenu:CoalitionCommand(coalition, menuText .. " (" .. rtbRoute.Name .. ")", sendTankerHome, airbaseName, rtbRoute)
+                                rtbMenu:CoalitionCommand(testCoalition, menuText .. " (" .. rtbRoute.Name .. ")", sendTankerHome, airbaseName, rtbRoute)
                              end
                         end
                     else
                         if group then
                             MENU_GROUP_COMMAND:New(group, menuText, rtbMenu or menuTrack, sendTankerHome, airbaseName)
                         else
-                            MENU_COALITION_COMMAND:New(coalition, menuText, rtbMenu or menuTrack, sendTankerHome, airbaseName)
+                            MENU_COALITION_COMMAND:New(testCoalition, menuText, rtbMenu or menuTrack, sendTankerHome, airbaseName)
                         end
                     end
                 end
@@ -6923,14 +7155,14 @@ local function buildTankerMenus(caption, scope)
                         if group then
                             menuTanker = MENU_GROUP:New(group, tankerInfo:ToStrin(), menuTrack)
                         else
-                            menuTanker = MENU_COALITION:New(coalition, tankerInfo:ToString(), menuTrack)
+                            menuTanker = MENU_COALITION:New(testCoalition, tankerInfo:ToString(), menuTrack)
                         end
                         if group then
                             MENU_GROUP_COMMAND:New(group, "Activate AIR", menuTanker, activateAir)
                             MENU_GROUP_COMMAND:New(group, "Activate GND", menuTanker, activateGround)
                             -- todo Support multiple airbases/routes for group senctric menu
                         else
-                            MENU_COALITION_COMMAND:New(coalition, "Activate AIR", menuTanker, activateAir)
+                            MENU_COALITION_COMMAND:New(testCoalition, "Activate AIR", menuTanker, activateAir)
                             if isList(tankerInfo.Airbases) then
                                 local mnuAirbases = DCAF.MENU:New(menuTanker)
                                 for _, airServiceBase in ipairs(tankerInfo.Airbases) do  -- #DCAF_AirServiceBase
@@ -6938,10 +7170,10 @@ local function buildTankerMenus(caption, scope)
                                     if isList(airServiceBase.Routes) then
                                         for _, route in ipairs(airServiceBase.Routes) do -- #DCAF.AIR_ROUTE
                                             local mnuText = "Activate from " .. airbaseName .. " (" .. route.Name  .. ")"
-                                            mnuAirbases:CoalitionCommand(coalition, mnuText,  activateGround, route)
+                                            mnuAirbases:CoalitionCommand(testCoalition, mnuText,  activateGround, route)
                                         end
                                     else
-                                        mnuAirbases:CoalitionCommand(coalition, "Activate from " .. airbaseName, activateGround, airServiceBase.Airbase)
+                                        mnuAirbases:CoalitionCommand(testCoalition, "Activate from " .. airbaseName, activateGround, airServiceBase.Airbase)
                                     end
                                 end
                             end
@@ -6959,7 +7191,7 @@ local function buildTankerMenus(caption, scope)
                         if group then
                             MENU_GROUP_COMMAND:New(group, "REASSIGN " .. tanker:ToString() .. " @ " .. tanker.Track.Name, menuTrack, reassignTanker, tanker)
                         else
-                            MENU_COALITION_COMMAND:New(coalition, "REASSIGN " .. tanker:ToString() .. " @ " .. tanker.Track.Name, menuTrack, reassignTanker, tanker)
+                            MENU_COALITION_COMMAND:New(testCoalition, "REASSIGN " .. tanker:ToString() .. " @ " .. tanker.Track.Name, menuTrack, reassignTanker, tanker)
                         end
                     end
                 end
@@ -7002,12 +7234,12 @@ function DCAF.MENU:BlueCommand(text, func, ...)
     return self:CoalitionCommand(coalition.side.BLUE, text, func, ...)
 end
 
-function DCAF.MENU:CoalitionCommand(coalition, text, func, ...)
-    local isDcafCoalition, dcafCoalition = Coalition.IsValid(coalition)
-    if isDcafCoalition then
-       coalition = Coalition.ToNumber(dcafCoalition)
-    elseif not isNumber(coalition) then
-        error("DCAf.Menu:CoalitionCommand :: `coalition` must be #Coalition or #number (eg. coalition.side.RED), but was: " .. type(coalition))
+function DCAF.MENU:CoalitionCommand(dcsCoalition, text, func, ...)
+    local dcafCoalition = Coalition.Resolve(dcsCoalition)
+    if dcafCoalition then
+       dcsCoalition = Coalition.ToNumber(dcafCoalition)
+    elseif not isNumber(dcsCoalition) then
+        error("DCAf.Menu:CoalitionCommand :: `coalition` must be #Coalition or #number (eg. coalition.side.RED), but was: " .. type(dcsCoalition))
     end
 
     if not isAssignedString(text) then
@@ -7017,17 +7249,17 @@ function DCAF.MENU:CoalitionCommand(coalition, text, func, ...)
         error("DCAF.MENU:CoalitionCommand :: `func` must be a function but was: " .. type(func)) end
 
     if self._count == self._maxCount then
-        self._parentMenu = MENU_COALITION:New(coalition, self._nestedMenuCaption, self._parentMenu)
+        self._parentMenu = MENU_COALITION:New(dcsCoalition, self._nestedMenuCaption, self._parentMenu)
         self._count = 1
     else
         self._count = self._count + 1
     end
-    return MENU_COALITION_COMMAND:New(coalition, text, self._parentMenu, func, ...)
+    return MENU_COALITION_COMMAND:New(dcsCoalition, text, self._parentMenu, func, ...)
 end
 
 function DCAF.MENU:Coalition(coalition, text)
-    local isDcafCoalition, dcafCoalition = Coalition.IsValid(coalition)
-    if isDcafCoalition then
+    local dcafCoalition = Coalition.Resolve(coalition)
+    if dcafCoalition then
        coalition = Coalition.ToNumber(dcafCoalition)
     elseif not isNumber(coalition) then
         error("DCAf.Menu:Coalition :: `coalition` must be #Coalition or #number (eg. coalition.side.RED), but was: " .. type(coalition))
@@ -7120,7 +7352,7 @@ DCAF.WeaponSimulation = {
 }
 
 function DCAF.WeaponSimulationConfig:New(iniCoalitions, iniTypes, tgtTypes, safetyDistance, bExcludeAiTargets, bExcludePlayerTargets)
-    if isAssignedString(iniCoalitions) and Coalition.IsValid(iniCoalitions) then
+    if isAssignedString(iniCoalitions) and Coalition.Resolve(iniCoalitions) then
         iniCoalitions = { iniCoalitions }
     elseif not isTable(iniCoalitions) then
         iniCoalitions = DCAF.WeaponSimulationConfig.IniCoalitions

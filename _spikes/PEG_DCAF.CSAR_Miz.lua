@@ -1,23 +1,25 @@
 
-local GroomLake = AIRBASE:FindByName(AIRBASE.Nevada.Groom_Lake_AFB)
-local Nellis = AIRBASE:FindByName(AIRBASE.Nevada.Nellis_AFB)
-local Mesquite = AIRBASE:FindByName(AIRBASE.Nevada.Mesquite)
+local Khasab = AIRBASE:FindByName(AIRBASE.PersianGulf.Khasab)
+local ThunbIsl = AIRBASE:FindByName(AIRBASE.PersianGulf.ThunbIslis)
+local Jiroft = AIRBASE:FindByName(AIRBASE.PersianGulf.Jiroft_Airport)
+
+local Seerik_harbor = DCAF.Location:NewNamed("Seerik Harbor", COORDINATE:NewFromLLDD(26.52638889, 57.08972222))
 
 local w = DCAF.Weather:Static()
 
-DCAF.CSAR.InitDistressedGroup(
+DCAF.CSAR:InitSafeLocations(Coalition.Blue, Seerik_harbor)
+DCAF.CSAR:InitDistressedGroup(
     DCAF.CSAR.DistressedGroup:NewTemplate("CSAR Distressed Ground", true, DCAF.Smoke:New(2), DCAF.Flares:New(4)),
     DCAF.CSAR.DistressedGroup:NewTemplate("CSAR Distressed Water", true, DCAF.Smoke:New(2), DCAF.Flares:New(4)))
 DCAF.CSAR:InitDistressBeacon("CSAR Distress Beacon")
 
 -- rescue
-local nellisAndGroomLake = { Nellis, GroomLake }
-DCAF.CSAR:AddResource(DCAF.CSAR.RescueResource:New("BLUE Rescue Blackhawk", nellisAndGroomLake, 2))
-DCAF.CSAR:AddResource(DCAF.CSAR.RescueResource:New("BLUE Rescue Apache", nellisAndGroomLake, 2))
+DCAF.CSAR:AddResource(DCAF.CSAR.RescueResource:New("BLUE Rescue Blackhawk", { ThunbIsl, Khasab }, 2))
+DCAF.CSAR:AddResource(DCAF.CSAR.RescueResource:New("BLUE Rescue Apache", { ThunbIsl, Khasab }, 2))
 
 -- capturew
-DCAF.CSAR:AddResource(DCAF.CSAR.CaptureResource:New("RED Pursuing Heli-transport", Mesquite, 2))
-DCAF.CSAR:AddResource(DCAF.CSAR.CaptureResource:New("RED Pursuing Heli-escort", Mesquite, 2))
+DCAF.CSAR:AddResource(DCAF.CSAR.CaptureResource:New("RED Pursuing Heli-transport", Jiroft, 2))
+DCAF.CSAR:AddResource(DCAF.CSAR.CaptureResource:New("RED Pursuing Heli-escort", Jiroft, 2))
 
 
 -- actively create CSAR story (for testing) ...
