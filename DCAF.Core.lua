@@ -569,21 +569,37 @@ function listRandomItem(list, ignoreFunctions)
     return item, index
 end
 
-function dictRandomKey(table, maxIndex)
+function dictRandomKey(table, maxIndex, ignoreFunctions)
+-- Debug("nisse - dictRandomKey :: table: " .. DumpPretty(table))
+
     if not isTable(table) then
         error("dictRandomKey :: `table` is of type " .. type(table)) end
 
     if not isNumber(maxIndex) then
         maxIndex = dictCount(table)
     end
-    local randomIndex = math.random(1, maxIndex)
-    local count = 1
-    for key, _ in pairs(table) do
-        if count == randomIndex then
-            return key
-        end
-        count = count + 1
+    if not isBoolean(ignoreFunctions) then
+        ignoreFunctions = true
     end
+
+    local function getRandomKey()
+        local randomIndex = math.random(1, maxIndex)
+        local count = 1
+        for key, _ in pairs(table) do
+-- Debug("nisse - dictRandomKey :: key: " .. DumpPretty(key) .. " :: count: " .. Dump(count) .. " :: randomIndex: " .. Dump(randomIndex))
+            if count == randomIndex then
+-- Debug("nisse - dictRandomKey :: returns key: " .. DumpPretty(key))
+                return key
+            end
+            count = count + 1
+        end
+    end
+
+    local key = getRandomKey()
+    while ignoreFunctions and isFunction(table[key]) do
+        key = getRandomKey()
+    end
+    return key    
 end
 
 function dictGetKeyFor(table, criteria)
@@ -7698,6 +7714,82 @@ function DCAF.WeaponSimulation:OnStarted()
 end
 
 function DCAF.WeaponSimulation:OnStopped()
+end
+
+-- /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+--                                                                           CODEWORDS
+-- /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DCAF.Codewords = {
+    FlashGordon = { "Flash Gordon", "Prince Barin", "Ming", "Princess Aura", "Zarkov", "Klytus", "Vultan" },
+    JamesBond = { "Moneypenny", "Jaws", "Swann", "Gogol", "Tanner", "Blofeld", "Leiter" },
+    RockHeroes = { "Idol", "Dio", "Vaughan", "Lynott", "Lemmy", "Mercury", "Fogerty" },
+    Disney = { "Goofy", "Donald Duck", "Mickey", "Snow White", "Peter Pan", "Cinderella", "Baloo" },
+    Princesses = { "Cinderella", "Pocahontas", "Ariel", "Anastasia", "Leia", "Astrid", "Fiona" },
+    Poets = { "Eliot", "Blake", "Poe", "Keats", "Shakespeare", "Yeats", "Byron", "Wilde" },
+    Painters = { "da Vinci", "van Gogh", "Rembrandt", "Monet", "Matisse", "Picasso", "Boticelli" },
+    Marvel = { "Wolverine", "Iron Man", "Thor", "Captain America", "Spider Man", "Black Widow", "Star-Lord" },
+}
+
+DCAF.CodewordType = {
+    Person = {
+        DCAF.Codewords.FlashGordon,
+        DCAF.Codewords.JamesBond,
+        DCAF.Codewords.FlashGordon,
+        DCAF.Codewords.JamesBond,
+        DCAF.Codewords.RockHeroes,
+        DCAF.Codewords.Disney,
+        DCAF.Codewords.Princesses,
+        DCAF.Codewords.Poets,
+        DCAF.Codewords.Painters,
+        DCAF.Codewords.Marvel
+    }
+}
+
+DCAF.CodewordTheme = {
+    ClassName = "DCAF.CodewordTheme",
+    Name = nil,
+    Codewords = {}
+}
+
+function DCAF.Codewords:RandomTheme(type, singleUse)
+    local themes
+    if isAssignedString(type) then
+        themes = DCAF.CodewordType[type]
+        if not themes then
+            error("DCAF.Codewords:RandomTheme :: `type` is not supported: " .. type) end
+    else
+        themes = DCAF.Codewords
+    end
+
+    local key = dictRandomKey(themes)
+Debug("nisse - DCAF.Codewords:RandomTheme :: key: " .. Dump(key, DumpPrettyOptions:New():IncludeFunctions()))
+    local codewords = themes[key]
+    local theme = DCAF.CodewordTheme:New(key, codewords, singleUse)
+    if isBoolean(singleUse) and singleUse == true then
+        DCAF.Codewords[key] = nil
+    end
+    return theme
+end
+
+function DCAF.CodewordTheme:New(name, codewords, singleUse)
+    local theme = DCAF.clone(DCAF.CodewordTheme)
+    theme.Name = name
+    if isBoolean(singleUse) then
+        theme.SingleUse = singleUse
+    else
+        theme.SingleUse = true
+    end
+    listCopy(codewords, theme.Codewords)
+    return theme
+end
+
+function DCAF.CodewordTheme:GetNextRandom()
+    local codeword, index = listRandomItem(self.Codewords)
+    if self.SingleUse then
+        table.remove(self.Codewords, index)
+    end
+    return codeword
 end
 
 -------------- LOADED

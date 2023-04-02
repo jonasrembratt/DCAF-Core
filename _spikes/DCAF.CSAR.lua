@@ -28,6 +28,8 @@ local CSAR_Type = {
     Water = "Water"                     -- distressed group is in a life raft, in the water
 }
 
+local CSAR_DefaultCodewords = { "Cinderella", "Pocahontas", "Ariel", "Anastasia", "Leia", "Astrid", "Fiona" }
+
 DCAF.CSAR = {
     ClassName = "DCAF.CSAR",
     Name = nil,
@@ -164,7 +166,7 @@ local function setState(dg, state)
 
     dg.State = state
 if DCAF.Debug then
-    MessageTo(nil, "CSAR group '" .. dg.Name .. "' state: " .. state)
+    MessageTo(nil, "CSAR group '" .. dg.CSAR.Name .. "' state: " .. state)
 end
 end
 
@@ -232,6 +234,17 @@ local function debug_markLocation(dg)
     dg._markCoordinate = dg._lastCoordinate
 end
 
+local function setCoordinate(dg, coord, time)
+
+if dg._lastCoordinate and dg._lastCoordinate:Get2DDistance(coord) > 2000 then
+    error("NISSE!") end
+
+    dg._lastCoordinate = coord
+    dg._lastCoordinateTime = time or UTILS.SecondsOfToday()
+
+    debug_markLocation(dg)
+end
+
 local function driftOnWaves(dg, interval)
     local coord = dg._lastCoordinate
     local windDir, windSpeed = coord:GetWind(0)
@@ -241,7 +254,7 @@ local function driftOnWaves(dg, interval)
 
     windDir = (windDir - 180) % 360
     local distance = interval * windSpeed * .5
-    dg._lastCoordinate = coord:Translate(distance, windDir)
+    setCoordinate(dg, coord:Translate(distance, windDir))
     return windDir
 end
 
@@ -249,10 +262,16 @@ local function move(dg)
     if dg.State ~= CSAR_State.Moving then
         return end
 
-    local coordTgt = dg._targetCoordinate
-    local coord = dg:GetCoordinate()
-    local distanceTgt = coord:Get2DDistance(coordTgt)
+    local coordTgt = dg._coordSafeLocation
+    -- local coordRestore = dg._lastCoordinate
+    
+    local now = UTILS.SecondsOfToday()
+    local elapsedTime = now - dg._lastCoordinateTime
+    local distance = dg._speedMps * elapsedTime
+    local coordMove = dg._lastCoordinate:Translate(distance, dg._heading)  -- dg:GetCoordinate(false)
+    local distanceTgt = coordMove:Get2DDistance(coordTgt)
     if distanceTgt < 100 then
+        setCoordinate(dg, coordMove)
         stopAndSpawn(dg, "reached safe location")
         dg:DeactivateBeacon()
         dg:OnTargetReached(dg._targetLocation)
@@ -260,25 +279,33 @@ local function move(dg)
     end
 
     if dg._nextCoordinate then
-        local distanceNext = coord:Get2DDistance(dg._nextCoordinate)
+        local distanceNext = coordMove:Get2DDistance(dg._nextCoordinate)
         if distanceNext > 50 then
-            return dg end
+            -- we're still heading to next point, just continue ...
+            setCoordinate(dg, coordMove)
+            return dg 
+        end
     end
 
     -- local landAndRoads = { land.SurfaceType.LAND, land.SurfaceType.ROAD } -- todo Consider making valid land types configurable
     -- ASTAR:CreateGrid(landAndRoads, ... ?)
 
-    local maxContinousWater = 20 -- meters
+    local maxContinousWater = 100 -- meters
     local function isDryPath(coordEnd)
+        if coordEnd:IsSurfaceTypeWater() then
+-- Debug("nisse - isDryPath :: pilot next coordinate in in water")
+            return false 
+        end
         local interval = 5
         local continous = 0
-        local hdg = coord:GetHeadingTo(coordEnd)
-        local distance = coord:Get2DDistance(coordEnd)
-        local coordNext = coord
+        local hdg = coordMove:GetHeadingTo(coordEnd)
+        local distance = coordMove:Get2DDistance(coordEnd)
+        local coordNext = coordMove
         for i = 1, distance, interval do
             coordNext = coordNext:Translate(i, hdg)
             if coordNext:IsSurfaceTypeWater() then
                 continous = continous + interval
+-- Debug("nisse - isDryPath :: water in path :: interval: " .. Dump(interval) .. " :: continous: " .. Dump(continous))
                 if continous >= maxContinousWater then
                     return false end
             else
@@ -288,8 +315,9 @@ local function move(dg)
         return true
     end
 
-    local mainHdg = coord:GetHeadingTo(coordTgt)
-    local function getDestination(distance, hdg)
+    local mainHdg = coordMove:GetHeadingTo(coordTgt)
+-- Debug("nisse - move :: mainHdg: " .. Dump(mainHdg))    
+    local function getNext(distance, hdg)
         if not hdg then
             local hdgVariance = 80
             local minHdg = (mainHdg - hdgVariance*.5) % 360
@@ -299,7 +327,7 @@ local function move(dg)
                 hdg = (minHdg + math.random(hdgVariance)) % 360
             end
         end
-        return coord:Translate(distance, hdg), hdg
+        return coordMove:Translate(distance, hdg), hdg
     end
 
     local function tryDifferentHeading(mainHdg, left, coord, distance, maxHdgDeviation)
@@ -326,21 +354,22 @@ local function move(dg)
     end
 
     local sprintLength = NauticalMiles(1)
-    local coordNext, hdgNext = getDestination(sprintLength)
+    local coordNext, hdgNext = getNext(sprintLength)
     if not isDryPath(coordNext) then
+Debug("nisse - move :: not dry path")
         if dg._followWaterHdg then
             local left = math.random(100) < 40
-            coordNext, hdgNext = tryDifferentHeading(dg._followWaterHdg, left, coord, sprintLength, 60)
+            coordNext, hdgNext = tryDifferentHeading(dg._followWaterHdg, left, coordMove, sprintLength, 60)
             if not coordNext then
-                coordNext, hdgNext = tryDifferentHeading(dg._followWaterHdg, not left, coord, sprintLength, 60)
+                coordNext, hdgNext = tryDifferentHeading(dg._followWaterHdg, not left, coordMove, sprintLength, 60)
             end
         end
 
         -- randomly try left/right direction ...
         local left = math.random(100) < 10
-        coordNext, hdgNext = tryDifferentHeading(mainHdg, left, coord, sprintLength)
+        coordNext, hdgNext = tryDifferentHeading(mainHdg, left, coordMove, sprintLength)
         if not coordNext then
-            coordNext, hdgNext = tryDifferentHeading(mainHdg, not left, coord, sprintLength)
+            coordNext, hdgNext = tryDifferentHeading(mainHdg, not left, coordMove, sprintLength)
         end
         if hdgNext then
             dg._followWaterHdg = hdgNext
@@ -350,10 +379,11 @@ local function move(dg)
     end
 
     if coordNext then
+        setCoordinate(dg, coordMove)
         dg._nextCoordinate = coordNext
         dg._heading = hdgNext
         if DCAF.Debug then
-            local color = { 1, 0, 1 }
+            local color = { 1, .5, 1 }
             if dg._nextCoordinateMarkID then
                 COORDINATE:RemoveMark(dg._nextCoordinateMarkID)
             end
@@ -364,6 +394,7 @@ local function move(dg)
 
     -- path is blocked by too much water; give up and wait for rescue...
     dg._isPathBlocked = true
+    -- setCoordinate(dg, coordRestore)
     return stopAndSpawn(dg, "path to safe location was blocked")
 end
 
@@ -415,14 +446,14 @@ end
 local function continueOnFoot(dg, coord, heading)
     -- ensure life raft is in water...
     -- local revHeading = (heading - 180) % 360
-    dg._lastCoordinate = coord:Translate(-2, heading)
+    setCoordinate(dg, coord:Translate(-3, heading))
 
     stopAndSpawn(dg, "has reached shore")
     dg._liferaftName = dg.Group:GetUnits()[1].UnitName
--- Debug("nisse - continueOnFoot :: _liferaftName: " .. Dump(dg._liferaftName))    
+-- Debug("nisse - continueOnFoot :: _liferaftName: " .. Dump(dg._liferaftName))
     Debug(DCAF.CSAR.ClassName .. " :: " .. dg.Name .. " has made shore")
-    dg._lastCoordinate = coord
     dg.CSAR.Type = CSAR_Type.Land
+    setCoordinate(dg, coord:Translate(4, heading))
 
     -- todo set Ground template
     local t = CSAR_DistressedGroupTemplates.GroundTemplate
@@ -435,7 +466,7 @@ local function continueOnFoot(dg, coord, heading)
     dg.Group = group
     dg.Template = t.Template
 
-    local coordStart = coord:Translate(100, heading)
+    local coordStart = dg._lastCoordinate -- coord:Translate(100, heading)
     if not coordStart:IsSurfaceTypeLand() then
         coordStart = coord:ScanSurfaceType(land.SurfaceType.LAND, heading, 200)
     end
@@ -444,18 +475,23 @@ local function continueOnFoot(dg, coord, heading)
         return 
     end
 
-    dg._lastCoordinate = coordStart
-    local locClosest = findClosestSafeLocation(dg)
+    setCoordinate(dg, coordStart)
+    local locClosestSafe = findClosestSafeLocation(dg)
+    if locClosestSafe then
 
-    if locClosest then
-locClosest.Coordinate:CircleToAll(9000)
+if DCAF.Debug then        
+    locClosestSafe.Coordinate:CircleToAll(9000)
+end
         Debug(DCAF.CSAR.ClassName .. " :: " .. dg.Name .. " continues on land, trying to reach safety")
-        dg:MoveTo(locClosest)
+        dg:MoveTo(locClosestSafe)
     end 
 end
 
 local function scheduleDistressedGroup(dg) -- dg : #DCAF.CSAR.DistressedGroup
     -- controls behavior of distressed group, looking for friendlies/enemies, moving, hiding, attracting attention etc...
+    if dg._schedulerID then
+        return end
+
     local name = dg.Group.GroupName
     local function isSelf(unit)
 -- Debug("nisse - scheduleDistressedGroup_isSelf :: _liferaftName: " .. Dump(dg._liferaftName))        
@@ -469,16 +505,17 @@ local function scheduleDistressedGroup(dg) -- dg : #DCAF.CSAR.DistressedGroup
     local interval = 3
 
     dg._schedulerID = CSAR_Scheduler:Schedule(dg, function()
-        local zoneEnemies = ZONE_GROUP:New(dg.Name .. "_enemies", dg.Group, dg.RangeEnemies)
+
+-- Debug("nisse - CSAR_Scheduler:Schedule ...")
+
+        -- local zoneEnemies = ZONE_GROUP:New(dg.Name .. "_enemies", dg.Group, dg.RangeEnemies)
         local lifeRaftHeading
         if dg.CSAR.Type == CSAR_Type.Land then
             move(dg)
         else
             lifeRaftHeading = driftOnWaves(dg, interval)
         end
-        local coord = dg:GetCoordinate(false)
-
-        debug_markLocation(dg)
+        local coord = dg._lastCoordinate -- dg:GetCoordinate(false)
 
         -- look for enemy units...
         local otherCoalitions
@@ -500,7 +537,6 @@ local function scheduleDistressedGroup(dg) -- dg : #DCAF.CSAR.DistressedGroup
         --     end
         --     dg._debug_markID = locRef.Coordinate:CircleToAll(nil, Coalition.ToNumber(dg.Coalition))
         -- end
-        
 
         local closest = locRef:GetClosestUnits(NauticalMiles(20), coalitions, function(unit) return not isSelf(unit) end)
 -- Debug("nisse - scheduleDistressedGroup :: closest: " .. DumpPrettyDeep(closest))
@@ -522,15 +558,28 @@ local function scheduleDistressedGroup(dg) -- dg : #DCAF.CSAR.DistressedGroup
 -- Debug("nisse - scheduleDistressedGroup :: closest hostile: " .. DumpPretty(closestEnemy) .. " :: closest friendly: " .. DumpPretty(closestFriendly))
 
         if closestEnemy and closestEnemyDistance < dg.RangeEnemies and coord:IsLOS(closestEnemy:GetCoordinate()) then
-            if dg.State == CSAR_State.Stopped then
-                return end
-
-            dg:DeactivateBeacon()
-            dg:OnEnemyDetected(closestEnemy)
-            if dg.CSAR.Type == CSAR_Type.Water and isEnemyDetectingLifeRaftByChance(dg, closestEnemy) then
-                captureWhenAble(dg, closestEnemy)
+            local isStoppingAndHiding = true
+            if closestEnemy:IsGround() and closestEnemyDistance > NauticalMiles(5) then
+                -- there's a good chance a ground unit won't be detected (too far away)
+                local factor = .05 * #closestEnemy:GetGroup():GetUnits() -- +5% detection chance for every unit in enemy groupp
+                factor = factor * 1 / (UTILS.MetersToNM(closestEnemyDistance) / 4)
+-- Debug("nisse - checks for ground unit detection :: factor: " .. Dump(factor))
+                if math.random(100) > factor*100 then
+                    isStoppingAndHiding = false
+                end
             end
-            return
+
+            if isStoppingAndHiding then
+                if dg.State == CSAR_State.Stopped then
+                    return end
+
+                dg:DeactivateBeacon()
+                dg:OnEnemyDetected(closestEnemy)
+                if dg.CSAR.Type == CSAR_Type.Water and isEnemyDetectingLifeRaftByChance(dg, closestEnemy) then
+                    captureWhenAble(dg, closestEnemy)
+                end
+                return
+            end
         end
 
         -- no enemies detected...
@@ -549,7 +598,7 @@ Debug("nisse - closestFriendly: " .. DumpPretty(closestFriendly.UnitName) .. " :
             end
         end
 
-        -- check for land (when driftin on waves) ...
+        -- check for land (when drifting in liferaft) ...
 -- Debug("nisse - scheduleDistressedGroup :: lifeRaftHeading: " .. Dump(lifeRaftHeading))    
         if lifeRaftHeading then
             local coordLand = dg._lastCoordinate:ScanSurfaceType(land.SurfaceType.LAND, lifeRaftHeading)
@@ -630,7 +679,7 @@ function DCAF.CSAR.DistressedGroup:New(name, csar, sTemplate, location, bCanBeCa
     location = testLocation
     
     local dg = DCAF.clone(DCAF.CSAR.DistressedGroup)
-    dg.Name = name
+    dg.Name = name or csar.Name
     dg.CSAR = csar
     dg.Template = sTemplate
     dg.Group = group
@@ -639,8 +688,7 @@ function DCAF.CSAR.DistressedGroup:New(name, csar, sTemplate, location, bCanBeCa
     dg.Coalition = Coalition.FromNumber(group:GetCoalition())
     dg.CanBeCatured = bCanBeCaptured
     dg._isMoving = false
-    dg._lastCoordinate = coord
-    dg._lastCoordinateTime = UTILS.SecondsOfToday()
+    setCoordinate(dg, coord)
     return dg
 end
 
@@ -736,10 +784,15 @@ function DCAF.CSAR.DistressedGroup:Start()
     if self.State ~= CSAR_State.Initializing then
         error("DCAF.CSAR.DistressedGroup:Start :: cannot activate group in distress (CSAR story already activated)") end
 
-    if self._targetLocation or self.CSAR.Type == CSAR_Type.Water then
-        despawnAndMove(self)
+    if self.CSAR.Type == CSAR_Type.Land then
+        local locClosest = findClosestSafeLocation(self)
+        if locClosest then
+            self:MoveTo(locClosest)
+        else
+            stopAndSpawn(self, "no safe area found")
+        end
     else
-        stopAndSpawn(self)
+        self:DriftWithWaves()
     end
     return self
 end
@@ -759,53 +812,62 @@ function DCAF.CSAR.DistressedGroup:GetCoordinate(update, skillOrSkillFactor)
         skillFactor = skillOrSkillFactor
     end
 
+    local now = UTILS.SecondsOfToday()
+    local elapsedTime = now - self._lastCoordinateTime
+    local distance = self._speedMps * elapsedTime
+if distance > 2000 then
+Debug("DCAF.CSAR.DistressedGroup:GetCoordinate :: _speedMps: " .. Dump(self._speedMps) .. " :: elapsedTime: " .. Dump(elapsedTime))
+end
     local function adjustPrecisionForSkillFactor()
         if skillFactor == 1 then
-            return self._lastCoordinate
+            self._lastCoordinate:Translate(distance, self._heading)
+            -- return self._lastCoordinate
         end
         local offset = NauticalMiles(3) * (1 / skillFactor)
-Debug("DCAF.CSAR.DistressedGroup:GetCoordinate :: offset: " .. Dump(offset))
+-- Debug("DCAF.CSAR.DistressedGroup:GetCoordinate :: offset: " .. Dump(offset))
         return self._lastCoordinate:Translate(offset, math.random(360))
     end
     
     if self.State ~= CSAR_State.Moving or (isBoolean(update) and not update) then
         return adjustPrecisionForSkillFactor() end
 
-    local now = UTILS.SecondsOfToday()
-    local elapsedTime = now - self._lastCoordinateTime
     if elapsedTime == 0 or not self._nextCoordinate then
         return adjustPrecisionForSkillFactor()
     end
 
-    local distance = self._speedMps * elapsedTime
-    self._lastCoordinate = self._lastCoordinate:Translate(self._speedMps * elapsedTime, self._heading)
+    local coord = self._lastCoordinate:Translate(distance, self._heading)
+    setCoordinate(self, self._lastCoordinate:Translate(distance, self._heading))
     self._lastCoordinate:SetAltitude(self._lastCoordinate:GetLandHeight())
-    self._lastCoordinateTime = now
     return adjustPrecisionForSkillFactor()
 end
 
 function DCAF.CSAR.DistressedGroup:MoveTo(location, speedKmph)
-    local coord
+    local coordLocation
     local testLocation = DCAF.Location.Resolve(location)
     if not testLocation then
         error("DCAF.CSAR.DistressedGroup:MoveTo :: cannot resolve location: " .. DumpPretty(location)) end
 
-    coord = testLocation:GetCoordinate(false)
     if not isNumber(speedKmph) then
         speedKmph = 5
     end
-    -- todo Consider roads (avoid) and steep hills (too difficult) and high terrain (provides good LOS)
+    self._speedMps = UTILS.KmphToMps(speedKmph)
+    coordLocation = testLocation:GetCoordinate(false)
+
+    -- todo Consider avoiding roads, urban centres, and steep hills (blocking) and maybe seek out high ground (provides good LOS)
 
     local coordOwn = self:GetCoordinate(false)
     self._targetLocation = testLocation
-    self._targetCoordinate = coord
-    self._speedMps = UTILS.KmphToMps(speedKmph)
-    setState(self, CSAR_State.Moving)
+    self._coordSafeLocation = coordLocation
+    despawnAndMove(self)
+if DCAF.Debug then        
+Debug("nisse - DCAF.CSAR.DistressedGroup:MoveTo :: self._coordSafeLocation: " .. DumpPretty(self._coordSafeLocation))
+    self._coordSafeLocation:CircleToAll(9000)
+end    
     return self
 end
 
 function DCAF.CSAR.DistressedGroup:DriftWithWaves(interval)
-    local coord = self:GetCoordinate(true)
+    local coord = self._lastCoordinate -- self:GetCoordinate(true)
     local windDir, windSpeed = coord:GetWind(0)
     if not isNumber(interval) then
         interval = 2
@@ -816,15 +878,10 @@ function DCAF.CSAR.DistressedGroup:DriftWithWaves(interval)
     if windSpeed == 0 then
         Debug("CSAR :: " ..self.Name.. " :: life raft will remain stationary (no wind)")
         isDrifting = false
+        self._speedMps = 0
     else
-        speed = windSpeed * .5
+        self._speedMps = windSpeed * .5
     end
-
-    self._waveDriftScheduleID = CSAR_Scheduler:Schedule(self, function() 
-
-
-    end, {}, interval, interval)
-    CSAR_Scheduler:Run()
 end
 
 function DCAF.CSAR.DistressedGroup:OnTargetReached(targetLocation)
@@ -952,7 +1009,7 @@ function DCAF.CSAR.DistressedGroup:OnEnemyDetected(enemyUnit)
     if self.CSAR.Type == CSAR_Type.Land then
 Debug("nisse - DCAF.CSAR.DistressedGroup:OnEnemyDetected :: " .. self.Name .. " :: enemyUnit: " .. enemyUnit.UnitName)
         -- do nothing (stay hidden)
-        stopAndSpawn(self, "enemy detected - staying still")
+        stopAndSpawn(self, "enemy detected - hiding :: enemy unit: " .. enemyUnit.UnitName)
     end
 end
 
@@ -1125,7 +1182,7 @@ local function scheduleSearchGroupDetection(sg) -- sg : #DCAF.CSAR.HunterGroup o
     local name = sg.Group.GroupName
 
     sg._schedulerID = CSAR_Scheduler:Schedule(sg, function()
-Debug("nisse - scheduleSearchGroupDetection :: " .. name .. " :: sg._schedulerID: " .. Dump(sg._schedulerID))
+-- Debug("nisse - scheduleSearchGroupDetection :: " .. name .. " :: sg._schedulerID: " .. Dump(sg._schedulerID))
         local now = UTILS.SecondsOfToday()
 
         if not sg.BeaconDetection or now > sg.BeaconDetection.NextCheck then
@@ -1508,12 +1565,11 @@ local CSAR_Ongoing = {
     -- list of #DCAF.CSAR
 }
 
-
 DCAF.CSAR.Options = {
     ClassName = "DCAF.CSAR.Options",
     NotifyScope = nil,          -- #GROUP (, group name,) or #Coalition
     BeaconChannels = { "17", "27Y", "37Y", "47Y", "57Y", "67Y", "77Y" },
-    Codewords = nil,
+    Codewords = CSAR_DefaultCodewords,
     DelayRescueMission = -1,    -- #number or #VariableValue - time before a rescue mission launches (-1 = not started automatically)
     DelayCaptureMission = VariableValue:New(Minutes(10), .5) -- #number or #VariableValue - time before capture mission launches (not started if DistressedGroupTemplate.CanBeCatured is false)
 }
@@ -1521,10 +1577,9 @@ DCAF.CSAR.Options = {
 function DCAF.CSAR:New(startLocation, name, distressedGroupTemplate, bCanBeCaptured, smoke, flares)
     CSAR_Counter = CSAR_Counter+1
     if not isAssignedString(name) then
-        name = DCAF.CSAR:GetNextRandomCodeword()
+        name = self:GetNextRandomCodeword()
     end
     local csar = DCAF.clone(DCAF.CSAR)
-    csar.Name = name
     csar.Weather = DCAF.Weather:Static()
     if startLocation.Coordinate:IsSurfaceTypeWater() then
         csar.Type = CSAR_Type.Water
@@ -1541,43 +1596,65 @@ function DCAF.CSAR:New(startLocation, name, distressedGroupTemplate, bCanBeCaptu
         local t = self.DistressBeaconTemplate
         dg:WithBeacon(t.BeaconTemplate, t.BeaconTimeActive, t.BeaconTimeInactive)
     end
-    
-    if csar.Type == CSAR_Type.Land then
-        local locClosest = findClosestSafeLocation(dg)
-        if locClosest then
-            dg:MoveTo(locClosest)
-        end
-    else
-        dg:DriftWithWaves()
-    end
-
     table.insert(CSAR_Ongoing, csar)
-Debug("nisse - CSAR was created :: name: " .. Dump(name) .." :: type: " .. csar.Type)
     return csar
 end
 
 -- @options :: #DCAF.CSAR.Options
 function DCAF.CSAR:Start(options)
+    self.Options = options or DCAF.CSAR.Options:New()
+    if not self.Name then
+Debug("nisse - DCAF.CSAR:Start :: self.Options.Codewords: " .. DumpPrettyDeep(self.Options.Codewords))
+
+        self.Name = self:GetNextRandomCodeword()
+    end
     self.DistressedGroup:Start()
-    Debug("DCAF.CSAR:Start :: " .. self.Type .. " type CSAR started :: " .. DumpPretty(self))
+    Debug("DCAF.CSAR:Start :: " .. self.Type .. " type CSAR started :: name: " .. self.Name)
 end
 
-local CRSA_DefaultCodewords = { "Cinderella", "Snow White", "Ariel", "Anastasia", "Princess Leia", "Sleeping Beauty", "Fiona" }
 
 function DCAF.CSAR.Options:New(notifyScope, codewords, beaconChannels)
     local options = DCAF.clone(DCAF.CSAR.Options)
     options.NotifyScope = notifyScope
-    if not codewords then
-        if DCAF.Codewords then
-            options.Codewords = DCAF.Codewords:RandomTheme()
-        else
-            options.Codewords = CRSA_DefaultCodewords
-        end
+    if codewords then
+        options:WithCodewords(codewords)
     end
     if isListOfAssignedStrings(beaconChannels) then
         options.BeaconChannels = beaconChannels
     end
     return options
+end
+
+-- @codewords : #string (name of theme), #DCAF.CodewordTheme, or #list of #strings (codewords)
+function DCAF.CSAR.Options:WithCodewords(codewords, singleUse)
+    if not isBoolean(singleUse) then
+        singleUse = true
+    end
+    if not codewords then
+        if DCAF.Codewords then
+            self.Codewords = DCAF.Codewords:RandomTheme(DCAF.CodewordType.Person, singleUse)
+        else
+            self.Codewords = DCAF.CodewordTheme:New("(default)", CSAR_DefaultCodewords)
+        end
+    elseif isAssignedString(codewords) then
+-- Debug("DCAF.CSAR.Options:WithCodewords :: codewords: " .. codewords)
+        if not DCAF.Codewords then
+            error("DCAF.Codewords was not enabled. Please enable DCAF.Codewords before specifyting a codewords theme") end
+
+        local codewordsList = DCAF.Codewords[codewords]
+-- Debug("DCAF.CSAR.Options:WithCodewords :: codewordsTheme: " .. DumpPrettyDeep(codewordsTheme))
+        if not codewordsList then
+            Warning("Codeword theme '" .. codewordsList .. "' was not found :: reverting to default coderword theme")
+            codewordsList = CSAR_DefaultCodewords
+        end
+        self.Codewords = DCAF.CodewordTheme:New(codewords, codewordsList, true)
+    elseif isClass(codewords, DCAF.CodewordTheme.ClassName) then
+        self.Codewords = codewords
+    else
+        error("DCAF.CSAR.Options:WithCodewords :: unexpected `codewords`: " .. DumpPretty(codewords))
+    end
+-- Debug("DCAF.CSAR.Options:WithCodewords :: codewords: " .. DumpPrettyDeep(self.Codewords, 2))
+    return self
 end
 
 local CSAR_EjectedPilots = { -- dictionary
@@ -1658,7 +1735,7 @@ local function simulateEjectedPilotLanding(coordRef, funcOnLanded)
 end
 
 function DCAF.CSAR:NewOnPilotEjects(options, funcOnCreated)
-Debug("nisse - DCAF.CSAR:NewOnPilotEjects...")
+Debug("nisse - DCAF.CSAR:NewOnPilotEjects :: options.Codewords: " .. DumpPrettyDeep(options.Codewords))
 
     if not isClass(options, DCAF.CSAR.Options.ClassName) then
         options = DCAF.CSAR.Options:New()
@@ -1679,7 +1756,7 @@ Debug("nisse - DCAF.CSAR:NewOnPilotEjects...")
 
     MissionEvents:OnEjection(function(event) 
 
-Debug("DCAF.CSAR:NewOnPilotEjects_OnEjection :: event: " .. DumpPrettyDeep(event))
+-- Debug("DCAF.CSAR:NewOnPilotEjects_OnEjection :: event: " .. DumpPrettyDeep(event))
 
         local unit = event.IniUnit
         local group = unit:GetGroup()
@@ -1700,12 +1777,11 @@ Debug("DCAF.CSAR:NewOnPilotEjects_OnEjection :: event: " .. DumpPrettyDeep(event
             return 
         end
         simulateEjectedPilotLanding(coordRef, function(coordLanding) 
-if coordLanding:IsSurfaceTypeWater() then
-    Debug("DCAF.CSAR:NewOnPilotEjects_simulateEjectedPilotLanding :: ejected pilot has landed in WATER")
-else
-    Debug("DCAF.CSAR:NewOnPilotEjects_simulateEjectedPilotLanding :: ejected pilot has landed on LAND")
-end
-
+-- if coordLanding:IsSurfaceTypeWater() then
+--     Debug("DCAF.CSAR:NewOnPilotEjects_simulateEjectedPilotLanding :: ejected pilot has landed in WATER")
+-- else
+--     Debug("DCAF.CSAR:NewOnPilotEjects_simulateEjectedPilotLanding :: ejected pilot has landed on LAND")
+-- end
             local _, locRescue, locCapture = getAssumedPilotLandingLocation(coordRef, coalition)
             local locStart = DCAF.Location:New(coordLanding)
             local csar = DCAF.CSAR:New(locStart)
@@ -1720,27 +1796,19 @@ end
     end)
 end
 
-function DCAF.CSAR:UseRandomCodewords(codewords)
-    if DCAF.Codewords then
-        if isClass(codewords, DCAF.CodewordTheme.ClassName) then
-            self.Codewords = codewords
-        elseif isListOfAssignedStrings(codewords) then
-            self.Codewords = DCAF.CSAR.CodewordTheme:New(codewords)
-        else
-            error("DCAF.CSAR:UseRandomCodewords :: codewords must be either a list of strings or #DCAF.CSAR.CodewordTheme, but was: " .. DumpPretty(codewords))
-        end
-    elseif not isListOfAssignedStrings(codewords) then
-        error("DCAF.CSAR:UseRandomCodewords :: codewords must be a list of strings, but was: " .. DumpPretty(codewords))
-    end
-end
-
 function DCAF.CSAR:GetNextRandomCodeword(singleUse)
-    if not self.Codewords then
+Debug("nisse - DCAF.CSAR:GetNextRandomCodeword :: Codewords: " .. DumpPretty(self.Options.Codewords))
+    if DCAF.Codewords and isClass(self.Options.Codewords, DCAF.CodewordTheme.ClassName) then
+        return self.Options.Codewords:GetNextRandom()
+    elseif isList(self.Options.Codewords) then
+        local name, index = listRandomItem(self.Options.Codewords)
+        table.remove(self.Options.Codewords, index)
+-- Debug("nisse - DCAF.CSAR:GetNextRandomCodeword :: name: " .. name .. " :: CSAR_DefaultCodewords: " .. DumpPretty( CSAR_DefaultCodewords ))        
+        return name
+    end
+    if not self.Options.Codewords then
         CSAR_Counter = CSAR_Counter + 1
         return "CSAR-" .. CSAR_Counter
-    end
-    if DCAF.Codewords and isClass(self.Codewords, DCAF.CodewordTheme.ClassName) then
-        return self.Codewords:GetNextRandom()
     end
     if isList(self.Codewords) then
         local codeword, index = listRandomItem(self.Codewords)
@@ -1753,17 +1821,6 @@ function DCAF.CSAR:GetNextRandomCodeword(singleUse)
         return codeword
     end
 end
-
--- function DCAF.CSAR:NewEmpty(name)
---     CSAR_Counter = CSAR_Counter+1
---     if not isAssignedString(name) then
---         name = "CSAR-" .. tostring(CSAR_Counter)
---     end
-
---     local csar = DCAF.clone(DCAF.CSAR)
---     csar.Name = name
---     return csar
--- end
 
 function DCAF.CSAR:DirectCapableHuntersToCapture()
     directCapableGroupsToPickup(self.HunterGroups)
@@ -1799,7 +1856,7 @@ function DCAF.CSAR:HasCaptureResources()
     return #self.HunterGroups > 0
 end
 
-DCAF.CSAR:UseRandomCodewords(CRSA_DefaultCodewords)
+-- DCAF.CSAR:UseRandomCodewords()
 
 -- //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 --                                                                     CSAR RESOURCES
@@ -1866,7 +1923,7 @@ function DCAF.CSAR:InitSafeLocations(coalition, ...)
 end
 
 function DCAF.CSAR:InitDistressedGroup(groundTemplate, waterTemplate)
-Debug("nisse - DCAF.CSAR:InitDistressedGroup :: groundTemplate: " .. DumpPrettyDeep(groundTemplate) .. " :: waterTemplate: " .. DumpPrettyDeep(waterTemplate))
+-- Debug("nisse - DCAF.CSAR:InitDistressedGroup :: groundTemplate: " .. DumpPrettyDeep(groundTemplate) .. " :: waterTemplate: " .. DumpPrettyDeep(waterTemplate))
 
     if isClass(groundTemplate, DCAF.CSAR.DistressedGroup.ClassName) then
         CSAR_DistressedGroupTemplates.GroundTemplate = groundTemplate
@@ -1878,7 +1935,7 @@ Debug("nisse - DCAF.CSAR:InitDistressedGroup :: groundTemplate: " .. DumpPrettyD
     elseif isAssignedString(waterTemplate) then
         CSAR_DistressedGroupTemplates.WaterTemplate = DCAF.CSAR.DistressedGroup:NewTemplate(waterTemplate)
     end
-Debug("nisse - DCAF.CSAR:InitDistressedGroup :: CSAR_DistressedGroupTemplates: " .. DumpPrettyDeep(CSAR_DistressedGroupTemplates))    
+-- Debug("nisse - DCAF.CSAR:InitDistressedGroup :: CSAR_DistressedGroupTemplates: " .. DumpPrettyDeep(CSAR_DistressedGroupTemplates))    
 end
 
 function DCAF.CSAR:InitDistressBeacon(beaconTemplate, timeActive, timeInactive)

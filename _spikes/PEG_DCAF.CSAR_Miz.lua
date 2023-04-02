@@ -3,7 +3,7 @@ local Khasab = AIRBASE:FindByName(AIRBASE.PersianGulf.Khasab)
 local ThunbIsl = AIRBASE:FindByName(AIRBASE.PersianGulf.ThunbIslis)
 local Jiroft = AIRBASE:FindByName(AIRBASE.PersianGulf.Jiroft_Airport)
 
-local Seerik_harbor = DCAF.Location:NewNamed("Seerik Harbor", COORDINATE:NewFromLLDD(26.52638889, 57.08972222))
+local Seerik_harbor = DCAF.Location:NewNamed("Godu", COORDINATE:NewFromLLDD(26.95750000, 57.02083333))
 
 local w = DCAF.Weather:Static()
 
@@ -24,7 +24,9 @@ DCAF.CSAR:AddResource(DCAF.CSAR.CaptureResource:New("RED Pursuing Heli-escort", 
 
 -- actively create CSAR story (for testing) ...
 -- local csar = DCAF.CSAR:New(nil, "Downed Pilot", "CSAR-1"):StartRescue():StartCapture()
-DCAF.CSAR.NewOnPilotEjects()
+local options = DCAF.CSAR.Options:New():WithCodewords("JamesBond")
+Debug("nisse - MIZ :: options: " .. DumpPrettyDeep(options))
+DCAF.CSAR:NewOnPilotEjects(options)
 
 -- GROUP IN DISTRESS...
 
