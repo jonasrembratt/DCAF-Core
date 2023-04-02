@@ -7,26 +7,26 @@ local Seerik_harbor = DCAF.Location:NewNamed("Godu", COORDINATE:NewFromLLDD(26.9
 
 local w = DCAF.Weather:Static()
 
-DCAF.CSAR:InitSafeLocations(Coalition.Blue, Seerik_harbor)
-DCAF.CSAR:InitDistressedGroup(
+DCAF.CSAR.InitSafeLocations(Coalition.Blue, Seerik_harbor)
+DCAF.CSAR.InitDistressedGroup(
     DCAF.CSAR.DistressedGroup:NewTemplate("CSAR Distressed Ground", true, DCAF.Smoke:New(2), DCAF.Flares:New(4)),
     DCAF.CSAR.DistressedGroup:NewTemplate("CSAR Distressed Water", true, DCAF.Smoke:New(2), DCAF.Flares:New(4)))
-DCAF.CSAR:InitDistressBeacon("CSAR Distress Beacon")
+DCAF.CSAR.InitDistressBeacon("CSAR Distress Beacon")
 
 -- rescue
-DCAF.CSAR:AddResource(DCAF.CSAR.RescueResource:New("BLUE Rescue Blackhawk", { ThunbIsl, Khasab }, 2))
-DCAF.CSAR:AddResource(DCAF.CSAR.RescueResource:New("BLUE Rescue Apache", { ThunbIsl, Khasab }, 2))
+DCAF.CSAR.AddResource(DCAF.CSAR.RescueResource:New("BLUE Rescue Blackhawk", { ThunbIsl, Khasab }, 2))
+DCAF.CSAR.AddResource(DCAF.CSAR.RescueResource:New("BLUE Rescue Apache", { ThunbIsl, Khasab }, 2))
 
 -- capturew
-DCAF.CSAR:AddResource(DCAF.CSAR.CaptureResource:New("RED Pursuing Heli-transport", Jiroft, 2))
-DCAF.CSAR:AddResource(DCAF.CSAR.CaptureResource:New("RED Pursuing Heli-escort", Jiroft, 2))
+DCAF.CSAR.AddResource(DCAF.CSAR.CaptureResource:New("RED Pursuing Heli-transport", Jiroft, 2))
+DCAF.CSAR.AddResource(DCAF.CSAR.CaptureResource:New("RED Pursuing Heli-escort", Jiroft, 2))
 
 
 -- actively create CSAR story (for testing) ...
 -- local csar = DCAF.CSAR:New(nil, "Downed Pilot", "CSAR-1"):StartRescue():StartCapture()
 local options = DCAF.CSAR.Options:New():WithCodewords("JamesBond")
 Debug("nisse - MIZ :: options: " .. DumpPrettyDeep(options))
-DCAF.CSAR:NewOnPilotEjects(options)
+DCAF.CSAR.NewOnPilotEjects(options)
 
 -- GROUP IN DISTRESS...
 

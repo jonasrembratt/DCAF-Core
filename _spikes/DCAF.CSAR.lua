@@ -71,6 +71,13 @@ DCAF.CSAR.SearchGroupsTemnplate = {
     }
 }
 
+local CSAR_DistressBeaconTemplate = {
+    ClassName = "CSAR_DistressBeaconTemplate",
+    BeaconTemplate = nil,
+    BeaconTimeActive = VariableValue:New(90, .3),            -- #number or #VariableValue (seconds)
+    BeaconTimeInactive = VariableValue:New(Minutes(5), .3),  -- #number/#VariableValue - time (seconds) to keep beacon silent between active periods
+}
+
 local CSAR_SafeLocations = { -- dictionary
     -- key = #string (#Coalition)
     -- valiue = list of #DCAF.Location
@@ -703,7 +710,12 @@ function DCAF.CSAR.DistressedGroup:NewFromTemplate(name, csar, location)
         if not t then
             error("DCAF.CSAR.DistressedGroup:NewFromTemplate :: no ground template was specified") end
     end
-Debug("nisse - DCAF.CSAR.DistressedGroup:NewFromTemplate :: template: " .. Dump(t.Template))    
+Debug("nisse - DCAF.CSAR.DistressedGroup:NewFromTemplate :: template: " .. Dump(t.Template))
+    local dg = DCAF.CSAR.DistressedGroup:New(name, csar, t.Template, location, t.CanBeCatured, t.Smoke, t.Flares)
+    if isClass(DCAF.CSAR.DistressBeaconTemplate, CSAR_DistressBeaconTemplate.ClassName) then
+        local t = DCAF.CSAR.DistressBeaconTemplate
+        dg:WithBeacon(t.BeaconTemplate, t.BeaconTimeActive, t.BeaconTimeActive)
+    end
     return DCAF.CSAR.DistressedGroup:New(name, csar, t.Template, location, t.CanBeCatured, t.Smoke, t.Flares)
 end
 
@@ -1734,7 +1746,7 @@ local function simulateEjectedPilotLanding(coordRef, funcOnLanded)
     CSAR_Scheduler:Run()
 end
 
-function DCAF.CSAR:NewOnPilotEjects(options, funcOnCreated)
+function DCAF.CSAR.NewOnPilotEjects(options, funcOnCreated)
 Debug("nisse - DCAF.CSAR:NewOnPilotEjects :: options.Codewords: " .. DumpPrettyDeep(options.Codewords))
 
     if not isClass(options, DCAF.CSAR.Options.ClassName) then
@@ -1803,7 +1815,6 @@ Debug("nisse - DCAF.CSAR:GetNextRandomCodeword :: Codewords: " .. DumpPretty(sel
     elseif isList(self.Options.Codewords) then
         local name, index = listRandomItem(self.Options.Codewords)
         table.remove(self.Options.Codewords, index)
--- Debug("nisse - DCAF.CSAR:GetNextRandomCodeword :: name: " .. name .. " :: CSAR_DefaultCodewords: " .. DumpPretty( CSAR_DefaultCodewords ))        
         return name
     end
     if not self.Options.Codewords then
@@ -1862,7 +1873,7 @@ end
 --                                                                     CSAR RESOURCES
 -- //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-function DCAF.CSAR:AddResource(resource)
+function DCAF.CSAR.AddResource(resource)
     if isClass(resource, DCAF.CSAR.RescueResource.ClassName) then
         table.insert(CSAR_RescueResources, resource)
     elseif isClass(resource, DCAF.CSAR.CaptureResource.ClassName) then
@@ -1871,12 +1882,6 @@ function DCAF.CSAR:AddResource(resource)
         error("DCAF.CSAR:AddResource :: resource must be either #" .. DCAF.CSAR.RescueResource.ClassName .. " or " .. DCAF.CSAR.CaptureResource.ClassName .. ", but was: " .. DumpPretty(resource)) 
     end
 end
-
-local CSAR_DistressBeaconTemplate = {
-    BeaconTemplate = nil,
-    BeaconTimeActive = VariableValue:New(90, .3),            -- #number or #VariableValue (seconds)
-    BeaconTimeInactive = VariableValue:New(Minutes(5), .3),  -- #number/#VariableValue - time (seconds) to keep beacon silent between active periods
-}
 
 local CSAR_DistressBeaconTemplates = {
     -- list of #CSAR_DistressBeaconTemplate
@@ -1900,7 +1905,7 @@ function CSAR_DistressBeaconTemplate:New(template, timeActive, timeInactive)
     return template
 end
 
-function DCAF.CSAR:InitSafeLocations(coalition, ...)
+function DCAF.CSAR.InitSafeLocations(coalition, ...)
     local c = Coalition.Resolve(coalition)
     if not c then 
         error("DCAF.CSAR:InitSafeLocations :: cannot resolve coalition from: " .. DumpPretty(coalition)) end
@@ -1922,7 +1927,7 @@ function DCAF.CSAR:InitSafeLocations(coalition, ...)
 
 end
 
-function DCAF.CSAR:InitDistressedGroup(groundTemplate, waterTemplate)
+function DCAF.CSAR.InitDistressedGroup(groundTemplate, waterTemplate)
 -- Debug("nisse - DCAF.CSAR:InitDistressedGroup :: groundTemplate: " .. DumpPrettyDeep(groundTemplate) .. " :: waterTemplate: " .. DumpPrettyDeep(waterTemplate))
 
     if isClass(groundTemplate, DCAF.CSAR.DistressedGroup.ClassName) then
@@ -1938,7 +1943,7 @@ function DCAF.CSAR:InitDistressedGroup(groundTemplate, waterTemplate)
 -- Debug("nisse - DCAF.CSAR:InitDistressedGroup :: CSAR_DistressedGroupTemplates: " .. DumpPrettyDeep(CSAR_DistressedGroupTemplates))    
 end
 
-function DCAF.CSAR:InitDistressBeacon(beaconTemplate, timeActive, timeInactive)
+function DCAF.CSAR.InitDistressBeacon(beaconTemplate, timeActive, timeInactive)
     self.DistressBeaconTemplate = CSAR_DistressBeaconTemplate:New(beaconTemplate, timeActive, timeInactive)
     return self
 end
