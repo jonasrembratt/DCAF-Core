@@ -2,6 +2,16 @@
 local Khasab = AIRBASE:FindByName(AIRBASE.PersianGulf.Khasab)
 local ThunbIsl = AIRBASE:FindByName(AIRBASE.PersianGulf.ThunbIslis)
 local Jiroft = AIRBASE:FindByName(AIRBASE.PersianGulf.Jiroft_Airport)
+local FarpLondon1 = AIRBASE:FindByName("FARP London-1")
+local FarpLondon2 = AIRBASE:FindByName("FARP London-2")
+local FarpLondon3 = AIRBASE:FindByName("FARP London-3")
+local BlueCSARAirbases = {
+    FarpLondon1,
+    FarpLondon2,
+    FarpLondon3,
+    ThunbIsl,
+    Khasab
+}
 
 local Seerik_harbor = DCAF.Location:NewNamed("Godu", COORDINATE:NewFromLLDD(26.95750000, 57.02083333))
 
@@ -14,8 +24,14 @@ DCAF.CSAR.InitDistressedGroup(
 DCAF.CSAR.InitDistressBeacon("CSAR Distress Beacon")
 
 -- rescue
-DCAF.CSAR.AddResource(DCAF.CSAR.RescueResource:New("BLUE Rescue Blackhawk", { ThunbIsl, Khasab }, 2))
-DCAF.CSAR.AddResource(DCAF.CSAR.RescueResource:New("BLUE Rescue Apache", { ThunbIsl, Khasab }, 2))
+-- DCAF.CSAR.AddRescueMission("Blackhawk + 2 Apaches", BlueCSARAirbases, {
+--     DCAF.CSAR.RescueGroup:New("BLUE Rescue Blackhawk"),
+--     DCAF.CSAR.RescueGroup:New("BLUE Rescue Apache", 2)
+-- })
+
+
+DCAF.CSAR.AddResource(DCAF.CSAR.RescueResource:New("BLUE Rescue Blackhawk", BlueCSARAirbases, 2))
+DCAF.CSAR.AddResource(DCAF.CSAR.RescueResource:New("BLUE Rescue Apache", BlueCSARAirbases, 2))
 
 -- capturew
 DCAF.CSAR.AddResource(DCAF.CSAR.CaptureResource:New("RED Pursuing Heli-transport", Jiroft, 2))

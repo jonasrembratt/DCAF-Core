@@ -658,6 +658,25 @@ function Vec3_FromBullseye(aCoalition)
     end
 end
 
+function ParseTACANChannelAndMode(text, defaultMode)
+    local sChannel = text:match("[0-9]*")
+    if not isAssignedString(sChannel) then
+        return end
+
+    local mode = text:match("[X,Y]")
+    if not isAssignedString(mode) then
+        if not isAssignedString(defaultMode) then
+            defaultMode = "X"
+        else
+            local test = string.upper(defaultMode)
+            if test ~= 'X' and test ~= 'Y' then
+                error("ParseTACANChannelAndMode :: `defaultMode` must be 'X' or 'Y', but was: '" .. mode .. "'")
+            end
+        end
+    end
+    return tonumber(sChannel), mode
+end
+
 function DCAF.DateTime:New(year, month, day, hour, minute, second)
     local date = DCAF.clone(DCAF.DateTime)
     date.Year = year
@@ -1752,6 +1771,13 @@ function CALLSIGN.AWACS:FromString(sCallsign)
     elseif sCallsign == "Magic" then return CALLSIGN.AWACS.Magic
     elseif sCallsign == "Overlord" then return CALLSIGN.AWACS.Overlord
     elseif sCallsign == "Wizard" then return CALLSIGN.AWACS.Wizard
+    end
+end
+
+function GetTwoLetterCallsign(name)
+    local len = string.len(name)
+    if isAssignedString(name) and len >= 2 then
+        return string.sub(name, 1, 1) .. string.sub(name, len)
     end
 end
 
@@ -2887,6 +2913,9 @@ end
 -- @param #any nsAttachToUnit Specifies unit to attach TACAN to; either its internal index or its name. Optional; default = 1
 -- @return #string A message describing the outcome (mainly intended for debugging purposes)
 function CommandActivateTACAN(group, nChannel, sModeChannel, sIdent, bBearing, bAA, nsAttachToUnit)
+
+Debug("nisse - CommandActivateTACAN :: group: " .. group.GroupName .. " :: nChannel: " .. Dump(nChannel) .. " :: sModeChannel: " .. sModeChannel .. " :: ident: " .. sIdent)
+
     local forGroup = getGroup(group)
     if not forGroup then
         error("CommandActivateTACAN :: cannot resolve group from: " .. DumpPretty(group)) end
@@ -5469,7 +5498,7 @@ local function FrequencyAction(nFrequency, nPower, modulation)
     }
 end
 
-local function ActivateBeaconAction(beaconType, nChannel, nFrequency, sModeChannel, sCallsign, nBeaconSystem, bBearing, bAA)
+function ActivateBeaconAction(beaconType, nChannel, nFrequency, sModeChannel, sCallsign, nBeaconSystem, bBearing, bAA)
     if not isNumber(beaconType) then
         beaconType = BEACON.Type.TACAN
     end
@@ -5495,7 +5524,7 @@ local function ActivateBeaconAction(beaconType, nChannel, nFrequency, sModeChann
     }
 end
 
-local function ActivateTacanAction(nChannel, sModeChannel, sCallsign, bBearing, bAA)
+local function ActivateTankerTacanAction(nChannel, sModeChannel, sCallsign, bBearing, bAA)
     local tacanSystem
     if sModeChannel == "X" then
         tacanSystem = BEACON.System.TACAN_TANKER_X
@@ -5732,7 +5761,7 @@ function DCAF_ServiceTrack:Execute(direct) -- direct = service will proceed dire
             tacanSystem = BEACON.System.TACAN_TANKER_Y
         end
 
-        InsertWaypointAction(tacanWp, ActivateTacanAction(
+        InsertWaypointAction(tacanWp, ActivateTankerTacanAction(
             self.Service.TACANChannel,
             self.Service.TACANMode,
             self.Service.TACANIdent,
@@ -5825,7 +5854,7 @@ function DCAF.Tanker:ActivateService(nServiceWp)
         serviceWp.name = "ACTIVATE"
     end
     InsertWaypointTask(serviceWp, TankerTask())
-    InsertWaypointAction(serviceWp, ActivateTacanAction(
+    InsertWaypointAction(serviceWp, ActivateTankerTacanAction(
         self.TACANChannel,
         self.TACANMode,
         self.TACANIdent,

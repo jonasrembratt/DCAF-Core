@@ -592,7 +592,7 @@ local function scheduleDistressedGroup(dg) -- dg : #DCAF.CSAR.DistressedGroup
         -- no enemies detected...
 -- Debug("nisse - closestFriendly: " .. DumpPretty(closestFriendly) .. " :: distance: " .. Dump(closestFriendlyDistance))
         if closestFriendly and closestFriendlyDistance < dg.RangeSmoke and coord:IsLOS(closestFriendly:GetCoordinate()) then
-Debug("nisse - closestFriendly: " .. DumpPretty(closestFriendly.UnitName) .. " :: distance: " .. Dump(closestFriendlyDistance))
+-- Debug("nisse - closestFriendly: " .. DumpPretty(closestFriendly.UnitName) .. " :: distance: " .. Dump(closestFriendlyDistance))
             dg:OnFriendlyDetectedInSmokeRange(closestFriendly)
             return
         end
@@ -710,26 +710,32 @@ function DCAF.CSAR.DistressedGroup:NewFromTemplate(name, csar, location)
         if not t then
             error("DCAF.CSAR.DistressedGroup:NewFromTemplate :: no ground template was specified") end
     end
-Debug("nisse - DCAF.CSAR.DistressedGroup:NewFromTemplate :: template: " .. Dump(t.Template))
+-- Debug("nisse - DCAF.CSAR.DistressedGroup:NewFromTemplate :: template: " .. Dump(t.Template))
+-- Debug("nisse - DCAF.CSAR.DistressedGroup:NewFromTemplate :: DCAF.CSAR.DistressBeaconTemplate: " .. DumpPretty(DCAF.CSAR.DistressBeaconTemplate))
     local dg = DCAF.CSAR.DistressedGroup:New(name, csar, t.Template, location, t.CanBeCatured, t.Smoke, t.Flares)
     if isClass(DCAF.CSAR.DistressBeaconTemplate, CSAR_DistressBeaconTemplate.ClassName) then
         local t = DCAF.CSAR.DistressBeaconTemplate
-        dg:WithBeacon(t.BeaconTemplate, t.BeaconTimeActive, t.BeaconTimeActive)
+
+-- Debug("nisse - DCAF.CSAR.DistressedGroup:NewFromTemplate :: assigns beacon :: t: " .. DumpPretty(t))
+
+        dg:WithBeacon(t.Spawn, t.BeaconTimeActive, t.BeaconTimeActive)
     end
-    return DCAF.CSAR.DistressedGroup:New(name, csar, t.Template, location, t.CanBeCatured, t.Smoke, t.Flares)
+    return dg -- DCAF.CSAR.DistressedGroup:New(name, csar, t.Template, location, t.CanBeCatured, t.Smoke, t.Flares)
 end
 
-function DCAF.CSAR.DistressedGroup:WithBeacon(beaconTemplate, timeActive, timeInactive)
-    if isAssignedString(beaconTemplate) then
-        self.BeaconTemplate = beaconTemplate
-        self.BeaconTimeActive = timeActive or DCAF.CSAR.DistressedGroup.BeaconTimeActive
-        self.BeaconTimeInactive = timeInactive or DCAF.CSAR.DistressedGroup.BeaconTimeInactive
-    end
+function DCAF.CSAR.DistressedGroup:WithBeacon(spawn, timeActive, timeInactive)
+
+-- Debug("nisse - DCAF.CSAR.DistressedGroup:WithBeacon :: spawn: " .. DumpPretty(spawn) .. " :: _debugId: " .. Dump(self._debugId))
+
+    self.BeaconSpawn = spawn
+    self.BeaconTimeActive = timeActive or DCAF.CSAR.DistressedGroup.BeaconTimeActive
+    self.BeaconTimeInactive = timeInactive or DCAF.CSAR.DistressedGroup.BeaconTimeInactive
     return self
 end
 
 function DCAF.CSAR.DistressedGroup:IsBeaconAvailable()
-    if not self.BeaconTemplate or self.BeaconGroup then
+-- Debug("nisse - DCAF.CSAR.DistressedGroup:IsBeaconAvailable " .. " :: _debugId: " .. Dump(self._debugId) .. " :: self.BeaconSpawn: " .. Dump(self.BeaconSpawn ~= nil) .. " :: self.BeaconGroup: " .. Dump(self.BeaconGroup ~= nil))
+    if not self.BeaconSpawn or self:IsBeaconActive() then
         return false 
     end
     if self.BeaconNextActive then
@@ -743,7 +749,6 @@ function DCAF.CSAR.DistressedGroup:IsBeaconActive()
 end
 
 function DCAF.CSAR.DistressedGroup:ActivateBeacon()
-
     local function getBeaconNextActiveTime()
         local timeInactive
         if isVariableValue(self.BeaconTimeInactive) then
@@ -756,16 +761,46 @@ function DCAF.CSAR.DistressedGroup:ActivateBeacon()
         return UTILS.SecondsOfToday() + timeInactive
     end
 
-    if not isAssignedString(self.BeaconTemplate) or self:IsBeaconActive() then
+-- Debug("nisse - DCAF.CSAR.DistressedGroup:ActivateBeacon :: " .. " :: _debugId: " .. Dump(self._debugId) .. " :: self: " .. DumpPretty(self))
+
+    if not self.BeaconSpawn or self:IsBeaconActive() then
         return self
     end
 
-    local spawn = getSpawn(self.BeaconTemplate)
-    local distance = math.random(100, 300)
-    local hdg = math.random(360)
-    local coord = self:GetCoordinate(false)
-    coord = coord:Translate(distance, hdg)
-    self.BeaconGroup = spawn:SpawnFromCoordinate(coord)
+    local function getBeaconIdent()
+        if self.BeaconIdent then
+            return self.BeaconIdent 
+        end
+        self.BeaconIdent = "R" .. string.upper(GetTwoLetterCallsign(self.Name))
+        return self.BeaconIdent
+    end
+
+    local function spawnAndActivateTACAN()
+        local distance = math.random(100, 300)
+        local hdg = math.random(360)
+        local coord = self._lastCoordinate:Translate(distance, hdg)
+        self.BeaconGroup = self.BeaconSpawn:SpawnFromCoordinate(coord)
+        local wp = coord:WaypointGround(0)
+        local ident = getBeaconIdent()
+        InsertWaypointAction(
+            wp, 
+            ActivateBeaconAction(
+                BEACON.Type.TACAN,
+                self.BeaconChannel,
+                UTILS.TACANToFrequency(self.BeaconChannel, self.BeaconMode), 
+                self.BeaconMode, 
+                ident,
+                18, 
+                false, 
+                false))
+        self.BeaconGroup:Route({ wp })
+    end
+
+    -- coord = coord:Translate(distance, hdg)
+    -- local ident = getBeaconIdent(self)
+    spawnAndActivateTACAN()
+-- Debug("nisse - DCAF.CSAR.DistressedGroup:ActivateBeacon :: ident: " .. Dump(ident))
+    -- CommandActivateTACAN(self.BeaconGroup, self.BeaconChannel, self.BeaconMode, ident)
     if self.BeaconTimeActive then
         local timeActive
         if isVariableValue(self.BeaconTimeActive) then
@@ -792,9 +827,13 @@ function DCAF.CSAR.DistressedGroup:DeactivateBeacon()
     end
 end
 
-function DCAF.CSAR.DistressedGroup:Start()
+function DCAF.CSAR.DistressedGroup:Start(options)
     if self.State ~= CSAR_State.Initializing then
         error("DCAF.CSAR.DistressedGroup:Start :: cannot activate group in distress (CSAR story already activated)") end
+
+    local channel, mode = options:GetBeaconChannel()
+    self.BeaconChannel = channel
+    self.BeaconMode = mode
 
     if self.CSAR.Type == CSAR_Type.Land then
         local locClosest = findClosestSafeLocation(self)
@@ -1580,10 +1619,11 @@ local CSAR_Ongoing = {
 DCAF.CSAR.Options = {
     ClassName = "DCAF.CSAR.Options",
     NotifyScope = nil,          -- #GROUP (, group name,) or #Coalition
-    BeaconChannels = { "17", "27Y", "37Y", "47Y", "57Y", "67Y", "77Y" },
+    BeaconChannels = { "17Y", "27Y", "37Y", "47Y", "57Y", "67Y", "77Y" },
     Codewords = CSAR_DefaultCodewords,
     DelayRescueMission = -1,    -- #number or #VariableValue - time before a rescue mission launches (-1 = not started automatically)
-    DelayCaptureMission = VariableValue:New(Minutes(10), .5) -- #number or #VariableValue - time before capture mission launches (not started if DistressedGroupTemplate.CanBeCatured is false)
+    DelayCaptureMission = VariableValue:New(Minutes(10), .5), -- #number or #VariableValue - time before capture mission launches (not started if DistressedGroupTemplate.CanBeCatured is false)
+    AutoSpawnRescueResources = true
 }
 
 function DCAF.CSAR:New(startLocation, name, distressedGroupTemplate, bCanBeCaptured, smoke, flares)
@@ -1603,11 +1643,6 @@ function DCAF.CSAR:New(startLocation, name, distressedGroupTemplate, bCanBeCaptu
     else
         csar.DistressedGroup = DCAF.CSAR.DistressedGroup:New(name, csar, distressedGroupTemplate, startLocation, bCanBeCaptured, smoke, flares)
     end
-    local dg = csar.DistressedGroup
-    if not dg.BeaconTemplate and self.DistressBeaconTemplate then
-        local t = self.DistressBeaconTemplate
-        dg:WithBeacon(t.BeaconTemplate, t.BeaconTimeActive, t.BeaconTimeInactive)
-    end
     table.insert(CSAR_Ongoing, csar)
     return csar
 end
@@ -1616,14 +1651,19 @@ end
 function DCAF.CSAR:Start(options)
     self.Options = options or DCAF.CSAR.Options:New()
     if not self.Name then
-Debug("nisse - DCAF.CSAR:Start :: self.Options.Codewords: " .. DumpPrettyDeep(self.Options.Codewords))
+-- Debug("nisse - DCAF.CSAR:Start :: self.Options.Codewords: " .. DumpPrettyDeep(self.Options.Codewords))
 
         self.Name = self:GetNextRandomCodeword()
     end
-    self.DistressedGroup:Start()
+    local dg = self.DistressedGroup
+    -- if not dg.BeaconTemplate and self.DistressBeaconTemplate then
+    --     local t = self.DistressBeaconTemplate
+    --     dg:WithBeacon(t.BeaconTemplate, t.BeaconTimeActive, t.BeaconTimeInactive)
+    -- end
+    self.DistressedGroup:Start(options)
+    -- self.TriggerRescueMission(options)
     Debug("DCAF.CSAR:Start :: " .. self.Type .. " type CSAR started :: name: " .. self.Name)
 end
-
 
 function DCAF.CSAR.Options:New(notifyScope, codewords, beaconChannels)
     local options = DCAF.clone(DCAF.CSAR.Options)
@@ -1667,6 +1707,26 @@ function DCAF.CSAR.Options:WithCodewords(codewords, singleUse)
     end
 -- Debug("DCAF.CSAR.Options:WithCodewords :: codewords: " .. DumpPrettyDeep(self.Codewords, 2))
     return self
+end
+
+function DCAF.CSAR.Options:WithAutoSpawnRescueResources(value)
+    if not isBoolean(value) then
+        value = DCAF.CSAR.Options.AutoSpawnRescueResources
+    end
+    self.AutoSpawnRescueResources = value
+end
+
+function DCAF.CSAR.Options:GetBeaconChannel()
+    local next = DCAF.CSAR.Options._nextBeaconChannel
+    if not next then
+        next = 0
+    end
+    next = next+1
+    if next > #DCAF.CSAR.Options.BeaconChannels then
+        next = 1
+    end
+    DCAF.CSAR.Options._nextBeaconChannel = next
+    return ParseTACANChannelAndMode(DCAF.CSAR.Options.BeaconChannels[next])
 end
 
 local CSAR_EjectedPilots = { -- dictionary
@@ -1786,7 +1846,7 @@ Debug("nisse - DCAF.CSAR:NewOnPilotEjects :: options.Codewords: " .. DumpPrettyD
         local coalition = Coalition.Resolve(hit.Coalition)
         if not coordRef then
             Warning("DCAF.CSAR:NewOnPilotEjects :: no coordinate found for UNIT: '" .. event.IniUnitName .. "' :: EXITS")
-            return 
+            return
         end
         simulateEjectedPilotLanding(coordRef, function(coordLanding) 
 -- if coordLanding:IsSurfaceTypeWater() then
@@ -1806,10 +1866,11 @@ Debug("nisse - DCAF.CSAR:NewOnPilotEjects :: options.Codewords: " .. DumpPrettyD
             end
         end)
     end)
+    return self
 end
 
 function DCAF.CSAR:GetNextRandomCodeword(singleUse)
-Debug("nisse - DCAF.CSAR:GetNextRandomCodeword :: Codewords: " .. DumpPretty(self.Options.Codewords))
+-- Debug("nisse - DCAF.CSAR:GetNextRandomCodeword :: Codewords: " .. DumpPretty(self.Options.Codewords))
     if DCAF.Codewords and isClass(self.Options.Codewords, DCAF.CodewordTheme.ClassName) then
         return self.Options.Codewords:GetNextRandom()
     elseif isList(self.Options.Codewords) then
@@ -1831,6 +1892,25 @@ Debug("nisse - DCAF.CSAR:GetNextRandomCodeword :: Codewords: " .. DumpPretty(sel
         end
         return codeword
     end
+end
+
+function DCAF.CSAR:TriggerRescueResources(options)
+    if not options.AutoSpawnRescueResources then
+        return end
+
+    
+
+    -- DCAF.CSAR.RescueGroup:New(csar, "BLUE Rescue Blackhawk", distressed) --, Nellis)
+--                      :WithRTB(Nellis)
+--                      :Start(Knots(300))
+-- DCAF.CSAR.RescueGroup:New(csar, "BLUE Rescue Apache", distressed) --, Nellis)
+--                      :WithRTB(Nellis)
+--                      :WithCapabilities(false) -- cannot pickup unit (Apaches can't transport)
+--                      :Start(Knots(300))
+-- DCAF.CSAR.RescueGroup:New(csar, "BLUE Rescue Apache", distressed) --, Nellis)
+--                      :WithRTB(Nellis)
+--                      :WithCapabilities(false) -- cannot pickup unit (Apaches can't transport)
+--                      :Start(Knots(300))        
 end
 
 function DCAF.CSAR:DirectCapableHuntersToCapture()
@@ -1944,8 +2024,8 @@ function DCAF.CSAR.InitDistressedGroup(groundTemplate, waterTemplate)
 end
 
 function DCAF.CSAR.InitDistressBeacon(beaconTemplate, timeActive, timeInactive)
-    self.DistressBeaconTemplate = CSAR_DistressBeaconTemplate:New(beaconTemplate, timeActive, timeInactive)
-    return self
+    DCAF.CSAR.DistressBeaconTemplate = CSAR_DistressBeaconTemplate:New(beaconTemplate, timeActive, timeInactive)
+    return DCAF.CSAR
 end
 
 local function newSearchResource(resource, sTemplate, locations, maxAvailable, maxRange, skill, isBeaconTuned)
