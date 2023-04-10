@@ -6028,7 +6028,11 @@ function RTBNow(controllable, airbase, onLandedFunc, altitude, altitudeType)
         local appoachAltType = COORDINATE.WaypointAltType.BARO
         local approachDistance
         local approachAltitude
-        if distance > NauticalMiles(25) or group:GetAltitude(true) > Feet(15000) then
+        if airbase.isHelipad and group:IsHelicopter() then
+            approachDistance = 1000
+            approachAltitude = Feet(500)
+            appoachAltType = COORDINATE.WaypointAltType.RADIO
+        elseif distance > NauticalMiles(25) or group:GetAltitude(true) > Feet(15000) then
             -- approach waypoint 25nm from airbase...
             approachDistance = NauticalMiles(25)
             approachAltitude = Feet(15000)
@@ -6054,10 +6058,11 @@ function RTBNow(controllable, airbase, onLandedFunc, altitude, altitudeType)
         approachWP = approachCoord:WaypointAirTurningPoint(appoachAltType, Knots(250))
         initialWP.name = "INITIAL"
         approachWP.name = "APPROACH"
-        table.insert(route, initialWP)
-        table.insert(route, approachWP)
-        table.insert(route, landingWp)
-        return route
+        return { initialWP, approachWP, landingWp }
+        -- table.insert(route, initialWP) obsolete
+        -- table.insert(route, approachWP)
+        -- table.insert(route, landingWp)
+        -- return route
     end
 
     local landingWp
