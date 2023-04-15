@@ -2823,7 +2823,7 @@ function LandHere( controllable, category, coalition )
     local landHere = {
         ["airdromeId"] = ab.AirdromeID,
         ["action"] = "Landing",
-        ["alt_type"] = "BARO",
+        ["alt_type"] = COORDINATE.WaypointAltType.BARO,
         ["y"] = abCoord.y,
         ["x"] = abCoord.x,
         ["alt"] = ab:GetAltitude(),
@@ -5624,6 +5624,7 @@ function DCAF_ServiceTrack:Execute(direct) -- direct = service will proceed dire
     local wpOffset = 1
     local startWpIndex = self.StartWpIndex
     startWpIndex = startWpIndex + wpOffset -- this is to harmonize with WP numbers on map (1st WP on map is zero - 0)
+Debug("nisse - DCAF_ServiceTrack:Execute :: waypoints: " .. DumpPrettyDeep(waypoints, 2))    
     if startWpIndex > #waypoints then
         error("DCAF.Tanker:SetTrack :: start waypoint must be within route (route is " .. Dump(#waypoints) .. " waypoints, startWp was ".. Dump(startWpIndex) .. ")") end
 
@@ -5835,7 +5836,7 @@ end
 
 --- Activates Tanker at specified waypoint (if not set, the tanker will activate as it enters its track - see: SetTrack)
 --- Please note that the WP should preceed the Track start WP for this to make sense 
-function DCAF.Tanker:ActivateService(nServiceWp)
+function DCAF.Tanker:ActivateService(nServiceWp, waypoints)
     if not isNumber(nServiceWp) then
         error("DCAF.Tanker:ActivateService :: `nActivateWp` must be number but was " .. type(nServiceWp)) end
 
@@ -5843,7 +5844,10 @@ function DCAF.Tanker:ActivateService(nServiceWp)
         error("DCAF.Tanker:ActivateService :: `nActivateWp` must be a positive non-zero value") end
 
     nServiceWp = nServiceWp+1
-    local waypoints, route = self:GetWaypoints()
+    local route
+    if not isTable(waypoints) then
+        waypoints, route = self:GetWaypoints()
+    end
     if nServiceWp > #waypoints then
         error("DCAF.Tanker:ActivateService :: `nActivateWp` must be a WP of the (currently there are " .. #waypoints .. " waypoints in route") end
 
@@ -5949,7 +5953,7 @@ function WaypointLandAt(source) -- todo Consider using MOOSE's COORDINATE:Waypoi
             ["speed_locked"] = true,
             ["airdromeId"] = nAirbaseID,
             ["action"] = "Landing",
-            ["alt_type"] = "BARO",
+            ["alt_type"] = COORDINATE.WaypointAltType.BARO,
             ["y"] = vec2.x,
             ["x"] = vec2.y,
             ["alt"] = airbase:GetAltitude(),
@@ -6059,10 +6063,6 @@ function RTBNow(controllable, airbase, onLandedFunc, altitude, altitudeType)
         initialWP.name = "INITIAL"
         approachWP.name = "APPROACH"
         return { initialWP, approachWP, landingWp }
-        -- table.insert(route, initialWP) obsolete
-        -- table.insert(route, approachWP)
-        -- table.insert(route, landingWp)
-        -- return route
     end
 
     local landingWp
@@ -6087,15 +6087,15 @@ function RTBNow(controllable, airbase, onLandedFunc, altitude, altitudeType)
         end
     end
     local waypoints = buildRoute(airbase, landingWp)
-Debug("nisse - RTBNow :: group: " .. group.GroupName .. " :: route: " .. DumpPrettyDeep(waypoints))
+-- Debug("nisse - RTBNow :: group: " .. group.GroupName .. " :: route: " .. DumpPrettyDeep(waypoints))
     group:Route(waypoints)
-    return group
+    return group, waypoints
 end
 
 local function serviceRTB(service, airbase, onLandedFunc)
+    local _, waypoints = RTBNow(service.Group, airbase or service.RTBAirbase, onLandedFunc)
     CommandDeactivateBeacon(service.Group)
-    RTBNow(service.Group, airbase or service.RTBAirbase, onLandedFunc)
-    return self
+    return service, waypoints
 end
 
 local function serviceSpawnReplacement(service, funcOnSpawned, nDelay)
@@ -6125,11 +6125,39 @@ local function serviceSpawnReplacement(service, funcOnSpawned, nDelay)
 end
 
 function DCAF.Tanker:RTB(airbase, onLandedFunc, route)
+    local _
+    local waypoints
+-- Debug("nisse - DCAF.Tanker:RTB :: DCAF.Tanker:RTB :: waypoints: " .. DumpPretty(waypoints))
     if isTable(route) then
-        self:SetRoute(route)
-        return self
+        self:SetRoute(route)    
+        waypoints = route.Waypoints
+-- Debug("nisse - DCAF.Tanker:RTB :: route :: name: " .. route.Name .. " :: waypoints: " .. DumpPrettyDeep(waypoints, 3))
+    else
+        _, waypoints = serviceRTB(self, airbase, onLandedFunc)
     end
-    return serviceRTB(self, airbase, onLandedFunc)
+-- Debug("nisse - DCAF.Tanker:RTB :: tanker.Behavior: " .. DumpPretty(self.Behavior.Availability))
+    if self.Behavior.Availability == DCAF.AirServiceAvailability.Always and not self.IsBingo then
+        -- inject new 'ACTIVATE' WP, to ensure tankers keeps serving fuel while RTB...
+        local wp1 = waypoints[1]
+        local coord = self.Group:GetCoordinate()
+        local hdg = self.Group:GetHeading() --  coord:GetHeadingTo(COORDINATE_FromWaypoint(wp1))
+        local speed = self.Group:GetUnit(1):GetVelocityKMH()
+        local wpStart = coord:WaypointAirTurningPoint(COORDINATE.WaypointAltType.BARO, speed)
+        local wpActivate = coord:Translate(NauticalMiles(1), hdg):WaypointAirTurningPoint(COORDINATE.WaypointAltType.BARO, speed)
+-- wpActivate.name = "nisse_activate"        
+        table.insert(waypoints, 1, wpStart)
+        table.insert(waypoints, 2, wpActivate)
+        -- todo consider deactivating at some waypoint near the homeplate
+-- Debug("nisse - DCAF.Tanker:RTB :: activates tanker :: waypoints: " .. DumpPrettyDeep(waypoints, 2))
+        self:ActivateService(1, waypoints)
+    end
+
+    return self
+end
+
+function DCAF.Tanker:RTBBingo(airbase, onLandedFunc, route)
+    self.IsBingo = true
+    return self:RTB(airbase, onLandedFunc, route)
 end
 
 function DCAF.Tanker:DespawnOnLanding(nDelaySeconds)
@@ -6635,9 +6663,9 @@ function DCAF.TankerTrack:ActivateAir(tankerInfo, behavior)
     coordSpawn:SetAltitude(Feet(20000))
     local group = DCAF.Tanker:FindGroupWithCallsign(tankerInfo.Callsign, tankerInfo.Number)
     local spawn = getSpawn(group.GroupName)
-    spawn:InitGroupHeading(self.Heading)
-    local wp0 = coordSpawn:WaypointAirFlyOverPoint("BARO", 350)
-    local wp1 = self.CoordIP:WaypointAirFlyOverPoint("BARO", 350)
+    spawn:InitHeading(self.Heading, self.Heading)
+    local wp0 = coordSpawn:WaypointAirFlyOverPoint(COORDINATE.WaypointAltType.BARO, 350)
+    local wp1 = self.CoordIP:WaypointAirFlyOverPoint(COORDINATE.WaypointAltType.BARO, 350)
     local wp2
     if not isClass(behavior, DCAF.AirServiceBehavior.ClassName) then
         behavior = self.DefaultBehavior or DCAF.AirServiceBehavior:New()
@@ -6649,7 +6677,7 @@ function DCAF.TankerTrack:ActivateAir(tankerInfo, behavior)
             -- inject nearby WP to activate service ...
             wp2 = wp1
             local coordActivate = coordSpawn:Translate(NauticalMiles(.5), self.Heading)
-            wp1 = coordActivate:WaypointAirFlyOverPoint("BARO", 350)
+            wp1 = coordActivate:WaypointAirFlyOverPoint(COORDINATE.WaypointAltType.BARO, 350)
             trackIP = 2
         else
             error("DCAF.TankerTrack:ActivateAir :: unsupported availabilty behavior: " .. DumpPretty(availability))
@@ -6676,7 +6704,7 @@ function DCAF.TankerTrack:ActivateAir(tankerInfo, behavior)
     end
     if tankerInfo.Tanker.Behavior.BingoFuelState > 0 then
         tankerInfo.Tanker:OnFuelState(tankerInfo.Tanker.Behavior.BingoFuelState, function(tanker)
-            tanker:RTB(tankerInfo.Tanker.Behavior.RtbAirdrome)
+            tanker:RTBBingo(tankerInfo.Tanker.Behavior.RtbAirdrome)
         end)
     end
     tankerInfo.Tanker:Start()
@@ -6698,7 +6726,7 @@ function DCAF.TankerTrack:ActivateAirbase(tankerInfo, route, behavior)
 
     local function trackIngressWaypoints()
         local revHdg = ReciprocalAngle(self.Heading)
-        wpIP = self.CoordIP:WaypointAirFlyOverPoint("BARO", UTILS.KnotsToKmph(350))
+        wpIP = self.CoordIP:WaypointAirFlyOverPoint(COORDINATE.WaypointAltType.BARO, UTILS.KnotsToKmph(350))
         wpIP.name = "TRACK IP"
         local coordIngress = self.CoordIP:Translate(NauticalMiles(15), revHdg)
         coordIngress:SetAltitude(Feet(20000))
@@ -6753,7 +6781,7 @@ function DCAF.TankerTrack:ActivateAirbase(tankerInfo, route, behavior)
         if distance > 20 then
             local heading = coord0:HeadingTo(coordIP)
             local coordActivate = coord0:Translate(NauticalMiles(10))
-            local wpActivate = coord0:Translate(NauticalMiles(10), heading):SetAltitude(Feet(15000)):WaypointAirFlyOverPoint("BARO", UTILS.KnotsToKmph(350))
+            local wpActivate = coord0:Translate(NauticalMiles(10), heading):SetAltitude(Feet(15000)):WaypointAirFlyOverPoint(COORDINATE.WaypointAltType.BARO, UTILS.KnotsToKmph(350))
             table.insert(waypoints, 2, wpActivate)
         end
     end
@@ -6777,7 +6805,7 @@ function DCAF.TankerTrack:ActivateAirbase(tankerInfo, route, behavior)
     end
     if tankerInfo.Tanker.Behavior.BingoFuelState > 0 then
         tankerInfo.Tanker:OnFuelState(tankerInfo.Tanker.Behavior.BingoFuelState, function(tanker)
-            tanker:RTB(tankerInfo.Tanker.Behavior.RtbAirdrome)
+            tanker:RTBBingo(tankerInfo.Tanker.Behavior.RtbAirdrome)
         end)
     end
     tankerInfo.Tanker:Start()
@@ -6800,13 +6828,13 @@ function DCAF.TankerTrack:Reassign(tankerInfo)
     local coordIngress = self.CoordIP:Translate(NauticalMiles(15), revHdg):SetAltitude(alt) -- todo Consider setting correct entry altitude
     local heading = tankerInfo.Group:GetHeading() -- coord:GetHeadingTo(coordIngress)
     local group = tankerInfo.Group
-    local wp0 = coord:Translate(100, heading):SetAltitude(alt):WaypointAirFlyOverPoint("BARO", speed) -- pointless "inital" waypoint
+    local wp0 = coord:Translate(100, heading):SetAltitude(alt):WaypointAirFlyOverPoint(COORDINATE.WaypointAltType.BARO, speed) -- pointless "inital" waypoint
     wp0.name = "INIT"
-    local wpReassign = coord:Translate(NauticalMiles(.5), heading):SetAltitude(alt):WaypointAirFlyOverPoint("BARO", speed)
+    local wpReassign = coord:Translate(NauticalMiles(.5), heading):SetAltitude(alt):WaypointAirFlyOverPoint(COORDINATE.WaypointAltType.BARO, speed)
     wpReassign.Name = "REASSIGN"
-    local wpIngress = coordIngress:WaypointAirFlyOverPoint("BARO", speed)
+    local wpIngress = coordIngress:WaypointAirFlyOverPoint(COORDINATE.WaypointAltType.BARO, speed)
     wpIngress.name = "INGRESS"
-    local wpTrack = self.CoordIP:WaypointAirFlyOverPoint("BARO", speed)
+    local wpTrack = self.CoordIP:WaypointAirFlyOverPoint(COORDINATE.WaypointAltType.BARO, speed)
     local waypoints = { wp0, wpIngress, wpTrack }
     local trackIP = 2
     local availability = tankerInfo.Tanker.Behavior.Availability
@@ -6814,7 +6842,7 @@ function DCAF.TankerTrack:Reassign(tankerInfo)
         -- inject nearby WP to activate service ...
         table.insert(waypoints, 2, wpReassign)
         trackIP = 3
-    else
+    elseif availability ~= DCAF.AirServiceAvailability.InTrack then
         error("DCAF.TankerTrack:ActivateAir :: unsupported availabilty behavior: " .. DumpPretty(availability))
     end
     tankerInfo.Tanker:SetRoute(waypoints)
@@ -7172,6 +7200,7 @@ local function buildTankerMenus(caption, scope)
                     if airServiceBase.RTBRoutes and #airServiceBase.RTBRoutes > 0 then
                         local rtbMenu = DCAF.MENU:New(rtbMenu or menuTrack)
                         for _, rtbRoute in ipairs(airServiceBase.RTBRoutes) do
+Debug("nisse - MENU :: rtbRoute :: name: " .. rtbRoute.Name .. " :: waypoints: " .. DumpPrettyDeep(rtbRoute.Waypoints, 3))
                              if group then
                                 rtbMenu:GroupCommand(group, menuText .. " (" .. rtbRoute.Name .. ")", sendTankerHome, airbaseName, rtbRoute)
                              else
