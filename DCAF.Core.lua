@@ -6021,29 +6021,36 @@ function RTBNow(controllable, airbase, onLandedFunc, altitude, altitudeType)
 
         local route = {}
         local arriveWP
-        local approachWP
+        local wpApproach
         landingWp = landingWp or WaypointLandAt(airbase)
         if not landingWp then
             error("RTBNow-"..group.GroupName.." :: cannot create landing waypoint for airbase: " .. DumpPretty(airbase)) end
 
         local abCoord = airbase:GetCoordinate()
         local bearing, distance = GetBearingAndDistance(airbase, group)
-        local approachCoord 
+        local coordApproach 
         local appoachAltType = COORDINATE.WaypointAltType.BARO
         local approachDistance
-        local approachAltitude
+        local altApproach
+        local defaultAltitude
+        if isNumber(altitude) then
+            defaultAltitude = altitude
+        elseif group:IsAirPlane() then
+            defaultAltitude = Feet(15000)
+        elseif group:IsHelicopter() then
+            defaultAltitude = Feet(500)
+        end
+        altApproach = altitude or defaultAltitude
         if airbase.isHelipad and group:IsHelicopter() then
+-- Debug("nisse - RTB to helopad")            
             approachDistance = 1000
-            approachAltitude = Feet(500)
             appoachAltType = COORDINATE.WaypointAltType.RADIO
         elseif distance > NauticalMiles(25) or group:GetAltitude(true) > Feet(15000) then
             -- approach waypoint 25nm from airbase...
             approachDistance = NauticalMiles(25)
-            approachAltitude = Feet(15000)
         else 
             -- approach 10nm from airbase...
             approachDistance = NauticalMiles(15)
-            approachAltitude = Feet(4000)
             appoachAltType = COORDINATE.WaypointAltType.RADIO
         end
         local landingRWY = airbase:GetActiveRunwayLanding()
@@ -6052,17 +6059,18 @@ function RTBNow(controllable, airbase, onLandedFunc, altitude, altitudeType)
         else
             bearing = ReciprocalAngle(bearing)
         end
-        approachCoord = abCoord:Translate(approachDistance, bearing)
-        approachCoord:SetAltitude(approachAltitude)
+        coordApproach = abCoord:Translate(approachDistance, bearing)
+        coordApproach:SetAltitude(altApproach)
         -- we need an 'initial' waypoint (or the approachWP is ignored by DCS) ...
-        local initialVelocity = math.max(Knots(250), group:GetVelocityMPS())
-        local initialCoord = approachCoord:Translate(NauticalMiles(1), bearing, approachAltitude)
-        initialCoord:SetAltitude(math.max(group:GetAltitude(), Feet(15000)))
-        local initialWP = initialCoord:WaypointAirTurningPoint(appoachAltType, initialVelocity)
-        approachWP = approachCoord:WaypointAirTurningPoint(appoachAltType, Knots(250))
-        initialWP.name = "INITIAL"
-        approachWP.name = "APPROACH"
-        return { initialWP, approachWP, landingWp }
+        
+        local speedInitial = math.max(Knots(250), group:GetVelocityKMH())
+        local coordInitial = coordApproach:Translate(NauticalMiles(1), bearing, altApproach)
+        coordInitial:SetAltitude(math.max(group:GetAltitude(), altApproach))
+        local wpInitial = coordInitial:WaypointAirTurningPoint(appoachAltType, speedInitial)
+        wpApproach = coordApproach:WaypointAirTurningPoint(appoachAltType, Knots(250))
+        wpInitial.name = "INITIAL"
+        wpApproach.name = "APPROACH"
+        return { wpInitial, wpApproach, landingWp }
     end
 
     local landingWp
@@ -7132,8 +7140,6 @@ local function buildTankerMenus(caption, scope)
             error("buildTankerMenus :: unrecognized `scope` (expected #Coalition or #GROUP/group name): " .. DumpPretty(scope)) end
 
         testCoalition = group:GetCoalition()
-    -- else
-    --     testCoalition = Coalition.ToNumber(testCoalition)
     end
     local tracks = sortedTracks()
     if _tanker_menu then
@@ -7854,6 +7860,7 @@ function DCAF.CodewordTheme:GetNextRandom()
     end
     return codeword
 end
+
 
 -------------- LOADED
 
