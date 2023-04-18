@@ -9,11 +9,11 @@ DCAF.Precipitation = {
 }
 
 local CSAR_State = {
-    Searching = "Searching",        -- distressed group is not yet located
-    Located = "Located",            -- distressed group has been located (but is not yet rescued)
-    Captured = "Captured",          -- FAIL - distressed group was captured
-    Rescued = "Rescued",            -- distressed group was rescued, but is not yet safe
-    Safe = "Safe"                   -- SUCCESS - distressed group has returned to safe location
+    Searching = "Searching",            -- distressed group is not yet located
+    Located = "Located",                -- distressed group has been located (but is not yet rescued)
+    Rescued = "Rescued",                -- distressed group was rescued, but is not yet safe
+    Captured = "Captured",              -- FAIL - distressed group was captured
+    Safe = "Safe"                       -- SUCCESS - distressed group has returned to safe location
 }
 
 local CSAR_DistressedGroupState = {
@@ -36,6 +36,16 @@ local CSAR_Type = {
     Water = "Water"                     -- distressed group is in a life raft, in the water
 }
 
+CSAR_Trigger = {
+    Ejection = "Ejection",              -- CSAR mission is triggered when pilot ejects
+    Landing = "Landing",                -- CSAR mission is triggered when ejected pilot lands
+    Random = "Random"                   -- CSAR mission ir triggered randomly at Ejection or Landing
+}
+
+function CSAR_Trigger.IsValid(value)
+    return value == CSAR_Trigger.Ejection or value == CSAR_Trigger.Landing or value == CSAR_Trigger.Random
+end
+
 local CSAR_DefaultCodewords = { "Cinderella", "Pocahontas", "Ariel", "Anastasia", "Leia", "Astrid", "Fiona" }
 
 DCAF.CSAR = {
@@ -49,6 +59,18 @@ DCAF.CSAR = {
     RescueMissionTemplates = {},        -- list of #DCAF.CSAR.Mission
     CaptureMissionTemplates = {},       -- list of #DCAF.CSAR.Mission
     -- Weather = DCAF.Weather:Static()
+}
+
+DCAF.CSAR.Options = {
+    ClassName = "DCAF.CSAR.Options",
+    NotifyScope = nil,          -- #GROUP (, group name,) or #Coalition
+    BeaconChannels = { "17Y", "27Y", "37Y", "47Y", "57Y", "67Y", "77Y" },
+    Codewords = CSAR_DefaultCodewords,
+    DelayRescueMission = -1,    -- #number or #VariableValue - time before a rescue mission launches (-1 = not started automatically)
+    DelayCaptureMission = VariableValue:New(Minutes(10), .5), -- #number or #VariableValue - time before capture mission launches (not started if DistressedGroupTemplate.CanBeCatured is false)
+    AutoSpawnRescueResources = true,
+    Trigger = CSAR_Trigger.Landing,
+    TriggerRandom = .5                  -- only applies when Trigger == CSAR_Trigger.Random (0.0-value = Ejection; value-1.0 = Landing)
 }
 
 DCAF.CSAR.DistressedGroup = {
@@ -77,6 +99,10 @@ DCAF.CSAR.Mission = {
     Name = nil,
     MissionGroups = {},     -- list of #DCAF.CSAR.RescueGroup or #DCAF.CSAR.CaptureGroup
     Airbases = {}           -- list of #AIRBASE
+}
+
+local CSAR_Missions = {
+    -- list of #DCAF.CSAR.Mission
 }
 
 DCAF.CSAR.SearchGroupsTemnplate = {
@@ -172,6 +198,14 @@ function CSAR_Scheduler:Run()
     end
 end
 
+local function setState(csar, state)
+    if state == csar.State then
+        return end
+
+    csar.State = state
+    -- todo notify
+end
+
 function DCAF.Weather:Static()
     if DCAF.Weather._static then
         return DCAF.Weather._static
@@ -186,14 +220,14 @@ end
 --                                                                     DISTRESSED GROUP
 -- //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-local function setState(dg, state)
+local function setDistressedGroupState(dg, state)
     if state == dg.State then
         return end
 
     dg.State = state
-if DCAF.Debug then
-    MessageTo(nil, "CSAR group '" .. dg.CSAR.Name .. "' state: " .. state)
-end
+-- if DCAF.Debug then
+--     MessageTo(nil, "CSAR group '" .. dg.CSAR.Name .. "' state: " .. state)
+-- end
 end
 
 local function getSkillFactor(skill)
@@ -228,7 +262,7 @@ local function stopAndSpawn(dg, motivation)
     if not dg.Group:IsAlive() then
         error("DCAF.CSAR.DistressedGroup:Wait :: cannot activate CSAR for dead group: " .. dg.Group.GroupName) end
 
-    setState(dg, CSAR_DistressedGroupState.Stopped)
+    setDistressedGroupState(dg, CSAR_DistressedGroupState.Stopped)
     return dg
 end
 
@@ -639,7 +673,7 @@ local function despawnAndMove(dg)
     if dg.Group:IsAlive() then
         dg.Group:Destroy()
     end
-    setState(dg, CSAR_DistressedGroupState.Moving)
+    setDistressedGroupState(dg, CSAR_DistressedGroupState.Moving)
     scheduleDistressedGroup(dg)
 end
 
@@ -980,7 +1014,7 @@ function DCAF.CSAR.DistressedGroup:UseSignal(radius)
     end
 
     local sunPosition = coord:SunPosition()
-    setState(self, CSAR_DistressedGroupState.Attracting)
+    setDistressedGroupState(self, CSAR_DistressedGroupState.Attracting)
 Debug("nisse - DCAF.CSAR.DistressedGroup:UseSignal :: sunPosition: " .. Dump(sunPosition))
     if sunPosition < 5 then
         shootFlares()
@@ -1025,10 +1059,10 @@ function DCAF.CSAR.DistressedGroup:Pickup(sg)
     local searchUnits = sg.Group:GetUnits()
     self.CarrierUnit = listRandomItem(searchUnits)
     if isClass(sg, DCAF.CSAR.RescueGroup.ClassName) then
-        setState(self, CSAR_DistressedGroupState.Rescued)
+        setDistressedGroupState(self, CSAR_DistressedGroupState.Rescued)
         self:OnRescued(sg)
     else
-        setState(self, CSAR_DistressedGroupState.Captured)
+        setDistressedGroupState(self, CSAR_DistressedGroupState.Captured)
         self:OnCaptured(sg)
     end
 end
@@ -1761,22 +1795,13 @@ local CSAR_Ongoing = {
     -- list of #DCAF.CSAR
 }
 
-DCAF.CSAR.Options = {
-    ClassName = "DCAF.CSAR.Options",
-    NotifyScope = nil,          -- #GROUP (, group name,) or #Coalition
-    BeaconChannels = { "17Y", "27Y", "37Y", "47Y", "57Y", "67Y", "77Y" },
-    Codewords = CSAR_DefaultCodewords,
-    DelayRescueMission = -1,    -- #number or #VariableValue - time before a rescue mission launches (-1 = not started automatically)
-    DelayCaptureMission = VariableValue:New(Minutes(10), .5), -- #number or #VariableValue - time before capture mission launches (not started if DistressedGroupTemplate.CanBeCatured is false)
-    AutoSpawnRescueResources = true
-}
-
 function DCAF.CSAR:New(startLocation, name, distressedGroupTemplate, bCanBeCaptured, smoke, flares)
-    CSAR_Counter = CSAR_Counter+1
+    CSAR_Counter = CSAR_Counter + 1
     if not isAssignedString(name) then
         name = self:GetNextRandomCodeword()
     end
     local csar = DCAF.clone(DCAF.CSAR)
+    csar.Name = name
     csar.Weather = DCAF.Weather:Static()
     if startLocation.Coordinate:IsSurfaceTypeWater() then
         csar.Type = CSAR_Type.Water
@@ -1795,20 +1820,17 @@ end
 -- @options :: #DCAF.CSAR.Options
 function DCAF.CSAR:Start(options)
     self.Options = options or DCAF.CSAR.Options:New()
-    if not self.Name then
--- Debug("nisse - DCAF.CSAR:Start :: self.Options.Codewords: " .. DumpPrettyDeep(self.Options.Codewords))
-
-        self.Name = self:GetNextRandomCodeword()
-    end
     local dg = self.DistressedGroup
-    -- if not dg.BeaconTemplate and self.DistressBeaconTemplate then
-    --     local t = self.DistressBeaconTemplate
-    --     dg:WithBeacon(t.BeaconTemplate, t.BeaconTimeActive, t.BeaconTimeInactive)
-    -- end
-    self.DistressedGroup:Start(options)
-    self:TriggerRescueMissions(options)
+    -- self.DistressedGroup:Start(options)
+    if not options.IsMenuControlled then
+        self:TriggerRescueMissions(options)
+    end
     self:TriggerCaptureMissions(options)
     Debug("DCAF.CSAR:Start :: " .. self.Type .. " type CSAR started :: name: " .. self.Name)
+end
+
+function DCAF.CSAR:IsRescueLaunched()
+    return #self.RescueGroup > 0
 end
 
 function DCAF.CSAR.Options:New(notifyScope, codewords, beaconChannels)
@@ -1821,6 +1843,24 @@ function DCAF.CSAR.Options:New(notifyScope, codewords, beaconChannels)
         options.BeaconChannels = beaconChannels
     end
     return options
+end
+
+function DCAF.CSAR.Options:WithTrigger(trigger, randomValue)
+    if not CSAR_Trigger.IsValid(trigger) then
+        error("DCAF.CSAR.Options:WithTrigger :: invalid `trigger` value: " .. DumpPretty(trigger)) end
+
+    self.Trigger = trigger
+    if isNumber(randomValue) then
+        if randomValue < 0 or randomValue > 1.0 then
+            error("DCAF.CSAR.Options:WithTrigger :: invalid `randomValue`: " .. Dump(randomValue) .. " :: expected 0.0 - 1.0") end
+
+        self.TriggerRandom = randomValue
+    end
+    return self
+end
+
+function DCAF.CSAR.Options:IsTriggeredOnEjection()
+    return self.Trigger == CSAR_Trigger.Ejection
 end
 
 -- @codewords : #string (name of theme), #DCAF.CodewordTheme, or #list of #strings (codewords)
@@ -1952,6 +1992,13 @@ local function simulateEjectedPilotLanding(coordRef, funcOnLanded)
     CSAR_Scheduler:Run()
 end
 
+function DCAF.CSAR.MenuControlled(options, caption, scope, parentMenu)
+    options.IsMenuControlled = true
+    DCAF.CSAR.NewOnPilotEjects(options, function(csar)
+        DCAF.CSAR.BuildMenus(caption, scope, parentMenu)
+    end)
+end
+
 function DCAF.CSAR.NewOnPilotEjects(options, funcOnCreated)
 Debug("nisse - DCAF.CSAR:NewOnPilotEjects :: options.Codewords: " .. DumpPrettyDeep(options.Codewords))
 
@@ -1994,23 +2041,49 @@ Debug("nisse - DCAF.CSAR:NewOnPilotEjects :: options.Codewords: " .. DumpPrettyD
             Warning("DCAF.CSAR:NewOnPilotEjects :: no coordinate found for UNIT: '" .. event.IniUnitName .. "' :: EXITS")
             return
         end
-        simulateEjectedPilotLanding(coordRef, function(coordLanding) 
+
+        local csar
+        local function triggerCSAR(coordLanding)
+            local start = true
             local _, locRescue, locCapture = getEstimatedPilotLandingLocation(coordRef, coalition)
             options.RescueEstimateLocation = locRescue
             options.CaptureEstimateLocation = locCapture
-
-Debug("nisse - OnEjection :: coordRescue: " .. Dump(locRescue ~= nil) .. " :: coordCapture: " .. Dump(locCapture ~= nil))            
-
+Debug("nisse - CSAR trigger :: coordRescue: " .. Dump(locRescue ~= nil) .. " :: coordCapture: " .. Dump(locCapture ~= nil))
             local locStart = DCAF.Location:New(coordLanding)
-            local csar = DCAF.CSAR:New(locStart)
+            csar = DCAF.CSAR:New(locStart)
             local start = true
             if isFunction(funcOnCreated) then
                 start = funcOnCreated(csar) or true
             end
-
             if start then
                 csar:Start(options)
             end
+        end
+
+        local isTriggeredOnEjection = options:IsTriggeredOnEjection()
+        if isTriggeredOnEjection then
+            triggerCSAR()
+        end
+        simulateEjectedPilotLanding(coordRef, function(coordLanding) 
+            if not isTriggeredOnEjection then
+                triggerCSAR(coordLanding)
+            end
+            csar.DistressedGroup:Start(options)
+--             local _, locRescue, locCapture = getEstimatedPilotLandingLocation(coordRef, coalition) obsolete
+--             options.RescueEstimateLocation = locRescue
+--             options.CaptureEstimateLocation = locCapture
+
+-- Debug("nisse - OnEjection :: coordRescue: " .. Dump(locRescue ~= nil) .. " :: coordCapture: " .. Dump(locCapture ~= nil))            
+
+--             local locStart = DCAF.Location:New(coordLanding)
+--             local csar = DCAF.CSAR:New(locStart)
+--             local start = true
+--             if isFunction(funcOnCreated) then
+--                 start = funcOnCreated(csar) or true
+--             end
+--             if start then
+--                 csar:Start(options)
+--             end
         end)
     end)
     return self
@@ -2042,20 +2115,43 @@ function DCAF.CSAR:GetNextRandomCodeword(singleUse)
 end
 
 local function getClosestMission(locEstimate, tMissions)
-    local distanceMin = NauticalMiles(999)
+    local distanceMin = NauticalMiles(9999)
     local airbaseMin = nil
     local mission
-    for _, rmt in ipairs(tMissions) do
-        for _, ab in ipairs(rmt.Airbases) do
+    for _, msn in ipairs(tMissions) do
+        for _, ab in ipairs(msn.Airbases) do
             local distance = ab:GetCoordinate():Get2DDistance(locEstimate:GetCoordinate())
-            if distance < distanceMin then
+            if distance < distanceMin and distance < msn.Range then
                 airbaseMin = ab
                 distanceMin = distance
-                mission = rmt
+                mission = msn
             end
         end
     end
     return mission, airbaseMin
+end
+
+function DCAF.CSAR:StartRescueMission(mission, airbase)
+Debug("nisse - DCAF.CSAR:StartRescueMission :: mission: " .. DumpPretty(mission) .. " :: airbase: " .. Dump(airbase))
+
+    local msn = DCAF.clone(mission)
+    msn.Name = mission.Name
+    local locStart = DCAF.Location:New(airbase)
+    for _, missionGroupTemplate in ipairs(msn.MissionGroups) do
+        local count
+        if isNumber(missionGroupTemplate.Count) then
+            count = missionGroupTemplate.Count
+        else
+            count = 1
+        end
+Debug("nisse - DCAF.CSAR:StartRescueMission :: missionGroupTemplate: " .. DumpPretty(missionGroupTemplate) .. " :: count: " .. Dump(count))
+        for i = 1, count, 1 do
+            local rg = DCAF.CSAR.RescueGroup:NewFromTemplate(self, missionGroupTemplate, locStart)
+                                            :WithRTB(locStart)
+                                            :Start(Knots(300))
+            table.insert(self.RescueGroups, rg)
+        end
+    end
 end
 
 function DCAF.CSAR:TriggerRescueMissions(options)
@@ -2067,42 +2163,7 @@ function DCAF.CSAR:TriggerRescueMissions(options)
         Warning("DCAF.CSAR:TriggerRescueMissions :: " .. self.Name .." :: could not resolve a suitable rescue mission")
         return
     end
-    local locStart = DCAF.Location:New(airbase)
-    for _, missionGroupTemplate in ipairs(msn.MissionGroups) do
-        local count
-        if isNumber(missionGroupTemplate.Count) then
-            count = missionGroupTemplate.Count
-        else
-            count = 1
-        end
-Debug("DCAF.CSAR:TriggerRescueMissions :: missionGroupTemplate: " .. DumpPretty(missionGroupTemplate) .. " :: counr: " .. Dump(count))
-        for i = 1, count, 1 do
-            local rg = DCAF.CSAR.RescueGroup:NewFromTemplate(self, missionGroupTemplate, locStart)
-                                            :WithRTB(locStart)
-                                            :Start(Knots(300))    
-            end
-    end
-
-
-    -- DCAF.CSAR.RescueGroup:New(self,  "BLUE Rescue Blackhawk") --, Nellis)
---                      :WithRTB(Nellis)
---                      :Start(Knots(300))
-
-    --  options.RescueEstimateLocation = locRescue
-    -- options.CaptureAssumedLocation = locCapture
-
-
--- DCAF.CSAR.RescueGroup:New(csar, "BLUE Rescue Blackhawk", distressed) --, Nellis)
---                      :WithRTB(Nellis)
---                      :Start(Knots(300))
--- DCAF.CSAR.RescueGroup:New(csar, "BLUE Rescue Apache", distressed) --, Nellis)
---                      :WithRTB(Nellis)
---                      :WithCapabilities(false) -- cannot pickup unit (Apaches can't transport)
---                      :Start(Knots(300))
--- DCAF.CSAR.RescueGroup:New(csar, "BLUE Rescue Apache", distressed) --, Nellis)
---                      :WithRTB(Nellis)
---                      :WithCapabilities(false) -- cannot pickup unit (Apaches can't transport)
---                      :Start(Knots(300))        
+    self:StartMission(msn, airbase)
 end
 
 function DCAF.CSAR:TriggerCaptureMissions(options)
@@ -2182,7 +2243,7 @@ function CSAR_DistressBeaconTemplate:New(template, timeActive, timeInactive)
     return template
 end
 
-function DCAF.CSAR:InitSafeLocations(coalition, ...)
+function DCAF.CSAR.InitSafeLocations(coalition, ...)
     local c = Coalition.Resolve(coalition)
     if not c then 
         error("DCAF.CSAR:InitSafeLocations :: cannot resolve coalition from: " .. DumpPretty(coalition)) end
@@ -2204,7 +2265,7 @@ function DCAF.CSAR:InitSafeLocations(coalition, ...)
 
 end
 
-function DCAF.CSAR:InitDistressedGroup(groundTemplate, waterTemplate)
+function DCAF.CSAR.InitDistressedGroup(groundTemplate, waterTemplate)
 -- Debug("nisse - DCAF.CSAR:InitDistressedGroup :: groundTemplate: " .. DumpPrettyDeep(groundTemplate) .. " :: waterTemplate: " .. DumpPrettyDeep(waterTemplate))
 
     if isClass(groundTemplate, DCAF.CSAR.DistressedGroup.ClassName) then
@@ -2220,7 +2281,7 @@ function DCAF.CSAR:InitDistressedGroup(groundTemplate, waterTemplate)
 -- Debug("nisse - DCAF.CSAR:InitDistressedGroup :: CSAR_DistressedGroupTemplates: " .. DumpPrettyDeep(CSAR_DistressedGroupTemplates))    
 end
 
-function DCAF.CSAR:InitDistressBeacon(beaconTemplate, timeActive, timeInactive)
+function DCAF.CSAR.InitDistressBeacon(beaconTemplate, timeActive, timeInactive)
     DCAF.CSAR.DistressBeaconTemplate = CSAR_DistressBeaconTemplate:New(beaconTemplate, timeActive, timeInactive)
     return DCAF.CSAR
 end
@@ -2239,14 +2300,14 @@ local function initMissions(missionTable, ...)
         error("DCAF.CSAR.Mission:New :: expected at least one #" .. DCAF.CSAR.Mission.ClassName) end
 end
 
-function DCAF.CSAR:InitRescueMissions(...)
-    initMissions(self.RescueMissionTemplates, ...)
-    return self
+function DCAF.CSAR.InitRescueMissions(...)
+    initMissions(DCAF.CSAR.RescueMissionTemplates, ...)
+    return DCAF.CSAR
 end
 
-function DCAF.CSAR:InitCaptureMissions(...)
-    initMissions(self.CaptureMissionTemplates, ...)
-    return self
+function DCAF.CSAR.InitCaptureMissions(...)
+    initMissions(DCAF.CSAR.CaptureMissionTemplates, ...)
+    return DCAF.CSAR
 end
 
 -- @arg : one ore more #DCAF.CSAR.RescueGroup / #DCAF.CSAR.CaptureGroup
@@ -2255,6 +2316,7 @@ function DCAF.CSAR.Mission:New(name, ...)
     mission.Name  = name
     local isRescueGroup
     local count = 0
+    mission.Range = NauticalMiles(99999)
     for i = 1, #arg, 1 do
         local mg = arg[i]
         if not isClass(mg, DCAF.CSAR.RescueGroup.ClassName) and not isClass(mg, DCAF.CSAR.CaptureGroup.ClassName) then
@@ -2268,23 +2330,25 @@ function DCAF.CSAR.Mission:New(name, ...)
         elseif not isRescueGroup and isClass(mg, DCAF.CSAR.RescueGroup.ClassName) then
             error("DCAF.CSAR.Mission:New :: arg[" .. Dump(i) .. "] is a " .. DCAF.CSAR.RescueGroup.ClassName .. " :: mixing rescue/hunter groups is not allowed") 
         end
+        local range = mg.Group:GetRange() - NauticalMiles(20) -- we use a 20nm safety buffer
+        if range < mission.Range then
+            mission.Range = range
+        end
         table.insert(mission.MissionGroups, mg)
         count = count+1
     end
     if count == 0 then
         error("DCAF.CSAR.Mission:New :: expected at least one #" .. DCAF.CSAR.RescueGroup.ClassName .. " or #" .. DCAF.CSAR.CaptureGroup.ClassName) end
 
+    table.insert(CSAR_Missions, mission)
     return mission
 end
 
 -- @arg : #strings (airbase names) or #AIRBASEs
 function DCAF.CSAR.Mission:AddAirbases(tAirbases)
     local count = 0
-    -- if #arg == 0 then
-    --     error("DCAF.CSAR.Mission:AddAirbases :: expected at least one #AIRBASE") end
-
+Debug("DCAF.CSAR.Mission:AddAirbases :: " .. self.Name .. " :: tAirbases: " .. DumpPretty(tAirbases))
     for i, item in ipairs(tAirbases) do
-Debug("nisse - item: " .. Dump(item.ClassName))
 
         local airbase
         if isAssignedString(item) then
@@ -2298,17 +2362,14 @@ Debug("nisse - item: " .. Dump(item.ClassName))
         if not airbase then
             error("DCAF.CSAR.Mission:AddAirbases :: arg[" .. Dump(i) .. "] is neither #string (airbase name) nor #" .. AIRBASE.ClassName)  end
 
-        table.insert(self.Airbases, item)
+        table.insert(self.Airbases, airbase)
         count = count+1
     end
     if count == 0 then
         error("DCAF.CSAR.Mission:AddAirbases :: expected at least one #string (airbase name) or #" .. AIRBASE.ClassName) end
 
-    -- if isList(arg[1]) then
-    --     addAirbasesToMission(self, arg[1])
-    -- else
-    --     addAirbasesToMission(self, {...})
-    -- end
+Debug("DCAF.CSAR.Mission:AddAirbases :: " .. self.Name .. " self.Airbases: " .. DumpPretty(self.Airbases))
+
     return self
 end
 
@@ -2380,57 +2441,178 @@ local CSAR_Menu = {
     }
 }
 
-local _csar_menu
+local _csarMainMenu
 
 local function sortedCSAR()
-    table.sort(CSAR_Ongoing, function(a, b) 
-        if a and b then
-            if a.IsActive and not b.IsActive then
-                return true
-            elseif b.IsActive and not a.IsActive then
-                return false
-            else
-                local result = a.Name < b.Name
-                return result
-            end
-        elseif a then 
-            return true
-        else 
-            return false 
-        end
-    end)
-    return DCAF.TankerTracks
+    -- table.sort(CSAR_Ongoing, function(a, b) 
+    --     if a and b then
+    --         if a.IsActive and not b.IsActive then
+    --             return true
+    --         elseif b.IsActive and not a.IsActive then
+    --             return false
+    --         else
+    --             local result = a.Name < b.Name
+    --             return result
+    --         end
+    --     elseif a then 
+    --         return true
+    --     else 
+    --         return false 
+    --     end
+    -- end)
+    return CSAR_Ongoing
 end
 
-local function buildCSARMenus(parentMenu, caption, scope)
+--[[
+    DCAF.CSAR.Mission = {
+    ClassName = "DCAF.CSAR.Mission",
+    Name = nil,
+    MissionGroups = {},     -- list of #DCAF.CSAR.RescueGroup or #DCAF.CSAR.CaptureGroup
+    Airbases = {}           -- list of #AIRBASE
+}
+]]
+
+local function sortedMissions(csar, tMissions)
+    local coordDG = csar.DistressedGroup._lastCoordinate
+
+    -- local function getClosestAirbaseDistance(msn)
+    --     -- assumes Airbses are sorted
+    --     local airbase = msn.Airbases[1]
+
+
+    --     local distanceClosest = NauticalMiles(9999)
+    --     local airbaseClosest
+    --     for _, airbase in ipairs(msn.Airbases) do
+    --         local coord = airbase:GetCoordinate()
+    --         local distance = coord:Get2DDistance(coordDG)
+    --         if distance < distanceClosest then
+    --             distanceClosest = distance
+    --             airbaseClosest = airbase
+    --         end
+    --     end
+    --     msn.ClosestAirbase = airbaseClosest
+    --     msn.ClosestAirbaseDistance = distanceClosest
+    --     return airbaseClosest, distanceClosest
+    -- end
+
+    local function sortAirbases(msn)
+        msn.AirbaseDistances = {}
+        if #msn.Airbases == 1 then
+            local airbase = msn.Airbases[1]
+            msn.AirbaseDistances[airbase.AirbaseName] = airbase:GetCoordinate():Get2DDistance(coordDG)
+            return
+        end
+        for _, airbase in ipairs(msn.Airbases) do
+            msn.AirbaseDistances[airbase.AirbaseName] = airbase:GetCoordinate():Get2DDistance(coordDG)
+        end
+        table.sort(msn.Airbases, function(ab1, ab2) 
+            return msn.AirbaseDistances[ab1.AirbaseName] < msn.AirbaseDistances[ab2.AirbaseName]
+        end)
+    end
+
+    if #tMissions == 1 then
+        sortAirbases(tMissions[1])
+        -- getClosestAirbaseDistance(tMissions[1])
+        return { tMissions[1] }
+    elseif #tMissions == 0 then
+        return {}
+    end
+
+    table.sort(tMissions, function(msn1, msn2) 
+Debug("nisse - sortedMissions :: msn1.Name: " .. Dump(msn1.Name) .. " :: msn2.Name: " .. Dump(msn2.Name))
+        if msn1 == nil then 
+            sortAirbases(msn2)
+            -- getClosestAirbaseDistance(msn2)
+            return false 
+        end
+
+        if msn2 == nil then
+            sortAirbases(msn1)
+            -- getClosestAirbaseDistance(msn1)
+            return true 
+        end
+        local dist1 = msn1.AirbaseDistances[msn1.Airbases[1].AirbaseName]
+        local dist2 = msn1.AirbaseDistances[msn2.Airbases[1].AirbaseName]
+        return dist1 < dist2
+    end)
+    return tMissions
+end
+
+local rebuildCSARMenus
+local function buildCSARMenus(caption, scope, parentMenu)
     if not isAssignedString(caption) then
         caption = "CSAR"
     end
     local testCoalition = Coalition.Resolve(scope, true)
-    local group
+    local controllerGroup
     if not testCoalition then
-        group = getGroup(scope)
-        if not group then
+        controllerGroup = getGroup(scope)
+        if not controllerGroup then
             error("buildCSARMenus :: unrecognized `scope` (expected #Coalition or #GROUP/group name): " .. DumpPretty(scope)) end
 
-        testCoalition = group:GetCoalition()
+        testCoalition = controllerGroup:GetCoalition()
     end
-    if _csar_menu then
-        _csar_menu:RemoveSubMenus()
-    else
-        if group then
-            _csar_menu = MENU_GROUP:New(group, caption)
+
+    local function menu(caption, parentMenu)
+        if controllerGroup then
+            return MENU_GROUP:New(controllerGroup, caption, parentMenu)
         else
-            _csar_menu = MENU_COALITION:New(testCoalition, caption)
+            return MENU_COALITION:New(testCoalition, caption, parentMenu)
         end
     end
-    local csar = sortedCSAR()
 
+    local function command(caption, parentMenu, func, ...)
+        if controllerGroup then
+            return MENU_GROUP_COMMAND:New(controllerGroup, caption, parentMenu, func, ...)
+        else
+            return MENU_COALITION_COMMAND:New(testCoalition, caption, parentMenu, func, ...)
+        end
+    end
+
+    local function startCSAR(csar, msn, airbase)
+        csar:StartRescueMission(msn, airbase)
+        rebuildCSARMenus(caption, scope, parentMenu)
+    end
+
+    if _csarMainMenu then
+        _csarMainMenu:RemoveSubMenus()
+    else
+        _csarMainMenu = menu(caption, parentMenu)
+    end
+    local activeCSAR = sortedCSAR()
+    for _, csar in ipairs(activeCSAR) do
+Debug("nisse - buildCSARMenus :: csar.Name: " .. Dump(csar.Name) .. " :: csar.RescueMissionTemplates: " .. DumpPrettyDeep(csar.RescueMissionTemplates, 2))
+        local csarMenu = menu(csar.Name, _csarMainMenu)
+        if not csar:IsRescueLaunched() then
+            -- rescue mission has not been started...
+            local rescueMissions = sortedMissions(csar, csar.RescueMissionTemplates)
+Debug("nisse - buildCSARMenus :: csar.Name: " .. Dump(csar.Name) .. " :: rescueMissions: " .. DumpPrettyDeep(rescueMissions, 1))
+            local count = 0
+            for _, msn in ipairs(rescueMissions) do
+Debug("nisse - buildCSARMenus :: csar.Name: " .. Dump(csar.Name) .. " :: msn.Airbases: " .. DumpPretty(msn.Airbases))
+                for _, airbase in ipairs(msn.Airbases) do
+                    local distance = msn.AirbaseDistances[airbase.AirbaseName]
+                    if distance <= msn.Range then
+                        local text = "Launch " .. msn.Name .. "\n    from " .. airbase.AirbaseName
+                        command(text, csarMenu, startCSAR, csar, msn, airbase)
+                        count = count + 1
+                    end
+                end
+            end
+        else
+            -- 
+        end
+    end
 
 end
+rebuildCSARMenus = buildCSARMenus
 
-
-function DCAF.CSAR:BuildMenus(parentMenu, caption, scope)
+function DCAF.CSAR.
+    BuildMenus(caption, scope, parentMenu)
+    if scope == nil then
+        scope = Coalition.Blue
+    end
+    buildCSARMenus(caption, scope, parentMenu)
     -- add 'CSAR' menu when distressed group is created
     -- start CSAR mission
 end
