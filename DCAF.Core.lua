@@ -327,6 +327,38 @@ function MachToKnots(mach)
     return 666.738661 * mach
 end
 
+function getMaxSpeed(source)
+
+    local function getUnitMaxSpeed(unit)
+        local unitDesc = Unit.getDesc(unit:GetDCSObject())
+        return unitDesc.speedMax
+-- Debug("nisse - getMaxSpeed :: dcsUnit: (" .. unit.UnitName .. ") " .. DumpPrettyDeep(unitDesc))        
+--         local velocityVec3 = dcsUnitDesc:getVelocity()
+--         local velocity = math.abs( velocityVec3.x ) + math.abs( velocityVec3.y ) + math.abs( velocityVec3.z )
+--         return velocity, unit
+    end
+
+    local unit = getUnit(source)
+    if unit then
+        return getUnitMaxSpeed(unit)
+    end
+
+    local group = getGroup(source)
+    if not group then
+        error("getMaxSpeed :: cannot resolve neither #UNIT nor #GROUP from `source: `" .. DumpPretty(source)) end
+
+    local slowestMaxSpeed = 999999
+    local slowestUnit
+    for _, u in ipairs(group:GetUnits()) do
+        local speedMax = getUnitMaxSpeed(u)
+        if speedMax < slowestMaxSpeed then
+            slowestMaxSpeed = speedMax
+            slowestUnit = u
+        end
+    end
+    return slowestMaxSpeed, slowestUnit
+end
+
 function Hours(seconds)
     if isNumber(seconds) then
         return seconds * 3600
@@ -646,15 +678,10 @@ function VariableValue:GetValue()
 end
 
 function Vec3_FromBullseye(aCoalition)
-    local c
-    local testCoalition = Coalition.Resolve(aCoalition)
-    if testCoalition then
-        c = Coalition.ToNumber(testCoalition)
-    elseif isNumber(aCoalition) then 
-        c = aCoalition
-    end
-    if c then
-        return coalition.getMainRefPoint(c)
+    local testCoalition = Coalition.Resolve(aCoalition, true)
+    if isNumber(testCoalition) then
+Debug("nisse - Vec3_FromBullseye :: gets bullseye for coalition: " .. Dump(aCoalition))
+        return coalition.getMainRefPoint(testCoalition)
     end
 end
 
@@ -822,10 +849,59 @@ function COORDINATE_FromWaypoint(wp)
     return COORDINATE:New(wp.x, wp.alt, wp.y)
 end
 
-function COORDINATE_FromBullseye(anyCoalition)
-    local vec3 = Vec3_FromBullseye(anyCoalition)
+function COORDINATE_FromBullseye(aCoalition)
+    local vec3 = Vec3_FromBullseye(aCoalition)
     if vec3 then
         return COORDINATE:NewFromVec3(vec3)
+    end
+end
+
+function DCAF.GetBullseye(location, aCoalition)
+    local testLocation = DCAF.Location.Resolve(location)
+    if not testLocation then
+        error("DCAF.GetBullseye :: cannot resolve `location` from: " .. DumpPretty(location)) end
+
+    local be = COORDINATE:NewFromVec3(Vec3_FromBullseye(aCoalition))
+    local coord = location:GetCoordinate()
+    local bearing = be:HeadingTo(coord)
+    local distance = be:Get2DDistance(coord)
+    return bearing, UTILS.MetersToNM(distance), DCAF.GetBullseyeName(aCoalition)
+end
+
+function DCAF.GetBullseyeText(location, aCoalition)
+    local beBearing, beDistance, beName = DCAF.GetBullseye(location, aCoalition)
+    return string.format("%s %d %d", beName, beBearing, beDistance)
+end
+
+function DCAF.InitBullseyeName(sName, aCoalition)
+    if aCoalition == nil then
+        aCoalition = Coalition.Blue
+    else
+        aCoalition = Coalition.Resolve(aCoalition)
+        if not aCoalition then
+            error("DCAF.InitBullseyeName :: cannot resolve `aCoalition` from: " .. DumpPretty(aCoalition)) end
+    end
+
+    if not DCAF.BullseyeNames then
+        DCAF.BullseyeNames = {}
+    end
+    DCAF.BullseyeNames[aCoalition] = sName
+end
+
+function DCAF.GetBullseyeName(aCoalition)
+    if aCoalition == nil then
+        aCoalition = Coalition.Blue
+    else
+        local testCoalition = Coalition.Resolve(aCoalition)
+        if not testCoalition then
+            error("DCAF.InitBullseyeName :: cannot resolve `aCoalition` from: " .. DumpPretty(aCoalition)) end
+        
+        aCoalition = testCoalition
+    end
+    if DCAF.BullseyeNames and DCAF.BullseyeNames[aCoalition] then
+        return DCAF.BullseyeNames[aCoalition]
+    else
+        return "BULLSEYE" 
     end
 end
 
@@ -1223,7 +1299,7 @@ function getGroup( source )
         return source 
     end
     if (isUnit(source)) then 
-        return sourBuildF10MenusForCoalitionForCoalition 
+        return source:GetGroup()
     end
     if (not isAssignedString(source)) then 
         return end
@@ -1359,11 +1435,18 @@ function DCAF.Location:NewNamed(name, source, throwOnFail)
         location.Coordinate = source:GetCoordinate()
         location.Name = source.AirbaseName
         location.IsAir = false
+        -- location.IsAirdrome = true
         return location
-    elseif isGroup(source) or isUnit(source) or isAirbase(source) or isStatic(source) then
+    elseif isGroup(source) or isUnit(source) then
         location.Coordinate = source:GetCoordinate()
         location.Name = source.GroupName
         location.IsAir = source:IsAir()
+        location.IsControllable = true
+        return location
+    elseif isStatic(source) then
+        location.Coordinate = source:GetCoordinate()
+        location.Name = source.GroupName
+        location.IsStatic = true
         return location
     else
         -- try resolve source...
@@ -1422,7 +1505,8 @@ function DCAF.Location:IsAirborne(errorMargin)
     if not isNumber(errorMargin) then
         errorMargin = 5
     end
-    return self:GetAGL() > errorMargin
+    return self.Source:IsAirborne()
+    -- return self:GetAGL() > errorMargin
 end
 
 --- Examines a 'location' and returns a value to indicate it is "grounded" (not airborne)
@@ -2107,10 +2191,11 @@ function GetCallsign(source)
     else
         local group = getGroup(source)
         if not group then
-            error("GetCallsignNameAndNumber :: cannot resolve unit or group from " .. DumpPretty(source)) end
+            error("GetCallsign :: cannot resolve unit or group from " .. DumpPretty(source)) end
 
         unit = group:GetUnit(1)
     end
+
     local callsign = unit:GetCallsign()
     local name
     local number
@@ -2134,12 +2219,54 @@ end
 
 function IsTankerCallsign(controllable, ...)
     local group = getGroup(controllable)
-    local callsign = CALLSIGN.Tanker:FromString(GetCallsign(group))
+    if not group then
+        return false end
+
+    local groupCallsign, number = GetCallsign(group)
+    local tankerCallsign = CALLSIGN.Tanker:FromString(groupCallsign)
+    if not tankerCallsign then
+        return end
+
+    if #arg == 0 then
+        return tankerCallsign, number
+    end
+
     for i = 1, #arg, 1 do
-       if callsign == arg[i] then
-          return true
+       if tankerCallsign == arg[i] then
+          return tankerCallsign, number
        end
     end
+ end
+
+ function IsAWACSCallsign(controllable, ...)
+    local group = getGroup(controllable)
+    if not group then
+        return false end
+
+    local groupCallsign, number = GetCallsign(group)
+    local awacsCallsign = CALLSIGN.AWACS:FromString(groupCallsign)
+    if not awacsCallsign then
+        return end
+
+    if #arg == 0 then
+        return awacsCallsign, number
+    end
+
+    for i = 1, #arg, 1 do
+       if awacsCallsign == arg[i] then
+          return awacsCallsign, number
+       end
+    end
+    -- local callsign = CALLSIGN.AWACS:FromString(GetCallsign(group))
+    -- for i = 1, #arg, 1 do
+    --    if callsign == arg[i] then
+    --       return true
+    --    end
+    -- end
+ end
+
+ function IsAirService(controllable, ...)
+    return IsTankerCallsign(controllable, ...) or IsAWACSCallsign(controllable, ...)
  end
 
 function GetRTBAirbaseFromRoute(group)
@@ -3445,7 +3572,7 @@ function MissionEvents:Invoke(handlers, data)
 end
 
 function _e:onEvent( event )
--- Debug("nisse - _e:onEvent-? :: event: " .. DumpPrettyDeep(event, 2)) -- nisse
+Debug("nisse - _e:onEvent-? :: event: " .. DumpPrettyDeep(event, 2)) -- nisse
 
     if event.id == world.event.S_EVENT_MISSION_END then
         MissionEvents:Invoke( _missionEventsHandlers._missionEndHandlers, event )
@@ -4497,15 +4624,6 @@ function ZoneEvent:NewForZone(objectType, eventType, zone, func, continous, filt
     end
     zoneEvent.continous = continous
     zoneEvent.filter = filter
-
-    -- if makeZczes then
-    --     local info = ZoneCentricZoneEvents[zoneEvent.zoneName]
-    --     if not info then
-    --         info = ZoneCentricZoneEventInfo:New(zoneEvent.zone)
-    --         ZoneCentricZoneEvents[zoneEvent.zoneName] = info
-    --     end
-    --     info:AddEvent()
-    -- end
     return zoneEvent
 end
 
@@ -5607,7 +5725,7 @@ function ___dcaf_callback___(id)
     DCAF_CALLBACKS:Callback(id)
 end
 
-function InsertWaypointCallback(waypoint, func, oneTime)
+function WaypointCallback(waypoint, func, oneTime)
     local info
     info = DCAF_CALLBACK_INFO:New(function() 
         func(waypoint)
@@ -5941,27 +6059,17 @@ function DCAF.Tanker:Start(delay)
     return self
 end
 
-function WaypointLandAt(source) -- todo Consider using MOOSE's COORDINATE:WaypointAirLanding( Speed, airbase, DCSTasks, description ) instead
-    local nAirbaseID
-    local airbase = getAirbase(source)
-    if not airbase then
-        return errorOnDebug("WaypointLandAt :: cannot resolve airbase from: " .. DumpPretty(source)) end
-    
-    nAirbaseID = airbase:GetID()
-    local vec2 = airbase:GetPointVec2()
-    return {
-            ["speed_locked"] = true,
-            ["airdromeId"] = nAirbaseID,
-            ["action"] = "Landing",
-            ["alt_type"] = COORDINATE.WaypointAltType.BARO,
-            ["y"] = vec2.x,
-            ["x"] = vec2.y,
-            ["alt"] = airbase:GetAltitude(),
-            ["ETA_locked"] = false,
-            ["speed"] = 138.88888888889,
-            ["formation_template"] = "",
-            ["type"] = "Land",
-       }
+function WaypointLandAt(location, speed)
+    local testLocation = DCAF.Location.Resolve(location)
+    if not testLocation then
+        error("WaypointLandAt :: cannot resolve `location`: " .. DumpPretty(location)) end
+
+    if not testLocation:IsAirbase() then
+        error("WaypointLandAt :: `location` is not an airbase") end
+
+    location = testLocation
+    local airbase = location.Source
+    return location:GetCoordinate():WaypointAirLanding(speed, airbase)
 end
 
 function IsOnAirbase(source, airbase)
@@ -5982,6 +6090,8 @@ function IsOnAirbase(source, airbase)
     end
 
     -- source is on the ground; check nearest airbase...
+Debug("nisse - IsOnAirbase :: group: " .. Dump(source.GroupName))
+
     local closestAirbase = location.Coordinate:GetClosestAirbase()
     if closestAirbase.AirbaseName ~= airbase.AirbaseName then
         return false end
@@ -5991,18 +6101,16 @@ function IsOnAirbase(source, airbase)
 end
 
 function RTBNow(controllable, airbase, onLandedFunc, altitude, altitudeType)
-    if IsOnAirbase(controllable, airbase) then
-        -- controllable is already on specified airbase - despawn
-        local group = getGroup(controllable)
-        if group then
-            group:Destroy()
-        end
-        return
-    end
-
     local group = getGroup(controllable)
     if not group then 
         return errorOnDebug("RTBNow :: cannot resolve group from " .. DumpPretty(controllable)) end
+
+    if IsOnAirbase(controllable, airbase) then
+        -- controllable is already on specified airbase - despawn
+Debug("nisse - RTBNow_IsOnAirbase :: controllable: " .. DumpPretty(controllable))
+        group:Destroy()
+        return
+    end
 
     local coord = group:GetCoordinate()
     if isFunction(onLandedFunc) then
@@ -6015,43 +6123,46 @@ function RTBNow(controllable, airbase, onLandedFunc, altitude, altitudeType)
         MissionEvents:OnAircraftLanded(_onLandedFuncWrapper)
     end
 
-    local function buildRoute(airbase, landingWp)
+    local function buildRoute(airbase, wpLanding, enforce_alsoForShips) -- note the @enforce_alsoForShips is only a tamporary hack until we support CASE I, II, and III
+Debug("nisse - buildRoute :: airbase:IsShip: " .. Dump(airbase:IsShip()))    
+        if airbase:IsShip() and not enforce_alsoForShips then
+            return end -- Carriers require custom approach
+
         if not isAirbase(airbase) then
             error("RTBNow-"..group.GroupName.." :: not an #AIRBASE: " .. DumpPretty(airbase)) end
 
         local route = {}
-        local arriveWP
-        local wpApproach
-        landingWp = landingWp or WaypointLandAt(airbase)
-        if not landingWp then
+        local wpArrive
+        local wpInitial
+        wpLanding = wpLanding or WaypointLandAt(airbase)
+        if not wpLanding then
             error("RTBNow-"..group.GroupName.." :: cannot create landing waypoint for airbase: " .. DumpPretty(airbase)) end
 
         local abCoord = airbase:GetCoordinate()
         local bearing, distance = GetBearingAndDistance(airbase, group)
         local coordApproach 
-        local appoachAltType = COORDINATE.WaypointAltType.BARO
-        local approachDistance
+        local appoachAltType = COORDINATE.WaypointAltType.RADIO
+        local distApproach
         local altApproach
-        local defaultAltitude
+        local altDefault
         if isNumber(altitude) then
-            defaultAltitude = altitude
+            altDefault = altitude
         elseif group:IsAirPlane() then
-            defaultAltitude = Feet(15000)
+            altDefault = Feet(15000)
         elseif group:IsHelicopter() then
-            defaultAltitude = Feet(500)
+            altDefault = Feet(500)
         end
-        altApproach = altitude or defaultAltitude
+        altApproach = altitude or altDefault
         if airbase.isHelipad and group:IsHelicopter() then
--- Debug("nisse - RTB to helopad")            
-            approachDistance = 1000
-            appoachAltType = COORDINATE.WaypointAltType.RADIO
+-- Debug("nisse - RTB to helipad")            
+            distApproach = 1000
         elseif distance > NauticalMiles(25) or group:GetAltitude(true) > Feet(15000) then
             -- approach waypoint 25nm from airbase...
-            approachDistance = NauticalMiles(25)
+            distApproach = NauticalMiles(25)
+            appoachAltType = COORDINATE.WaypointAltType.BARO
         else 
             -- approach 10nm from airbase...
-            approachDistance = NauticalMiles(15)
-            appoachAltType = COORDINATE.WaypointAltType.RADIO
+            distApproach = NauticalMiles(15)
         end
         local landingRWY = airbase:GetActiveRunwayLanding()
         if landingRWY then
@@ -6059,21 +6170,42 @@ function RTBNow(controllable, airbase, onLandedFunc, altitude, altitudeType)
         else
             bearing = ReciprocalAngle(bearing)
         end
-        coordApproach = abCoord:Translate(approachDistance, bearing)
+        coordApproach = abCoord:Translate(distApproach, bearing)
         coordApproach:SetAltitude(altApproach)
         -- we need an 'initial' waypoint (or the approachWP is ignored by DCS) ...
         
         local speedInitial = math.max(Knots(250), group:GetVelocityKMH())
         local coordInitial = coordApproach:Translate(NauticalMiles(1), bearing, altApproach)
         coordInitial:SetAltitude(math.max(group:GetAltitude(), altApproach))
-        local wpInitial = coordInitial:WaypointAirTurningPoint(appoachAltType, speedInitial)
-        wpApproach = coordApproach:WaypointAirTurningPoint(appoachAltType, Knots(250))
-        wpInitial.name = "INITIAL"
+        local wpApproach = coordInitial:WaypointAirTurningPoint(appoachAltType, speedInitial)
+        wpInitial = coordApproach:WaypointAirTurningPoint(appoachAltType, Knots(250))
         wpApproach.name = "APPROACH"
-        return { wpInitial, wpApproach, landingWp }
+        wpInitial.name = "INITIAL"
+        return { wpApproach, wpInitial, wpLanding }
     end
 
-    local landingWp
+    local function buildCarrierRoute(carrier, wpLanding)
+        return buildRoute(airbase, wpLanding, true)
+--         -- todo Implement CASE I, II, and III approaches for RTB to carriers
+--         local altType = COORDINATE.WaypointAltType.RADIO
+--         if group:IsHelicopter() then
+-- Debug("nisse - RTBNow :: helicopter landing at carrier...")            
+--             local hdg3oclock = (carrier:GetHeading() + 90) % 360
+--             local wpDummy = group:GetCoordinate():WaypointAirFlyOverPoint(altType, group:GetVelocityKMH())
+--             local coordInitial = carrier:GetCoordinate():Translate(NauticalMiles(2), hdg3oclock)
+--             coordInitial:SetAltitude(Feet(200))
+--             local wpInitial = coordInitial:WaypointAirTurningPoint(altType, UTILS.KnotsToKmph(100))
+--             wpInitial.name = "INITIAL"
+--             if not wpLanding then
+--                 wpLanding = WaypointLandAt(carrier)
+--             end
+--             return { wpDummy, wpInitial, wpLanding }
+--         else
+--             return buildRoute(airbase, wpLanding, true)
+--         end
+    end
+
+    local wpLanding
     if airbase ~= nil then
         -- landing location was specified, build route to specified airbase ...
         local ab = getAirbase(airbase)
@@ -6087,15 +6219,15 @@ function RTBNow(controllable, airbase, onLandedFunc, altitude, altitudeType)
             if airdrome then
                 -- landing WP was "Landing" type waypoint, with airdrome - not wrapped action. We have the airbase...
                 airbase = airdrome
-                landingWp = route[landingWpIndex]
+                wpLanding = route[landingWpIndex]
             else
                 -- todo ...
                 error("nisse - todo")
             end
         end
     end
-    local waypoints = buildRoute(airbase, landingWp)
--- Debug("nisse - RTBNow :: group: " .. group.GroupName .. " :: route: " .. DumpPrettyDeep(waypoints))
+    local waypoints = buildRoute(airbase, wpLanding) or buildCarrierRoute(airbase, wpLanding)
+Debug("nisse - RTBNow :: group: " .. group.GroupName .. " :: waypoints: " .. DumpPrettyDeep(waypoints))
     group:Route(waypoints)
     return group, waypoints
 end
