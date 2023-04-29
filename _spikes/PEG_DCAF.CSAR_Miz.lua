@@ -32,20 +32,20 @@ DCAF.CSAR.InitDistressBeacon("CSAR Distress Beacon")
 -- rescue
 DCAF.CSAR.InitRescueMissions(
     DCAF.CSAR.Mission:New("Blackhawk + 2 Apaches", 
-        DCAF.CSAR.RescueGroup:New("BLUE Rescue Blackhawk"),
+        DCAF.CSAR.RescueGroup:New("BLUE Rescue Blackhawk"):WithCapabilities(true, true),
         DCAF.CSAR.RescueGroup:New("BLUE Rescue Apache", 2)):AddAirbases(BlueAirforceCSARAirbases),
     DCAF.CSAR.Mission:New("Chinook + 2 Apaches", 
-        DCAF.CSAR.RescueGroup:New("BLUE Rescue Chinook"),
+        DCAF.CSAR.RescueGroup:New("BLUE Rescue Chinook"):WithCapabilities(true, true),
         DCAF.CSAR.RescueGroup:New("BLUE Rescue Apache", 2)):AddAirbases({ Khasab }),
     DCAF.CSAR.Mission:New("2 x Seahawks",
-        DCAF.CSAR.RescueGroup:New("BLUE Rescue Seahawk", 2)):AddAirbases({ CVN_73 }),
+        DCAF.CSAR.RescueGroup:New("BLUE Rescue Seahawk", 2):WithCapabilities(true, true)):AddAirbases({ CVN_73 }),
     DCAF.CSAR.Mission:New("Seahawk + 2 Cobras",
-        DCAF.CSAR.RescueGroup:New("BLUE Rescue Seahawk"),
+        DCAF.CSAR.RescueGroup:New("BLUE Rescue Seahawk"):WithCapabilities(true, true),
         DCAF.CSAR.RescueGroup:New("BLUE Rescue Cobra", 2)):AddAirbases({ LHA_1 }))--.InitCallsign("Roman")
 
 DCAF.CSAR.InitCaptureMissions(
     DCAF.CSAR.Mission:New("Mi-8 + 2 Ka-50", 
-        DCAF.CSAR.RescueGroup:New("RED Capture Heli-transport"),
+        DCAF.CSAR.RescueGroup:New("RED Capture Heli-transport"):WithCapabilities(nil, true),
         DCAF.CSAR.RescueGroup:New("RED Capture Heli-escort", 2)):AddAirbases({ AIRBASE.PersianGulf.Jiroft_Airport }))
 
 -- actively create CSAR story (for testing) ...

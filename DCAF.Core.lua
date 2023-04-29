@@ -3572,7 +3572,7 @@ function MissionEvents:Invoke(handlers, data)
 end
 
 function _e:onEvent( event )
-Debug("nisse - _e:onEvent-? :: event: " .. DumpPrettyDeep(event, 2)) -- nisse
+-- Debug("nisse - _e:onEvent-? :: event: " .. DumpPrettyDeep(event, 2)) -- nisse
 
     if event.id == world.event.S_EVENT_MISSION_END then
         MissionEvents:Invoke( _missionEventsHandlers._missionEndHandlers, event )
