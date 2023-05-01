@@ -86,7 +86,7 @@ function isFunction( value ) return type(value) == "function" end
 function isClass( value, class ) return isTable(value) and value.ClassName == class end
 function isUnit( value ) return isClass(value, UNIT.ClassName) end
 function isGroup( value ) return isClass(value, GROUP.ClassName) end
-function isZone( value ) return isClass(value, ZONE.ClassName) or isClass(value, ZONE_POLYGON_BASE.ClassName) end
+function isZone( value ) return isClass(value, ZONE.ClassName) or isClass(value, ZONE_POLYGON_BASE.ClassName) or isClass(value, ZONE_POLYGON.ClassName) end
 function isCoordinate( value ) return isClass(value, COORDINATE.ClassName) end
 function isVec2( value ) return isClass(value, POINT_VEC2.ClassName) end
 function isVec3( value ) return isClass(value, POINT_VEC3.ClassName) end
@@ -1201,13 +1201,13 @@ end
 
 function DCAF.Flares:Shoot(coordinate)
     if not isCoordinate(coordinate) then
-        error("DCAF.Flares:Pop :: `coordinate` must be " .. COORDINATE.ClassName .. ", but was: " .. DumpPretty(coordinate)) end
+        error("DCAF.Flares:Shoot :: `coordinate` must be " .. COORDINATE.ClassName .. ", but was: " .. DumpPretty(coordinate)) end
 
     if self.Remaining == 0 then
         return end
 
-Debug("nisse - DCAF.Flares:Shoot!")
-MessageTo(nil, "nisse - DCAF.Flares:Shoot!")
+-- Debug("nisse - DCAF.Flares:Shoot!")
+-- MessageTo(nil, "nisse - DCAF.Flares:Shoot!")
 
     coordinate:Flare(self.Color)
     self.Remaining = self.Remaining-1
@@ -1228,17 +1228,17 @@ function DCAF.Flares:New(remaining, color)
 end
 
 -- @smoke       :: #DCAF.Smoke
-function DCAF.Smoke:Pop(coordinate)
+function DCAF.Smoke:Pop(coordinate, color)
     if not isCoordinate(coordinate) then
         error("DCAF.Smoke:Pop :: `coordinate` must be " .. COORDINATE.ClassName .. ", but was: " .. DumpPretty(coordinate)) end
 
     if self.Remaining == 0 then
         return end
 
-Debug("nisse - DCAF.Smoke:Pop!")
-MessageTo(nil, "nisse - DCAF.Smoke:Pop!")
-        
-    coordinate:Smoke(self.Color)
+-- Debug("nisse - DCAF.Smoke:Pop!")
+-- MessageTo(nil, "nisse - DCAF.Smoke:Pop!")
+
+    coordinate:Smoke(color or self.Color)
     self.Remaining = self.Remaining-1
     return self
 end
@@ -3231,6 +3231,7 @@ function ROEHoldFire( ... )
         if (group == nil) then
             Warning("ROEHoldFire-? :: cannot resolve group "..Dump(controllable) .." :: IGNORES")
         else
+
             group:OptionROEHoldFire()
             Trace("ROEHoldFire"..group.GroupName.." :: holds fire")
         end
@@ -3317,6 +3318,21 @@ function ROEDefensive( ... )
             group:OptionAlarmStateRed()
             Trace("ROEWeaponsFree-"..group.GroupName.." :: is alarm state RED")
             ROEHoldFire( group )
+            Trace("ROEWeaponsFree-"..group.GroupName.." :: is weapons free")
+        end
+    end
+end
+
+function ROEActiveDefensive( ... )
+    for _, controllable in ipairs(arg) do
+        local group = getGroup( controllable )
+        if (group == nil) then
+            Warning("ROEWeaponsFree-? :: cannot resolve group "..Dump(controllable) .." :: IGNORES")
+        else
+            ROTEvadeFire( controllable )
+            group:OptionAlarmStateRed()
+            Trace("ROEWeaponsFree-"..group.GroupName.." :: is alarm state RED")
+            ROEReturnFire( group )
             Trace("ROEWeaponsFree-"..group.GroupName.." :: is weapons free")
         end
     end

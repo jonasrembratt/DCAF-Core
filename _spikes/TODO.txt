@@ -1,0 +1,2 @@
+BUG: After CA commander sets rescue mission route (avoidng danger) and then "Commence CSAR", the rescue mission doesn't seem to scan/home the distress beacon
+BUG: If CSAR attack helis engage something (like the SAM that shot down the princess) they don't RTB with the transport heli

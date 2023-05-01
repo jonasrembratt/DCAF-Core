@@ -16,11 +16,11 @@ local BlueNavyCSARAirbases = {
     LHA_1
 }
 
-Debug("nisse - BlueCSARAirbases: " .. DumpPretty(BlueAirforceCSARAirbases))
+-- Debug("nisse - BlueCSARAirbases: " .. DumpPretty(BlueAirforceCSARAirbases))
 
 local Godu = DCAF.Location:NewNamed("Godu", COORDINATE:NewFromLLDD(26.95750000, 57.02083333))
 
-local w = DCAF.Weather:Static()
+-- local w = DCAF.Weather:Static()
 
 DCAF.InitBullseyeName("DART")
 DCAF.CSAR.InitSafeLocations(Coalition.Blue, Godu)
@@ -53,6 +53,8 @@ DCAF.CSAR.InitCaptureMissions(
 local options = DCAF.CSAR.Options:New():WithCodewords("JamesBond")--:WithTrigger(CSAR_Trigger.Ejection)
 Debug("nisse - MIZ :: options: " .. DumpPrettyDeep(options))
 DCAF.CSAR.MenuControlled(options, "Test CSAR") --, "_C2") -- NewOnPilotEjects(options)
+
+DCAF.CSAR.RunScenarioInZone("TZ_CSAR", Coalition.Blue, options)
 
 -- GROUP IN DISTRESS...
 

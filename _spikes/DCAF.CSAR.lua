@@ -18,11 +18,14 @@ local CSAR_Pickups = {
     ["Mi-8MT"] = true,
 }
 
-local CSAR_State = {
+local CSAR_MissionState = {
+    Pending = "Pending",                -- mission not yet started
     Searching = "Searching",            -- distressed group is not yet located
     Located = "Located",                -- distressed group has been located (but is not yet rescued)
-    Rescued = "Rescued",                -- distressed group was rescued, but is not yet safe
-    Captured = "Captured",              -- FAIL - distressed group was captured
+    Fetching = "Fetching",              -- rescue/capture operation started (picking up distressed group)
+    RTB = "Aborted, RTB",               -- rescue/capture operation started (picking up distressed group)
+    Rescued = "Rescued",                -- distressed group was rescued, but is not yet safe (rescue mission is RTB)
+    Captured = "Captured",              -- FAIL - distressed group was captured (capture mission is RTB)
     Safe = "Safe"                       -- SUCCESS - distressed group has returned to safe location
 }
 
@@ -58,20 +61,37 @@ end
 
 local CSAR_DefaultCodewords = { "Cinderella", "Pocahontas", "Ariel", "Anastasia", "Leia", "Astrid", "Fiona" }
 
+local AirForceMissionNames = {
+    ["Balin"] = { Count = 0 },
+    ["Charming"] = { Count = 0 },
+    ["Dragonet"] = { Count = 0 },
+    ["Ector"] = { Count = 0 },
+}
+local PinnedAirForceMissionName
+
+local NavyMissionNames = {
+    ["Galahad"] = { Count = 0 },
+    ["Percival"] = { Count = 0 },
+    ["Valiant"] = { Count = 0 },
+    ["Lancelot"] = { Count = 0 },
+}
+local PinnedNavyMissionName
+
 DCAF.CSAR = {
     ClassName = "DCAF.CSAR",
     Name = nil,
-    State = CSAR_State.Searching,           -- #CSAR_State
+    RescueState = CSAR_MissionState.Pending,-- #CSAR_MissionState
     DistressedGroup = nil,                  -- #DCAF.CSAR.DistressedGroup
     CaptureGroups = {},                     -- list of #DCAF.CSAR.CaptureGroup
     RescueGroups = {},                      -- list of #DCAF.CSAR.RescueGroup
     Type = CSAR_Type.Land,                  -- #string - (#CSAR_Type)
     RescueMissionTemplates = {},            -- list of #DCAF.CSAR.Mission
     CaptureMissionTemplates = {},           -- list of #DCAF.CSAR.Mission
-    Callsign = "Charming",                  -- #string - callsign used by rescue groups
+    Callsign = {"Charming"},                -- #string - callsign used by rescue groups
     CallsignCount = 0,                      -- #number - callsign number used by rescue groups
     NavyCallsign = "Valiant",               -- #string - callsign used by Navy rescue groups (if unassigned; uses `Callsign`)
     NavyCallsignCount = 0,                  -- #number - callsign number used Navy by rescue groups (if unassigned; uses `CallsignCount`)
+    PinMissionName = true                   -- #bool - true = same mission name will be used for all rescue missions
     -- Weather = DCAF.Weather:Static()
 }
 
@@ -112,22 +132,12 @@ DCAF.CSAR.Mission = {
     ClassName = "DCAF.CSAR.Mission",
     Name = nil,
     MissionGroups = {},                     -- list of #DCAF.CSAR.RescueGroup or #DCAF.CSAR.CaptureGroup
-Airbases = {}                               -- list of #AIRBASE
+    Airbases = {}                           -- list of #AIRBASE
 }
 
 local CSAR_Missions = {
     -- list of #DCAF.CSAR.Mission
 }
-
--- DCAF.CSAR.SearchGroupsTemnplate = { obsolete
---     Skill = Skill.Random,
---     SearchGroupTemplates = {
---         -- list of #string - search group template names
---     },
---     StartLocations = {
---         -- list of #DCAF.Location
---     }
--- }
 
 local CSAR_DistressBeaconTemplate = {
     ClassName = "CSAR_DistressBeaconTemplate",
@@ -170,9 +180,10 @@ DCAF.CSAR.BeaconDetection = {
     HasBeaconSensor = false,            -- #boolean - specifies whether group can scan for distress beacon
     DetectionInterval = 20,             -- check for distress beacon every 'N' seconds
     RefinementInterval = Minutes(10),   -- refine beacon location precison every 'N' seconds
-    Probability = .02,                  -- probability (0,1) hunter will detect prey's beacon
+    Probability = .02,                  -- probability (0,1) capturer will detect distress beacon
     ProbabilityInc = .01,               -- increase probability of beacon detection every 'N' seonds
     NextCheck = nil,                    -- next time to check whether beacon is detected
+    StartScanDistance = NauticalMiles(30) -- #number - meters :: specifies a minimum distance from estimated search area to start scanning for distress beacon
 }
 
 local CSAR_RescueResources = {
@@ -202,6 +213,7 @@ DCAF.CSAR.CaptureResource = {
     -- inherits rest from CSAR_SearchResource
 }
 
+local rebuildCSARMenus
 local CSAR_Scheduler = SCHEDULER:New()
 local CSAR_Scheduler_isRunning = false
 local CSAR_Counter = 0
@@ -213,11 +225,13 @@ function CSAR_Scheduler:Run()
     end
 end
 
-local function setState(csar, state)
-    if state == csar.State then
+local function setRescueMissionState(csar, state)
+    if state == csar.RescueState then
         return end
 
-    csar.State = state
+    csar.RescueState = state
+MessageTo(nil, csar.ActiveRescueMission.Name .. " state: " .. state)
+    rebuildCSARMenus()
     -- todo notify
 end
 
@@ -229,6 +243,39 @@ function DCAF.Weather:Static()
     Debug("nisse - DCAF.Weather :: env.mission.weather: " .. DumpPrettyDeep(env.mission.weather))
     DCAF.Weather._static = w
     return w
+end
+
+local function getNextMissionName(isAirforce, pin)
+    local names
+    local pinned
+    if isAirforce then
+        names = AirForceMissionNames
+        if pin then
+            pinned = PinnedAirForceMissionName
+        end
+    else
+        names = NavyMissionNames
+        if pin then
+            pinned = PinnedNavyMissionName
+        end
+    end
+    local name
+    local info
+    if pinned then
+        name = pinned
+    else
+        name = dictRandomKey(names)
+    end
+    info = names[name]
+    info.Count = info.Count+1
+    if pin then
+        if isAirforce then
+            PinnedAirForceMissionName = name
+        else
+            PinnedNavyMissionName = name
+        end
+    end
+    return name, info.Count
 end
 
 -- //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -490,14 +537,8 @@ local function captureWhenAble(dg, enemyUnit)
         return 
 
     elseif dg.CSAR:HasCaptureResources() then
-        -- report distressed group to hunter groups...
+        -- report distressed group to capture groups...
         dg.CSAR:DirectCapableHuntersToCapture()
-
-    -- elseif enemyUnit:IsGround() or enemyUnit:IsShip() then
-        -- enemy just happened to see the life raft - what to do now?
-         -- leaving this for now
-    --     -- just move straight to a close enough location to capture...
-    --     local speedMps = enemyUnit:GetVelocityMPS()
     end
 end
 
@@ -901,7 +942,7 @@ function DCAF.CSAR.DistressedGroup:Start(options)
         if locClosest then
             self:MoveTo(locClosest)
         else
-            stopAndSpawn(self, "no safe area found")
+            stopAndSpawn(self, "no safe location found")
         end
     else
         self:DriftWithWaves()
@@ -973,7 +1014,7 @@ function DCAF.CSAR.DistressedGroup:MoveTo(location, speedKmph)
     self._coordSafeLocation = coordLocation
     despawnAndMove(self)
 if DCAF.Debug then        
-Debug("nisse - DCAF.CSAR.DistressedGroup:MoveTo :: self._coordSafeLocation: " .. DumpPretty(self._coordSafeLocation))
+-- Debug("nisse - DCAF.CSAR.DistressedGroup:MoveTo :: self._coordSafeLocation: " .. DumpPretty(self._coordSafeLocation))
     self._coordSafeLocation:CircleToAll(9000)
 end    
     return self
@@ -1038,7 +1079,7 @@ function DCAF.CSAR.DistressedGroup:UseSignal(radius)
 
     local sunPosition = coord:SunPosition()
     setDistressedGroupState(self, CSAR_DistressedGroupState.Attracting)
-Debug("nisse - DCAF.CSAR.DistressedGroup:UseSignal :: sunPosition: " .. Dump(sunPosition))
+-- Debug("nisse - DCAF.CSAR.DistressedGroup:UseSignal :: sunPosition: " .. Dump(sunPosition))
     if sunPosition < 5 then
         shootFlares()
     end
@@ -1053,7 +1094,7 @@ function DCAF.CSAR.DistressedGroup:OnActivateBeacon(friendlyUnit)
 end
 
 function DCAF.CSAR.DistressedGroup:AttractAttention(friendlyUnit)
-Debug("nisse - DCAF.CSAR.DistressedGroup:OnAttractAttention :: " .. self.Name .. " :: friendlyUnit: " .. friendlyUnit.UnitName)
+-- Debug("nisse - DCAF.CSAR.DistressedGroup:OnAttractAttention :: " .. self.Name .. " :: friendlyUnit: " .. friendlyUnit.UnitName)
     if self._isDelayedAttractAttention then
         return end
 
@@ -1079,8 +1120,7 @@ function DCAF.CSAR.DistressedGroup:OnAttractAttention(friendlyUnit)
 end
 
 function DCAF.CSAR.DistressedGroup:Pickup(sg)
-    local searchUnits = sg.Group:GetUnits()
-    self.CarrierUnit = listRandomItem(searchUnits)
+    self.CarrierUnit = listRandomItem(sg.Group:GetUnits())
     if isClass(sg, DCAF.CSAR.RescueGroup.ClassName) then
         setDistressedGroupState(self, CSAR_DistressedGroupState.Rescued)
         self:OnRescued(sg)
@@ -1091,6 +1131,7 @@ function DCAF.CSAR.DistressedGroup:Pickup(sg)
 end
 
 function DCAF.CSAR.DistressedGroup:OnRescued(rescueGroup)
+-- Debug("nisse - DCAF.CSAR.DistressedGroup:OnRescued :: rescueGroup: " .. DumpPretty(rescueGroup))
     Debug(self.Name .. " was rescued by " .. rescueGroup.Name)
 end
 
@@ -1107,12 +1148,12 @@ function DCAF.CSAR.DistressedGroup:IsAttractingAttention()
 end
 
 function DCAF.CSAR.DistressedGroup:OnFriendlyDetectedInBeaconRange(friendlyUnit)
-Debug("nisse - DCAF.CSAR.DistressedGroup:OnFriendlyDetectedInSmokeRange :: " .. self.Name .. " :: friendlyUnit: " .. friendlyUnit.UnitName)
+-- Debug("nisse - DCAF.CSAR.DistressedGroup:OnFriendlyDetectedInSmokeRange :: " .. self.Name .. " :: friendlyUnit: " .. friendlyUnit.UnitName)
     self:OnActivateBeacon(friendlyUnit)
 end
     
 function DCAF.CSAR.DistressedGroup:OnFriendlyDetectedInSmokeRange(friendlyUnit)
-Debug("nisse - DCAF.CSAR.DistressedGroup:OnFriendlyDetectedInSmokeRange :: " .. self.Name .. " :: friendlyUnit: " .. friendlyUnit.UnitName)
+-- Debug("nisse - DCAF.CSAR.DistressedGroup:OnFriendlyDetectedInSmokeRange :: " .. self.Name .. " :: friendlyUnit: " .. friendlyUnit.UnitName)
     if self:IsAttractingAttention() then
         return end 
 
@@ -1121,7 +1162,7 @@ end
 
 function DCAF.CSAR.DistressedGroup:OnEnemyDetected(enemyUnit)
     if self.CSAR.Type == CSAR_Type.Land then
-Debug("nisse - DCAF.CSAR.DistressedGroup:OnEnemyDetected :: " .. self.Name .. " :: enemyUnit: " .. enemyUnit.UnitName)
+-- Debug("nisse - DCAF.CSAR.DistressedGroup:OnEnemyDetected :: " .. self.Name .. " :: enemyUnit: " .. enemyUnit.UnitName)
         -- do nothing (stay hidden)
         stopAndSpawn(self, "enemy detected - hiding :: enemy unit: " .. enemyUnit.UnitName)
     end
@@ -1173,17 +1214,17 @@ local function newSearchGroup(template, name, sTemplate, distressedGroup, locSta
         sg.CSAR = distressedGroup.CSAR
     end
     local now = UTILS.SecondsOfToday()
-    sg.BeaconDetection = DCAF.CSAR.BeaconDetection:New(now + DCAF.CSAR.BeaconDetection.RefinementInterval, sg.SkillFactor)
+    sg.BeaconDetection = DCAF.CSAR.BeaconDetection:New(now + Minutes(10), sg.SkillFactor)
     sg.DetectedBeaconCoordinate = nil
     if locStart and locStart:IsAirbase() then
        sg.RtbAirbase = locStart.Source     
     end
-Debug("nisse - newSearchGroup :: sg: " .. DumpPretty(sg))
+-- Debug("nisse - newSearchGroup :: sg: " .. DumpPretty(sg))
     return sg
 end
 
 local function withCapabilities(sg, bCanPickup, bInfraredSensor, bIsBeaconTuned, bHasBeaconSensor)
-Debug("nisse - withCapabilities :: sg: " .. sg.GroupTemplate.GroupName .. " :: bHasBeaconSensor: " .. Dump(bHasBeaconSensor))
+-- Debug("nisse - withCapabilities :: sg: " .. sg.GroupTemplate.GroupName .. " :: bHasBeaconSensor: " .. Dump(bHasBeaconSensor))
     if isBoolean(bCanPickup) then
         sg.CanPickup = bCanPickup
     else
@@ -1206,7 +1247,7 @@ Debug("nisse - withCapabilities :: sg: " .. sg.GroupTemplate.GroupName .. " :: b
     if isBoolean(bHasBeaconSensor) then
         sg.BeaconDetection.HasBeaconSensor = bHasBeaconSensor
     end
-Debug("nisse - withCapabilities :: sg: " .. sg.GroupTemplate.GroupName .. " :: sg.BeaconDetection: " .. DumpPretty(sg.BeaconDetection))
+-- Debug("nisse - withCapabilities :: sg: " .. sg.GroupTemplate.GroupName .. " :: sg.BeaconDetection: " .. DumpPretty(sg.BeaconDetection))
     return sg
 end
 
@@ -1237,69 +1278,68 @@ local function getAirSearchStarPattern(coordCenter, initialHdg, radius, altitude
 end
 
 local function debug_clearSearchArea(sg)
-    if sg._debugSearchZoneMarkID then
-        sg.Group:GetCoordinate():RemoveMark(sg._debugSearchZoneMarkID)
+    if sg._debugSearchZoneMarkID and sg.SearchCenter then
+        sg.SearchCenter:RemoveMark(sg._debugSearchZoneMarkID)
+        -- sg.Group:GetCoordinate():RemoveMark(sg._debugSearchZoneMarkID)
         sg._debugSearchZoneMarkID = nil
     end
 end
 
-local function debug_drawSearchArea(sg, patternCenter, radius, color)
+local function debug_drawSearchArea(sg, color)
     if not DCAF.Debug then return end
     debug_clearSearchArea(sg)
     local color
-    if isClass(sg, DCAF.CSAR.CaptureGroup.ClassName) then
+    if sg:IsCaptureGroup() then
         color = {1,0,0}
     else
         color = {0,0,1}
     end
-Debug("nisse - debug_drawSearchArea :: color: " .. DumpPretty(color))
-    sg._debugSearchZoneMarkID = patternCenter:CircleToAll(radius, nil, color)
+    sg._debugSearchZoneMarkID = sg.SearchCenter:CircleToAll(sg.SearchRadius, nil, color)
 end
 
 local function tryDetectDistressBeaconCoordinate(sg)
-
-    if not sg.BeaconDetection.HasBeaconSensor then
--- Debug("tryDetectDistressBeaconCoordinate :: " .. sg.Group.GroupName .. " cannot scan for distress beacon :: EXIT")
+    if not sg.BeaconDetection.HasBeaconSensor or not sg.DistressedGroup:IsBeaconActive() then
         return end
 
-Debug("tryDetectDistressBeaconCoordinate :: " .. sg.Group.GroupName .. "...")
     local now = UTILS.SecondsOfToday()
-    if sg.DetectedBeaconCoordinate then
-        if now < sg.BeaconDetection.NextCheck or not sg.DistressedGroup:IsBeaconActive() then
-            return sg.DistressBeaconCoordinate end
-
-        -- beacon is active; increase precision of beacon location over time ...
-        sg.BeaconDetection.SkillFactor = math.min(1, sg.BeaconDetection.SkillFactor + .05)    
-        sg.DetectedBeaconCoordinate = sg.DistressedGroup:GetCoordinate(false, sg.BeaconDetection.SkillFactor)
-        sg.BeaconDetection.NextCheck = now + sg.BeaconDetection.RefinementInterval
-    end
-
-    if not sg.DistressedGroup:IsBeaconActive() then
-        return end
-
     -- check beacon every 'N' seconds...
     if now < sg.BeaconDetection.NextCheck then
--- Debug("tryDetectDistressBeaconCoordinate :: not yet time to check for/refine beacon location :: now: " .. UTILS.SecondsToClock(now) .. "  next ccheck: " .. UTILS.SecondsToClock(sg.BeaconDetection.NextCheck))
         return end
+
+    -- only start scanning for beacon when approaching search center
+    local distanceToSearchCenter
+    if not sg.SearchCenter then
+        return 
+    else
+        distanceToSearchCenter = sg.Group:GetCoordinate():Get2DDistance(sg.SearchCenter)
+-- Debug("tryDetectDistressBeaconCoordinate :: sg: " .. sg.GroupTemplate.GroupName .. " :: distanceToSearchCenter: " .. Dump(UTILS.MetersToNM(distanceToSearchCenter)))
+        if distanceToSearchCenter > sg.BeaconDetection.StartScanDistance then
+            return end
+    end
+
+    if sg.DetectedBeaconCoordinate then
+        -- beacon is found; just increase precision of beacon location over time ...
+        sg.BeaconDetection.SkillFactor = math.min(1, sg.BeaconDetection.SkillFactor + .05)    
+    end
 
     local probability 
     if sg.BeaconDetection.IsBeaconTuned then
-        probability = .95 * sg.SkillFactor * 100
+        probability = .95 * sg.BeaconDetection.SkillFactor * 100
     else
-        probability = sg.BeaconDetection.Probability * sg.SkillFactor * 100
+        probability = sg.BeaconDetection.Probability * sg.BeaconDetection.SkillFactor * 100
     end
     local time = UTILS.SecondsToClock(now)
     sg.BeaconDetection.Probability = sg.BeaconDetection.Probability + sg.BeaconDetection.ProbabilityInc
     sg.BeaconDetection.NextCheck = now + sg.BeaconDetection.DetectionInterval
-    local rnd = math.random(100)
-Debug("tryDetectDistressBeaconCoordinate :: time: " .. time .. " :: sg.SkillFactor: " .. Dump(sg.SkillFactor) .. " :: probability: " .. Dump(probability) .. " :: sg.BeaconDetection: " .. DumpPretty(sg.BeaconDetection))
+-- Debug("tryDetectDistressBeaconCoordinate :: time: " .. time .. " :: sg.SkillFactor: " .. Dump(sg.SkillFactor) .. " :: probability: " .. Dump(probability) .. " :: sg.BeaconDetection: " .. DumpPretty(sg.BeaconDetection))
 -- Debug("tryDetectDistressBeaconCoordinate :: time: " .. time .. " :: IsBeaconTuned: " .. Dump(sg.BeaconDetection.IsBeaconTuned) .. " probability: " .. Dump(probability) .. " :: rnd: " .. Dump(rnd))
-    if rnd > probability then
+    if not sg.DetectedBeaconCoordinate and math.random(100) > probability then
         return end
 
     -- beacon was detected...
+    sg.BeaconDetection.IsBeaconTuned = true
     sg.DetectedBeaconCoordinate = sg.DistressedGroup:GetCoordinate(false, sg.BeaconDetection.SkillFactor)
-    return sg.DistressedGroup:GetCoordinate(false, sg.Skill)
+    return sg.DetectedBeaconCoordinate
 end
 
 local function testRtbCriteria(sg, waypoints)
@@ -1318,20 +1358,10 @@ local function testRtbCriteria(sg, waypoints)
     return waypoints
 end
 
-local function debug_drawSearchCircle(sg, radius, color)
-    if not DCAF.Debug then
+local function refineSearchGroupSearchPattern(searchGroup)
+    if searchGroup.SearchRadius <= NauticalMiles(5) then
         return end
 
-    local coord = sg.Group:GetCoordinate()
-    if sg._debugCaptureCircleMarkID then
--- Debug("debug_drawHunterCircle :: (removes mark)")
-        coord:RemoveMark(sg._debugCaptureCircleMarkID)
-    end
--- Debug("debug_drawHunterCircle :: radius: " .. Dump(radius) .. " :: coalition: " .. Dump(sg.Coalition))
-    sg._debugCaptureCircleMarkID = coord:CircleToAll(radius, Coalition.ToNumber(sg.Coalition), color, 1, nil, 1)
-end
-
-local function refineSearchGroupSearchPattern(searchGroup)
     local tSearchGroups
     if isClass(searchGroup, DCAF.CSAR.CaptureGroup.ClassName) then
         tSearchGroups = searchGroup.CSAR.CaptureGroups
@@ -1339,19 +1369,19 @@ local function refineSearchGroupSearchPattern(searchGroup)
         tSearchGroups = searchGroup.CSAR.RescueGroups
     end
     for _, sg in ipairs(tSearchGroups) do
-Debug("nisse - refineSearchGroupSearchPattern :: sg: " .. sg.Group.GroupName)        
-        local coordBeacon = sg.DistressedGroup:GetCoordinate(false, searchGroup.Skill)
-        local initialHdg = sg.Group:GetCoordinate():HeadingTo(coordBeacon)
+-- Debug("nisse - refineSearchGroupSearchPattern :: sg: " .. sg.Group.GroupName)
+        sg.SearchCenter = sg.DetectedBeaconCoordinate or sg.DistressedGroup:GetCoordinate(false, sg.SkillFactor)
+        local initialHdg = sg.Group:GetCoordinate():HeadingTo(sg.SearchCenter)
         local searchPattern
-        local searchRadius = NauticalMiles(5)
+        sg.SearchRadius = sg.SearchRadius *.8
         Debug("DCAF.CSAR.CaptureGroup :: hunter '" .. sg.Group.GroupName ..  "' detected distress beacon :: refines search pattern for visual acquisition")
         if sg.Group:IsAir() then
-            searchPattern = getAirSearchStarPattern(coordBeacon, initialHdg, searchRadius, sg.Altitude, sg.AltitudeType)
+            searchPattern = getAirSearchStarPattern(sg.SearchCenter, initialHdg, sg.SearchRadius, sg.Altitude, sg.AltitudeType)
         else
             error("todo - ground group seach pattern after beacon detection")
         end
         sg.Group:Route(testRtbCriteria(sg, searchPattern))
-        debug_drawSearchArea(sg, coordBeacon, searchRadius)
+        debug_drawSearchArea(sg)
     end
 end
 
@@ -1363,15 +1393,17 @@ local function scheduleSearchGroupDetection(sg) -- sg : #DCAF.CSAR.CaptureGroup 
         CSAR_Scheduler:Stop(sg._schedulerID)
     end
     sg._schedulerID = CSAR_Scheduler:Schedule(sg, function()
-Debug("nisse - scheduleSearchGroupDetection :: " .. sg.Group.GroupName .. " :: sg.BeaconDetection: " .. DumpPretty(sg.BeaconDetection))
+-- if sg.CanPickup then        
+-- Debug("nisse - scheduleSearchGroupDetection :: " .. sg.Group.GroupName .. " :: sg.BeaconDetection: " .. DumpPretty(sg.BeaconDetection))
+-- end
         local now = UTILS.SecondsOfToday()
 
-        if not sg.BeaconDetection or now > sg.BeaconDetection.NextCheck then
+        -- if not sg.BeaconDetection or now > sg.BeaconDetection.NextCheck then
+        if sg.BeaconDetection then
             -- try locate prey's beacon (if active)...
-            local beacon = tryDetectDistressBeaconCoordinate(sg)
-            if beacon then
+            if tryDetectDistressBeaconCoordinate(sg) then
                 -- beacon found :: refine search pattern for visual detection...
-                refineSearchGroupSearchPattern(sg, beacon)
+                refineSearchGroupSearchPattern(sg)
             end
         end
 
@@ -1406,11 +1438,6 @@ Debug("nisse - scheduleSearchGroupDetection :: " .. sg.Group.GroupName .. " :: s
 
         local distanceFactor = actualDistance / maxVisualDistance
         maxVisualDistance = maxVisualDistance * distanceFactor
-
-        -- debug_drawHunterCircle(maxVisualDistance)
-
-        -- if math.random() > distanceFactor then
-        --     return end
         local rnd = math.random()
 -- Debug("nisse -scheduleSearchGroupDetection :: sg.SkillFactor * attractionFactor: " .. Dump(sg.SkillFactor * attractionFactor) .. " :: rnd: " .. Dump(rnd))
         if rnd > sg.SkillFactor * attractionFactor then
@@ -1434,31 +1461,32 @@ Debug("nisse - scheduleSearchGroupDetection :: " .. sg.Group.GroupName .. " :: s
 end
 
 local function getSearchPatternCenterAndRadius(sg)
+    if sg.SearchCenter then
+        return end
+
     local minDistance
     local maxDistance
-    local radius
     if sg.Skill == Skill.Excellent then
         minDistance = 0
         maxDistance = 5
-        radius = NauticalMiles(10)
+        sg.SearchRadius = NauticalMiles(10)
     elseif sg.Skill == Skill.High then
         minDistance = 5
         maxDistance = 15
-        radius = NauticalMiles(15)
+        sg.SearchRadius = NauticalMiles(15)
     elseif sg.Skill == Skill.Good then
         minDistance = 8
         maxDistance = 20
-        radius = NauticalMiles(20)
+        sg.SearchRadius = NauticalMiles(20)
     elseif sg.Skill == Skill.Average then
         minDistance = 12
         maxDistance = 30
-        radius = NauticalMiles(30)
+        sg.SearchRadius = NauticalMiles(30)
     else
         error("getSearchPatternRadius :: unsupported skill: '" .. sg.Skill .. "'")
     end
     local offset = math.random(minDistance, maxDistance)
-    local coordCenter = sg.DistressedGroup:GetCoordinate():Translate(NauticalMiles(offset), math.random(360))
-    return coordCenter, radius
+    sg.SearchCenter = sg.DistressedGroup:GetCoordinate():Translate(NauticalMiles(offset), math.random(360))
 end
 
 local function startSearchAir(sg)
@@ -1473,40 +1501,43 @@ local function startSearchAir(sg)
     else
         spawn = getSpawn(sg.Template)
     end
-    local patternCenter, radius = getSearchPatternCenterAndRadius(sg)
+    getSearchPatternCenterAndRadius(sg)
+    -- local patternCenter, radius = getSearchPatternCenterAndRadius(sg)
+    -- sg.SearchRadius = radius
     spawn:InitSkill(sg.Skill)
     local group = sg.Group
-Debug("nisse - startSearchAir :: group: " .. DumpPretty(group ~= nil))
+-- Debug("nisse - startSearchAir :: group: " .. DumpPretty(group ~= nil))
     if group then
         -- resumes CSAR mission from current location...
         local coord0 = group:GetCoordinate()
-        initialHdg = coord0:HeadingTo(patternCenter)
+        initialHdg = coord0:HeadingTo(sg.SearchCenter)
     else
         if not sg.StartLocation then
             -- spawn at random location 1 nm outside search pattern...
             local randomAngle = math.random(360)
-            local coord0 = patternCenter:Translate(radius + NauticalMiles(1), math.random(360))
-            initialHdg = coord0:HeadingTo(patternCenter)
+            local coord0 = sg.SearchCenter:Translate(sg.SearchRadius + NauticalMiles(1), math.random(360))
+            initialHdg = coord0:HeadingTo(sg.SearchCenter)
             spawn:InitHeading(initialHdg)
             group = spawn:SpawnFromCoordinate(coord0)
         elseif sg.StartLocation:IsAirbase() then
             local coordAirbase = sg.StartLocation:GetCoordinate()
             coord0 = sg.StartLocation:GetCoordinate()
-            initialHdg = coord0:HeadingTo(patternCenter)
+            initialHdg = coord0:HeadingTo(sg.SearchCenter)
             group = spawn:SpawnAtAirbase(sg.StartLocation.Source, SPAWN.Takeoff.Hot)
         elseif sg.StartLocation:IsZone() then
             coord0 = sg.StartLocation.Source:GetRandomPointVec2()
-            initialHdg = coord0:HeadingTo(patternCenter)
+            initialHdg = coord0:HeadingTo(sg.SearchCenter)
             spawn:InitHeading(initialHdg)
             group = spawn:SpawnFromCoordinate(coord0)
         else
             local randomAngle = math.random(360)
-            coord0 = sg.DistressedGroup:GetCoordinate():Translate(radius, randomAngle)
-            initialHdg = coord0:HeadingTo(patternCenter)
+            coord0 = sg.DistressedGroup:GetCoordinate():Translate(sg.SearchRadius, randomAngle)
+            initialHdg = coord0:HeadingTo(sg.SearchCenter)
             spawn:InitHeading(initialHdg)
             group = spawn:SpawnFromCoordinate(coord0)
         end
         sg.Group = group
+        sg.BeaconDetection.NextCheck = UTILS.SecondsOfToday() + Minutes(10)
     end
 
     local _expandAgain
@@ -1514,15 +1545,15 @@ Debug("nisse - startSearchAir :: group: " .. DumpPretty(group ~= nil))
         local lastWP = searchPattern[#searchPattern]
         WaypointCallback(lastWP, function() 
             Debug("DCAF.CSAR.CaptureGroup :: last search waypoint reached :: expands search area")
-            radius = radius + NauticalMiles(5)
-            initialHdg = COORDINATE_FromWaypoint(lastWP):HeadingTo(patternCenter)
-            local searchPattern = getAirSearchStarPattern(patternCenter, initialHdg, radius, sg.Altitude, sg.AltitudeType, sg.Speed)
+            sg.SearchRadius = sg.SearchRadius + NauticalMiles(5)
+            initialHdg = COORDINATE_FromWaypoint(lastWP):HeadingTo(sg.SearchCenter)
+            local searchPattern = getAirSearchStarPattern(sg.SearchCenter, initialHdg, sg.SearchRadius, sg.Altitude, sg.AltitudeType, sg.Speed)
             _expandAgain(searchPattern)
             if sg.BingoFuelState then
                 testRtbCriteria(sg, searchPattern)
             end
             group:Route(searchPattern)
-            debug_drawSearchArea(sg, patternCenter, radius)
+            debug_drawSearchArea(sg)
         end)
     end
     _expandAgain = expandSearchPatternWhenSearchComplete
@@ -1540,7 +1571,7 @@ Debug("nisse - startSearchAir :: group: " .. DumpPretty(group ~= nil))
 
 -- Debug("nisse - startSearchAir :: group: " .. group.GroupName .. " :: vMax: " .. Dump(speedMax))
 
-    local searchPattern = getAirSearchStarPattern(patternCenter, initialHdg, radius, sg.Altitude, sg.AltitudeType, sg.Speed)
+    local searchPattern = getAirSearchStarPattern(sg.SearchCenter, initialHdg, sg.SearchRadius, sg.Altitude, sg.AltitudeType, sg.Speed)
     local wpFirst = searchPattern[2]
     -- wpFirst.speed = speedMax
     wpFirst.name = "START"
@@ -1550,14 +1581,14 @@ Debug("nisse - startSearchAir :: group: " .. DumpPretty(group ~= nil))
 -- Debug("nisse - startSearchAir :: group: " .. group.GroupName .. " :: vMasearchPatternx: " .. DumpPrettyDeep(searchPattern))
 
     group:Route(searchPattern)
-    debug_drawSearchArea(sg, patternCenter, radius)
+    debug_drawSearchArea(sg)
     if sg.BingoFuelState then
         testRtbCriteria(sg, searchPattern)
     end
 
     scheduleSearchGroupDetection(sg)
 
-    ROEAggressive(sg.Group)
+    ROEActiveDefensive(sg.Group)
     return sg.Group
 end
 
@@ -1606,32 +1637,42 @@ local function withRTB(sg, rtbLocation, bingoFuelState)
 end
 
 local function hoverAndPickup(sg)
-    sg.DistressedGroup:Pickup(sg)
+-- Debug("nisse - hoverAndPickup :: " .. sg:ToString() .. " :: sg.Speed:" .. Dump(sg.Speed) .. " :: HEAD TO")
     local coord = sg.DistressedGroup._lastCoordinate
     local hdg = coord:HeadingTo(sg.Group:GetCoordinate())
     local coordIngress = coord:Translate(300, (hdg-45) % 360)
     coordIngress:SetAltitude(10, true)
     local wpIngress = coordIngress:WaypointAirFlyOverPoint(sg.AltitudeType, sg.Speed)
+    wpIngress.name = "pickup ingress"
     local coordHover = coord:Translate(300, (hdg+45) % 360)--:Translate(300, (hdg-90) % 360)
     coordHover:SetAltitude(10, true)
     local wpHover1 = coordHover:WaypointAirFlyOverPoint(sg.AltitudeType, 1)
+    wpHover1.name = "pickup start"
     local coordProceed = coord:Translate(150, math.random(360))
-    local wpDummy = coordProceed:WaypointAirFlyOverPoint(sg.AltitudeType, sg.Speed)
-    WaypointCallback(wpHover1, function()
-            Delay(180, function()
-                if isClass(sg, DCAF.CSAR.CaptureGroup.ClassName) then
-                    sg.CSAR:RTBHunters()
-                elseif isClass(sg, DCAF.CSAR.RescueGroup.ClassName) then
-                    sg.CSAR:RTBRescuers()
-                end
-            end)
+    local wpHoverEnd = coordProceed:WaypointAirFlyOverPoint(sg.AltitudeType, sg.Speed)
+    wpHoverEnd.name = "pickup end"
+    WaypointCallback(wpIngress, function()
+        setRescueMissionState(sg.CSAR, CSAR_MissionState.Fetching)
+-- Debug("nisse - hoverAndPickup :: " .. sg:ToString() .. " :: BEGIN")
+        Delay(180, function()
+-- Debug("nisse - hoverAndPickup :: " .. sg:ToString() .. " :: END")
+            sg.DistressedGroup:Pickup(sg)
+            if sg:IsCaptureGroup() then
+                setRescueMissionState(sg.CSAR, CSAR_MissionState.Captured)
+                sg.CSAR:RTBHunters()
+            elseif sg:IsRescueGroup() then
+                setRescueMissionState(sg.CSAR, CSAR_MissionState.Rescued)
+                sg.CSAR:RTBRescuers()
+            end
         end)
-    local waypoints = { wpIngress, wpHover1, wpDummy }
+    end)
+
+    local waypoints = { wpIngress, wpHover1, wpHoverEnd }
     sg.Group:Route(waypoints)
 end
 
 local function landAndPickup(sg)
-    sg.DistressedGroup:Pickup(sg)
+    -- sg.DistressedGroup:Pickup(sg)
     local coord = sg.DistressedGroup._lastCoordinate:Translate(40, math.random(360))
     local wpLand = coord:WaypointAirFlyOverPoint(sg.AltitudeType, sg.Speed)
     local setDG = SET_GROUP:New()
@@ -1641,15 +1682,18 @@ local function landAndPickup(sg)
     local wpTakeOff = coord:WaypointAirFlyOverPoint(sg.AltitudeType, sg.Speed)
     local wpRTB
     if sg.RtbLocation then
--- Debug("landAndPickup :: sg.RtbLocation...")        
+-- Debug("landAndPickup :: sg.RtbLocation...")
         local hdgRTB = coord:GetHeadingTo(sg.RtbLocation)
         local coordRTB = coord:Translate(NauticalMiles(.5), hdgRTB)
         wpRTB = coordRTB:WaypointAirFlyOverPoint(sg.AltitudeType, sg.Speed)
         WaypointCallback(wpRTB, function()
--- Debug("landAndPickup :: rtbWP function...")        
-            if isClass(sg, DCAF.CSAR.CaptureGroup.ClassName) then
+Debug("landAndPickup :: wpRTB function...")
+            sg.DistressedGroup:Pickup(sg)
+            if sg:IsCaptureGroup() then
+                setRescueMissionState(sg.CSAR, CSAR_MissionState.Captured)
                 sg.CSAR:RTBHunters()
-            elseif isClass(sg, DCAF.CSAR.RescueGroup.ClassName) then
+            elseif sg:IsRescueGroup() then
+                setRescueMissionState(sg.CSAR, CSAR_MissionState.Rescued)
                 sg.CSAR:RTBRescuers()
             end
         end)
@@ -1673,10 +1717,16 @@ local function rtbNow(sg, rtbLocation)
         debug_clearSearchArea(sg)
     end
     if sg.Group:IsGround() then
-        return rtbGroundNow(sg, location)                     
+        return rtbGroundNow(sg, rtbLocation)
     end
 
-    local function rescuerGroupHaveLanded()
+    if not sg:IsAlive() then
+        return end
+
+    local function onLandedHomeplate()
+        if isClass(sg, DCAF.CSAR.RescueGroup.ClassName) then
+            setRescueMissionState(sg.CSAR, CSAR_MissionState.Safe)
+        end
         -- todo Notify pilot was successfully recovered and is now safely brought back        
     end
 
@@ -1689,27 +1739,29 @@ local function rtbNow(sg, rtbLocation)
     -- local coordSG = sg.Mission._lastCoordinate
     -- local coordAB = rtbLocation:GetCoordinate()
 
--- Debug("nisse - rtbNow :: coordSG: " .. Dump(coordSG ~= nil) .. " :: coordAB: " .. Dump(coordAB ~= nil))
+Debug("nisse - rtbNow :: sg: " .. sg:ToString())
 
-    if sg.Mission._isCloseToHome then
+    if sg.Mission._isCloseToHome --[[and sg.CSAR.RescueState == CSAR_MissionState.Searching]] then
         if IsOnAirbase(sg.Group, rtbLocation.Source) then
             sg._isStillOnAirbase = true
-Debug("nisse - rtbNow :: group is still on airbase :: despawns: " .. Dump(sg.Group.GroupName))
+-- Debug("nisse - rtbNow :: group is still on airbase :: despawns: " .. Dump(sg.Group.GroupName))
             -- sg.Group:Destroy()
+            sg.CSAR.ActiveRescueMission = nil
+            rebuildCSARMenus()
             return sg
         end
-Debug("nisse - rtbNow :: returning from close distance :: group: " .. Dump(sg.Group.GroupName))
+-- Debug("nisse - rtbNow :: returning from close distance :: group: " .. Dump(sg.Group.GroupName))
         local alt
         if sg.Group:IsHelicopter() then
             alt = Feet(500)
         else
             alt = Feet(2000)
         end
-        RTBNow(sg.Group, rtbLocation.Source, rescuerGroupHaveLanded, alt)
+        RTBNow(sg.Group, rtbLocation.Source, onLandedHomeplate, alt)
         return sg
     end
 
-Debug("nisse - rtbNow :: rtbLocation: " .. DumpPretty(rtbLocation.Source))
+-- Debug("nisse - rtbNow :: rtbLocation: " .. DumpPretty(rtbLocation.Source))
     local coord = sg.Group:GetCoordinate()
     local coordRTB = rtbLocation:GetCoordinate()
     local hdg = coord:HeadingTo(coordRTB)
@@ -1734,29 +1786,32 @@ Debug("nisse - rtbNow :: rtbLocation: " .. DumpPretty(rtbLocation.Source))
     wpEgress.alt = altLow
     local coordClimb = coordEgress:Translate(NauticalMiles(5), hdg)
     local wpClimb = coordClimb:WaypointAirTurningPoint(sg.AltitudeType, speed)
-    wpClimb.name = "CLIMB"
+    wpClimb.name = "SAFE"
     wpClimb.alt = altHigh
     local wpDummy = coordClimb:Translate(NauticalMiles(5), hdg):WaypointAirTurningPoint(sg.AltitudeType, speed)
     wpDummy.name = "_"
     waypoints = { wpNull, wpEgress, wpClimb, wpDummy }
 
-Debug("nisse - rtbNow :: waypoints: " .. DumpPrettyDeep(waypoints, 3))
+Debug("nisse - rtbNow :: " .. sg:ToString() .. " ::  waypoints: " .. DumpPrettyDeep(waypoints, 3))
 
     if rtbLocation then
         WaypointCallback(wpClimb, function()
 -- Debug("nisse - DCAF.CSAR:RTBHunters :: rtbLocation: " .. rtbLocation.Name)
-            RTBNow(sg.Group, rtbLocation.Source, rescuerGroupHaveLanded, altHigh)
+            RTBNow(sg.Group, rtbLocation.Source, onLandedHomeplate, altHigh)
         end)
     end
 
     sg.Group:Route(waypoints)
+    ROEDefensive(sg.Group)
+    ROTEvadeFire(sg.Group)
     return sg
 end
 
-local function directCapableGroupsToPickup(groups)
+local function directCapableGroupsToPickup(groups)  
     local function orbitDistressedGroup(sg)
+if sg.CanPickup then error("nisse - WTF!?")  end
         -- establish circling pattern over prey
-Debug("DCAF.CSAR :: '" .. sg.Group.GroupName .. "' is orbiting over '" .. sg.DistressedGroup.Group.GroupName .. "'")
+Debug("nisse - directCapableGroupsToPickup :: '" .. sg:ToString() .. "' is orbiting over '" .. sg.DistressedGroup.Group.GroupName .. "'")
         local coordDG = sg.DistressedGroup._lastCoordinate -- :GetCoordinate(false, 1)
         local speed
         if sg.Group:IsHelicopter() then
@@ -1775,13 +1830,16 @@ Debug("DCAF.CSAR :: '" .. sg.Group.GroupName .. "' is orbiting over '" .. sg.Dis
     local maxCountPickups = math.random(#groups)
 
     local function pickup(sg)
+        if sg:IsRescueGroup() and sg.CSAR.RescueMissionState == CSAR_MissionState.Fetching then
+            return end
+
  Debug("nisse - DCAF.CSAR:DirectCapableHuntersToCapture :: SG: " .. DumpPretty(sg.Group.GroupName .. " is picking up..."))
         if sg.Group:IsHelicopter() then
             countPickups = countPickups+1
             if sg.CSAR.Type == CSAR_Type.Land then
                 landAndPickup(sg)
             elseif sg.CSAR.Type == CSAR_Type.Water then
-Debug("... hovering over liferaft")
+-- Debug("... hovering over liferaft")
                 hoverAndPickup(sg)
             else
                 error("directCapableGroupsToPickup :: unsupported CSAR type: " .. DumpPretty(sg.CSAR.Type))
@@ -1793,6 +1851,8 @@ Debug("... hovering over liferaft")
     end
 
     local function canPickup(sg)
+        if not sg:IsAlive() then
+            return false end
         if sg.Group:IsHelicopter() or sg:IsGround() then
             for _, u in pairs(sg.Group:GetUnits()) do
 Debug("nisse - canPickup :: u: " .. u.UnitName .. " :: type: " .. Dump(u:GetTypeName()))            
@@ -1805,6 +1865,7 @@ Debug("nisse - canPickup :: u: " .. u.UnitName .. " :: type: " .. Dump(u:GetType
 
     for _, sg in ipairs(groups) do
 Debug("nisse - directCapableGroupsToPickup :: DCAF.CSAR :: '" .. sg.Group.GroupName .. "' :: CanPickup: " .. Dump(sg.CanPickup))
+        debug_clearSearchArea(sg)
         stopScheduler(sg)
         if canPickup(sg) then
             pickup(sg)
@@ -1862,6 +1923,22 @@ function DCAF.CSAR.CaptureGroup:NewFromTemplate(csar, captureGroupTemplate, dist
     local cg = DCAF.CSAR.CaptureGroup:New(csar, t.Template, distressedGroup, startLocation, t.Skill)
     cg.BeaconDetection = captureGroupTemplate.BeaconDetection
     return cg
+end
+
+function DCAF.CSAR.CaptureGroup:ToString()
+    return self.GroupTemplate.GroupName
+end
+
+function DCAF.CSAR.CaptureGroup:IsRescueGroup()
+    return false
+end
+
+function DCAF.CSAR.CaptureGroup:IsCaptureGroup()
+    return true
+end
+
+function DCAF.CSAR.CaptureGroup:IsAlive()
+    return self.Group and self.Group:IsAlive()
 end
 
 function DCAF.CSAR.CaptureGroup:WithCapabilities(bInfraredSensor, bBeaconSensor, bIsBeaconTuned, bCanPickup)
@@ -1922,9 +1999,25 @@ function DCAF.CSAR.RescueGroup:NewFromTemplate(csar, rescueGroupTemplate, startL
     return rg
 end
 
+function DCAF.CSAR.RescueGroup:ToString()
+    return self.GroupTemplate.GroupName
+end
+
+function DCAF.CSAR.RescueGroup:IsRescueGroup()
+    return true
+end
+
+function DCAF.CSAR.RescueGroup:IsCaptureGroup()
+    return false
+end
+
+function DCAF.CSAR.RescueGroup:IsAlive()
+    return self.Group and self.Group:IsAlive()
+end
+
 function DCAF.CSAR.RescueGroup:WithCapabilities(bInfraredSensor, bBeaconSensor, bIsBeaconTuned, bCanPickup)
 Debug("nisse - DCAF.CSAR.RescueGroup:WithCapabilities :: rg: " .. self.GroupTemplate.GroupName .. " :: bBeaconSensor: " .. Dump(bBeaconSensor))
-    return withCapabilities(self, bCanPickup, bInfraredSensor, bIsBeaconTuned, bBeaconSensor)
+    return withCapabilities(self, bCanPickup, bInfraredSensor, bIsBeaconTuned or true, bBeaconSensor)
 end
 
 function DCAF.CSAR.RescueGroup:Start(speed, alt, altType)
@@ -1976,7 +2069,7 @@ function DCAF.CSAR:Start(options)
     if not options.IsMenuControlled then
         self:TriggerRescueMissions(options)
     end
-    -- self:TriggerCaptureMissions(options)
+    self:TriggerCaptureMissions(options)
     Debug("DCAF.CSAR:Start :: " .. self.Type .. " type CSAR started :: name: " .. self.Name)
 end
 
@@ -2160,6 +2253,38 @@ function DCAF.CSAR.MenuControlled(options, caption, scope, parentMenu)
     DCAF.CSAR.NewOnPilotEjects(options, function(csar)
         DCAF.CSAR.BuildMenus(caption, scope, parentMenu)
     end)
+    DCAF.CSAR.OnScenario(function(csar) 
+        DCAF.CSAR.BuildMenus(caption, scope, parentMenu)
+    end)
+end
+
+local function triggerCSAR(options, coalition, coordDG, funcOnCreated)
+    local start = true
+    local _, locRescue, locCapture = getEstimatedPilotLandingLocation(coordDG, coalition)
+    local locStart = DCAF.Location:New(coordDG)
+    local csar = DCAF.CSAR:New(locStart)
+    local channel, mode = options:GetBeaconChannel()
+Debug("nisse - DCAF.CSAR:Start :: channel: " .. Dump(channel) .. " :: mode: " .. Dump(mode))
+    csar.BeaconChannel = channel
+    csar.BeaconMode = mode
+    csar.RescueEstimateLocation = locRescue
+    csar.CaptureEstimateLocation = locCapture
+    local start = true
+    if isFunction(funcOnCreated) then
+        start = funcOnCreated(csar) or true
+    end
+    if start then
+        csar:Start(options)
+    end
+    return csar
+end
+
+function DCAF.CSAR.OnScenario(func)
+    if not isFunction(func) then
+        error("DCAF.CSAR.OnScenario :: `func` musy be function, but was: " .. type(func)) end
+
+    DCAF.CSAR._onScenarioEvents = DCAF.CSAR._onScenarioEvents or {}
+    table.insert(DCAF.CSAR._onScenarioEvents, func)
 end
 
 function DCAF.CSAR.NewOnPilotEjects(options, funcOnCreated)
@@ -2206,35 +2331,33 @@ Debug("nisse - DCAF.CSAR:NewOnPilotEjects :: options.Codewords: " .. DumpPrettyD
         end
 
         local csar
-        local function triggerCSAR(coordLanding)
-            local start = true
-            local _, locRescue, locCapture = getEstimatedPilotLandingLocation(coordRef, coalition)
-            local locStart = DCAF.Location:New(coordLanding)
-            csar = DCAF.CSAR:New(locStart)
-            local channel, mode = options:GetBeaconChannel()
-Debug("nisse - DCAF.CSAR:Start :: channel: " .. Dump(channel) .. " :: mode: " .. Dump(mode))
-            csar.BeaconChannel = channel
-            csar.BeaconMode = mode
-            -- csar.BeaconChannel = options.BeaconChannel
-            -- csar.BeaconMode = options.BeaconMode
-            csar.RescueEstimateLocation = locRescue
-            csar.CaptureEstimateLocation = locCapture
-            local start = true
-            if isFunction(funcOnCreated) then
-                start = funcOnCreated(csar) or true
-            end
-            if start then
-                csar:Start(options)
-            end
-        end
+--         local function triggerCSAR(coordLanding) obsolete
+--             local start = true
+--             local _, locRescue, locCapture = getEstimatedPilotLandingLocation(coordRef, coalition)
+--             local locStart = DCAF.Location:New(coordLanding)
+--             csar = DCAF.CSAR:New(locStart)
+--             local channel, mode = options:GetBeaconChannel()
+-- Debug("nisse - DCAF.CSAR:Start :: channel: " .. Dump(channel) .. " :: mode: " .. Dump(mode))
+--             csar.BeaconChannel = channel
+--             csar.BeaconMode = mode
+--             csar.RescueEstimateLocation = locRescue
+--             csar.CaptureEstimateLocation = locCapture
+--             local start = true
+--             if isFunction(funcOnCreated) then
+--                 start = funcOnCreated(csar) or true
+--             end
+--             if start then
+--                 csar:Start(options)
+--             end
+--         end
 
         local isTriggeredOnEjection = options:IsTriggeredOnEjection()
         if isTriggeredOnEjection then
-            triggerCSAR()
+            csar = triggerCSAR(options, coalition, coordRef, funcOnCreated)
         end
         simulateEjectedPilotLanding(coordRef, function(coordLanding) 
             if not isTriggeredOnEjection then
-                triggerCSAR(coordLanding)
+                csar = triggerCSAR(options, coalition, coordLanding, funcOnCreated)
             end
             csar.DistressedGroup:Start(options)
         end)
@@ -2292,10 +2415,12 @@ end
 
 function DCAF.CSAR:StartRescueMission(mission, airbase)
     local msn = DCAF.clone(mission)
-    local callsign, callsignNo = DCAF.CSAR.NextCallsign(airbase)
+    local callsign, callsignNo = DCAF.CSAR.NextMissionCallsign(airbase)
     local unitNo = 1
     msn.Name = callsign .. " " .. tostring(callsignNo)
     self.ActiveRescueMission = msn
+    msn.CSAR = self
+    setRescueMissionState(self, CSAR_MissionState.Searching)
     local locStart = DCAF.Location:New(airbase)
     local countMissionGroups = #msn.MissionGroups
     for _, missionGroupTemplate in ipairs(msn.MissionGroups) do
@@ -2314,7 +2439,8 @@ function DCAF.CSAR:StartRescueMission(mission, airbase)
             end
             local rg = DCAF.CSAR.RescueGroup:NewFromTemplate(self, missionGroupTemplate, locStart) --, alias)
                                             :WithRTB(locStart)
-            rg.Mission = mission
+            rg.Mission = msn
+            rg.Name = msn.Name .. "-" .. Dump(1)
             rg:Start(Knots(300))
             table.insert(self.RescueGroups, rg)
         end
@@ -2391,19 +2517,20 @@ end
 
 function DCAF.CSAR:DirectCapableRescuersToPickup()
     directCapableGroupsToPickup(self.RescueGroups)
+    setRescueMissionState(self, CSAR_MissionState.Located)
 end
 
 function DCAF.CSAR:RTBHunters()
-    for _, hunter in ipairs(self.CaptureGroups) do
-Debug("nisse - DCAF.CSAR:RTBHunters :: hunter: " .. hunter.Group.GroupName)
-        hunter:RTBNow()
+    for _, cg in ipairs(self.CaptureGroups) do
+Debug("nisse - DCAF.CSAR:RTBHunters :: hunter: " .. cg.Group.GroupName)
+        cg:RTBNow()
     end
 end
 
 function DCAF.CSAR:RTBRescuers(abortMission)
     self.IsMissionAborted = abortMission
-    self.ActiveRescueMission = nil
     for _, rg in ipairs(self.RescueGroups) do
+Debug("nisse - DCAF.CSAR:RTBRescuers :: rg: " .. rg:ToString())
         rg:RTBNow()
     end
     for _, rg in ipairs(self.RescueGroups) do
@@ -2411,8 +2538,10 @@ function DCAF.CSAR:RTBRescuers(abortMission)
             rg.Group:Destroy()
         end
     end
-            
-    self.RescueGroups = {}
+-- Debug("nisse - DCAF.CSAR:RTBRescuers :: RescueState: " .. Dump(self.RescueState))
+    if self.RescueState ~= CSAR_MissionState.Rescued then
+        setRescueMissionState(self, CSAR_MissionState.RTB)
+    end
 end
 
 function DCAF.CSAR:IsCaptureUnit(enemyUnit)
@@ -2532,6 +2661,34 @@ function DCAF.CSAR.InitCaptureMissions(...)
     return DCAF.CSAR
 end
 
+local function onScenarioStarted(csar)
+    if not isList(DCAF.CSAR._onScenarioEvents) then
+        return end
+
+    for _, func in ipairs(DCAF.CSAR._onScenarioEvents) do
+        func(csar)
+    end
+end
+
+function DCAF.CSAR.RunScenarioInZone(zone, coalition, options, funcOnCreated)
+    local location = DCAF.Location.Resolve(zone)
+    if not location:IsZone() then
+        error("DCAF.CSAR.RunScenarioInZone :: cannot resolve zone from: " .. DumpPretty(zone)) end
+
+    local testCoalition = Coalition.Resolve(coalition)
+    if not testCoalition then
+        error("DCAF.CSAR.RunScenarioInZone :: cannot resolve coalition from: " .. DumpPretty(coalition)) end
+
+    if not isClass(options, DCAF.CSAR.Options.ClassName) then
+        options = DCAF.CSAR.Options:New()
+    end
+
+    local coordDG = location.Source:GetRandomCoordinate()
+    local csar = triggerCSAR(options, coalition, coordDG, funcOnCreated)
+    csar.DistressedGroup:Start(options)
+    onScenarioStarted(csar)
+end
+
 -- @arg : one ore more #DCAF.CSAR.RescueGroup / #DCAF.CSAR.CaptureGroup
 function DCAF.CSAR.Mission:New(name, ...)
     local mission = DCAF.clone(DCAF.CSAR.Mission)
@@ -2603,7 +2760,11 @@ function DCAF.CSAR:DisplayState()
 end
 
 function DCAF.CSAR.Mission:DisplayState()
-    return self.Name -- todo add state information ('searching for {DG name}', '{DN name} located!', 'retrieving {DG name}', 'RTB with {DG name}', 'RTB (mission aborted)')
+    if DCAF.Debug then
+        return self.Name .. " (" .. string.lower(self.CSAR.RescueState) .. ")"
+    else
+        return self.Name
+    end
 end
 
 function DCAF.CSAR.InitCallsign(airforce, navy)
@@ -2617,13 +2778,9 @@ function DCAF.CSAR.InitCallsign(airforce, navy)
     return DCAF.CSAR
 end
 
-function DCAF.CSAR.NextCallsign(airbase)
-    if airbase:IsShip() then
-        DCAF.CSAR.NavyCallsignCount = DCAF.CSAR.NavyCallsignCount + 1
-        return DCAF.CSAR.NavyCallsign, DCAF.CSAR.NavyCallsignCount
-    end
-    DCAF.CSAR.CallsignCount = DCAF.CSAR.CallsignCount + 1
-    return DCAF.CSAR.Callsign, DCAF.CSAR.CallsignCount
+function DCAF.CSAR.NextMissionCallsign(airbase)
+    local isAirForce = airbase:IsShip()
+    return getNextMissionName(isAirForce, DCAF.CSAR.PinMissionName)
 end
 
 local function newSearchResource(resource, sTemplate, locations, maxAvailable, maxRange, skill, isBeaconTuned)
@@ -2773,8 +2930,15 @@ local function sortedMissions(csar, tMissions)
     return tMissions
 end
 
-local rebuildCSARMenus
+local _rebuildMenusCaption
+local _rebuildMenusScope
+local _rebuildMenusParentMenu
+
 local function buildCSARMenus(caption, scope, parentMenu)
+    caption = caption or _rebuildMenusCaption
+    scope = scope or _rebuildMenusScope
+    parentMenu = parentMenu or _rebuildMenusParentMenu
+
     if not isAssignedString(caption) then
         caption = "CSAR"
     end
@@ -2809,17 +2973,17 @@ local function buildCSARMenus(caption, scope, parentMenu)
 
     local function startCSAR(csar, msn, airbase)
         csar:StartRescueMission(msn, airbase)
-        rebuildCSARMenus(caption, scope, parentMenu)
+        rebuildCSARMenus()
     end
 
     local function resumeCSAR(csar)
         csar:ResumeRescueMission()
-        rebuildCSARMenus(caption, scope, parentMenu)
+        rebuildCSARMenus()
     end
 
-    local function abortRescueMission(csar)
+    local function missionRTB(csar)
         csar:RTBRescuers(true)
-        rebuildCSARMenus(caption, scope, parentMenu)
+        rebuildCSARMenus()
     end
 
     if _csarMainMenu then
@@ -2828,13 +2992,22 @@ local function buildCSARMenus(caption, scope, parentMenu)
         _csarMainMenu = menu(caption, parentMenu)
     end
     local activeCSAR = sortedCSAR()
+
+    _rebuildMenusCaption = caption
+    _rebuildMenusScope = scope
+    _rebuildMenusParentMenu = parentMenu
+
     for _, csar in ipairs(activeCSAR) do
         if csar.ActiveRescueMission then
             local msnMenuText = csar:DisplayState() -- .Name .. " - " .. csar:GetBeaconText() .. "\n    " .. DCAF.GetBullseyeText(csar.RescueEstimateLocation, csar.DistressedGroup.Coalition)
             local msnMenu = menu(msnMenuText)
-            command("Return To Base", msnMenu, abortRescueMission, csar)
-            -- also allow commencing the CSAR mission from current location (allows CA GM to set route on map)...
-            command("Commence CSAR", msnMenu, resumeCSAR, csar)
+            if csar.RescueState == CSAR_MissionState.Rescued or csar.RescueState == CSAR_MissionState.RTB then
+                command("Resume RTB", msnMenu, missionRTB, csar)
+            else
+                command("Return To Base", msnMenu, missionRTB, csar)
+                -- also allow commencing the CSAR mission from current location (allows CA GM to set route on map)...
+                command("Commence CSAR", msnMenu, resumeCSAR, csar)
+            end
         else
             -- build menus for launching CSAR missions ...
             local msnMenuText = csar.Name .. " - " .. csar:GetBeaconText() .. "\n    " .. DCAF.GetBullseyeText(csar.RescueEstimateLocation, csar.DistressedGroup.Coalition)
@@ -2858,8 +3031,7 @@ local function buildCSARMenus(caption, scope, parentMenu)
 end
 rebuildCSARMenus = buildCSARMenus
 
-function DCAF.CSAR.
-    BuildMenus(caption, scope, parentMenu)
+function DCAF.CSAR.BuildMenus(caption, scope, parentMenu)
     if scope == nil then
         scope = Coalition.Blue
     end
