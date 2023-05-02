@@ -1092,6 +1092,8 @@ function Coalition.Resolve(value, returnDCS)
         elseif value == coalition.side.NEUTRAL then
             resolvedCoalition = Coalition.Neutral
         end
+    elseif isGroup(value) or isUnit(value) then
+        return Coalition.Resolve(value:GetCoalition())
     end
     if resolvedCoalition and returnDCS then
         if resolvedCoalition == Coalition.Blue then return coalition.side.BLUE end

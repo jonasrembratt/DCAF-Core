@@ -130,7 +130,8 @@ DCAF.CSAR.DistressedGroup = {
 
 DCAF.CSAR.Mission = {
     ClassName = "DCAF.CSAR.Mission",
-    Name = nil,
+    Coalition = nil,                        -- #Coalition
+    Name = nil,                             -- #string
     MissionGroups = {},                     -- list of #DCAF.CSAR.RescueGroup or #DCAF.CSAR.CaptureGroup
     Airbases = {}                           -- list of #AIRBASE
 }
@@ -1809,7 +1810,9 @@ end
 
 local function directCapableGroupsToPickup(groups)  
     local function orbitDistressedGroup(sg)
-if sg.CanPickup then error("nisse - WTF!?")  end
+        if not sg:IsAlive() then
+            return end
+            
         -- establish circling pattern over prey
 Debug("nisse - directCapableGroupsToPickup :: '" .. sg:ToString() .. "' is orbiting over '" .. sg.DistressedGroup.Group.GroupName .. "'")
         local coordDG = sg.DistressedGroup._lastCoordinate -- :GetCoordinate(false, 1)
@@ -2259,12 +2262,22 @@ function DCAF.CSAR.MenuControlled(options, caption, scope, parentMenu)
 end
 
 local function triggerCSAR(options, coalition, coordDG, funcOnCreated)
+    local hostileCoalition = GetOtherCoalitions(coalition)[1]
+    local rescueMissions = DCAF.CSAR.GetRescueMissionTemplates(coalition)
+    local captureMissions = DCAF.CSAR.GetCaptureMissionTemplates(hostileCoalition)
+    if #rescueMissions == 0 and #captureMissions == 0 then
+        Debug("triggerCSAR :: no rescue/capture mission resources available for: " .. Dump(coalition) .. "/" .. Dump(hostileCoalition) .. " :: EXITS")
+        return 
+    end
+
     local start = true
     local _, locRescue, locCapture = getEstimatedPilotLandingLocation(coordDG, coalition)
     local locStart = DCAF.Location:New(coordDG)
     local csar = DCAF.CSAR:New(locStart)
     local channel, mode = options:GetBeaconChannel()
-Debug("nisse - DCAF.CSAR:Start :: channel: " .. Dump(channel) .. " :: mode: " .. Dump(mode))
+-- Debug("nisse - triggerCSAR :: channel: " .. Dump(channel) .. " :: mode: " .. Dump(mode) .. " :: coalition: " .. Dump(coalition))
+    csar.Coalition = coalition
+-- Debug("nisse - triggerCSAR :: Coalition: " .. Dump(csar.Coalition))
     csar.BeaconChannel = channel
     csar.BeaconMode = mode
     csar.RescueEstimateLocation = locRescue
@@ -2331,26 +2344,6 @@ Debug("nisse - DCAF.CSAR:NewOnPilotEjects :: options.Codewords: " .. DumpPrettyD
         end
 
         local csar
---         local function triggerCSAR(coordLanding) obsolete
---             local start = true
---             local _, locRescue, locCapture = getEstimatedPilotLandingLocation(coordRef, coalition)
---             local locStart = DCAF.Location:New(coordLanding)
---             csar = DCAF.CSAR:New(locStart)
---             local channel, mode = options:GetBeaconChannel()
--- Debug("nisse - DCAF.CSAR:Start :: channel: " .. Dump(channel) .. " :: mode: " .. Dump(mode))
---             csar.BeaconChannel = channel
---             csar.BeaconMode = mode
---             csar.RescueEstimateLocation = locRescue
---             csar.CaptureEstimateLocation = locCapture
---             local start = true
---             if isFunction(funcOnCreated) then
---                 start = funcOnCreated(csar) or true
---             end
---             if start then
---                 csar:Start(options)
---             end
---         end
-
         local isTriggeredOnEjection = options:IsTriggeredOnEjection()
         if isTriggeredOnEjection then
             csar = triggerCSAR(options, coalition, coordRef, funcOnCreated)
@@ -2359,7 +2352,9 @@ Debug("nisse - DCAF.CSAR:NewOnPilotEjects :: options.Codewords: " .. DumpPrettyD
             if not isTriggeredOnEjection then
                 csar = triggerCSAR(options, coalition, coordLanding, funcOnCreated)
             end
-            csar.DistressedGroup:Start(options)
+            if csar then
+                csar.DistressedGroup:Start(options)
+            end
         end)
     end)
     return self
@@ -2488,9 +2483,37 @@ local mgt = missionGroupTemplate
 -- debug_listRGs(self.RescueGroups, "DCAF.CSAR:StartRescueMission")
 end
 
+function DCAF.CSAR.GetRescueMissionTemplates(coalition)
+Debug("nisse - DCAF.CSAR.GetRescueMissionTemplates :: coalition: " .. Dump(coalition) .. " :: RescueMissionTemplates: " .. DumpPretty(DCAF.CSAR.RescueMissionTemplates))
+    local missions = {}
+    for _, msnTemplate in ipairs(DCAF.CSAR.RescueMissionTemplates) do
+        if coalition == msnTemplate.Coalition then
+            table.insert(missions, msnTemplate)
+        end
+    end
+    return missions
+end
+
+function DCAF.CSAR.GetCaptureMissionTemplates(coalition)
+    local missions = {}
+Debug("nisse - DCAF.CSAR.GetCaptureMissionTemplates :: coalition: " .. Dump(coalition) .. " CaptureMissionTemplates: " .. DumpPrettyDeep(DCAF.CSAR.CaptureMissionTemplates, 2))
+    for _, msnTemplate in ipairs(DCAF.CSAR.CaptureMissionTemplates) do
+        if coalition == msnTemplate.Coalition then
+            table.insert(missions, msnTemplate)
+        end
+    end
+    return missions
+end
+
+function DCAF.CSAR.IsRescueMissionsAvailable()
+end
+
+function DCAF.CSAR.IsCaptureMissionsAvailable()
+end
+
 function DCAF.CSAR:TriggerRescueMissions(options)
-    if not options.AutoSpawnRescueMission then
-        return end
+    if not options.AutoSpawnRescueMission or not DCAF.CSAR.IsRescueMissionsAvailable() then
+        return self end
 
     local msn, airbase = getClosestMission(self.RescueEstimateLocation, self.RescueMissionTemplates)
     if not msn then
@@ -2498,17 +2521,21 @@ function DCAF.CSAR:TriggerRescueMissions(options)
         return
     end
     self:StartRescueMission(msn, airbase)
+    return self
 end
 
 function DCAF.CSAR:TriggerCaptureMissions(options)
-    local msn, airbase = getClosestMission(self.CaptureEstimateLocation, self.CaptureMissionTemplates)
+Debug("nisse - DCAF.CSAR:TriggerCaptureMissions :: self.Coalition: " ..Dump(self.Coalition))    
+    local hostileCoalition = GetOtherCoalitions(self.Coalition, true)[1]
+    local msn, airbase = getClosestMission(self.CaptureEstimateLocation, DCAF.CSAR.GetCaptureMissionTemplates(hostileCoalition)) -- self.CaptureMissionTemplates) obsolete
     if not msn then
         Warning("DCAF.CSAR:TriggerCaptureMissions :: " .. self.Name .." :: could not resolve a suitable capture mission")
-        return
+        return self
     end
-    Delay(math.random(Minutes(1)--[[, Minutes(1)]]), function()
+    Delay(math.random(Minutes(1)), function()
         self:StartCaptureMission(msn, airbase)
     end)
+    return self
 end
 
 function DCAF.CSAR:DirectCapableHuntersToCapture()
@@ -2637,10 +2664,12 @@ function DCAF.CSAR.InitDistressBeacon(beaconTemplate, timeActive, timeInactive)
     return DCAF.CSAR
 end
 
-local function initMissions(missionTable, ...)
+local function initMissions(coalition, missionTable, ...)
     local count = 0
+    
     for i = 1, #arg, 1 do
         local mission = arg[i]
+        mission.Coalition = coalition
         if not isClass(mission, DCAF.CSAR.Mission.ClassName) then
             error("DCAF.CSAR.Mission:New :: arg[" .. Dump(i) .. "] is not a #" .. DCAF.CSAR.Mission.ClassName) end
 
@@ -2651,13 +2680,21 @@ local function initMissions(missionTable, ...)
         error("DCAF.CSAR.Mission:New :: expected at least one #" .. DCAF.CSAR.Mission.ClassName) end
 end
 
-function DCAF.CSAR.InitRescueMissions(...)
-    initMissions(DCAF.CSAR.RescueMissionTemplates, ...)
+function DCAF.CSAR.InitRescueMissions(coalition, ...)
+    local validCoalition = Coalition.Resolve(coalition)
+    if not validCoalition then
+        error("DCAF.CSAR.InitRescueMissions :: cannot resolve coalition from: " .. DumpPretty(coalition)) end
+
+    initMissions(validCoalition, DCAF.CSAR.RescueMissionTemplates, ...)
     return DCAF.CSAR
 end
 
-function DCAF.CSAR.InitCaptureMissions(...)
-    initMissions(DCAF.CSAR.CaptureMissionTemplates, ...)
+function DCAF.CSAR.InitCaptureMissions(coalition, ...)
+    local validCoalition = Coalition.Resolve(coalition)
+    if not validCoalition then
+        error("DCAF.CSAR.InitCaptureMissions :: cannot resolve coalition from: " .. DumpPretty(coalition)) end
+
+    initMissions(validCoalition, DCAF.CSAR.CaptureMissionTemplates, ...)
     return DCAF.CSAR
 end
 
@@ -2942,15 +2979,17 @@ local function buildCSARMenus(caption, scope, parentMenu)
     if not isAssignedString(caption) then
         caption = "CSAR"
     end
-    local testCoalition = Coalition.Resolve(scope, true)
+    local dcsCoalition = Coalition.Resolve(scope, true)
     local controllerGroup
-    if not testCoalition then
+    if not dcsCoalition then
         controllerGroup = getGroup(scope)
         if not controllerGroup then
             error("buildCSARMenus :: unrecognized `scope` (expected #Coalition or #GROUP/group name): " .. DumpPretty(scope)) end
 
-        testCoalition = controllerGroup:GetCoalition()
+        dcsCoalition = controllerGroup:GetCoalition()
     end
+    local dcafCoalition = Coalition.Resolve(dcsCoalition)
+Debug("nisse - buildCSARMenus :: dcafCoalition: " .. Dump(dcafCoalition))
 
     local function menu(caption, parentMenu)
         if not parentMenu then
@@ -2959,7 +2998,7 @@ local function buildCSARMenus(caption, scope, parentMenu)
         if controllerGroup then
             return MENU_GROUP:New(controllerGroup, caption, parentMenu)
         else
-            return MENU_COALITION:New(testCoalition, caption, parentMenu)
+            return MENU_COALITION:New(dcsCoalition, caption, parentMenu)
         end
     end
 
@@ -2967,8 +3006,13 @@ local function buildCSARMenus(caption, scope, parentMenu)
         if controllerGroup then
             return MENU_GROUP_COMMAND:New(controllerGroup, caption, parentMenu, func, ...)
         else
-            return MENU_COALITION_COMMAND:New(testCoalition, caption, parentMenu, func, ...)
+            return MENU_COALITION_COMMAND:New(dcsCoalition, caption, parentMenu, func, ...)
         end
+    end
+
+    local function isFriendly(csar)
+Debug("nisse - isFriendly :: csar.Coalition: " .. Dump(csar.Coalition) .. " :: dcafCoalition: " .. Dump(dcafCoalition))        
+        return csar.Coalition == dcafCoalition
     end
 
     local function startCSAR(csar, msn, airbase)
@@ -2998,6 +3042,14 @@ local function buildCSARMenus(caption, scope, parentMenu)
     _rebuildMenusParentMenu = parentMenu
 
     for _, csar in ipairs(activeCSAR) do
+Debug("nisse - buildCSARMenus :: csar: " .. DumpPretty(csar))
+
+        if not isFriendly(csar) then
+            -- todo Consider supporting sending capture missions
+Debug("nisse - buildCSARMenus :: not friendly :: EXIT")
+            break
+        end
+
         if csar.ActiveRescueMission then
             local msnMenuText = csar:DisplayState() -- .Name .. " - " .. csar:GetBeaconText() .. "\n    " .. DCAF.GetBullseyeText(csar.RescueEstimateLocation, csar.DistressedGroup.Coalition)
             local msnMenu = menu(msnMenuText)
@@ -3012,7 +3064,8 @@ local function buildCSARMenus(caption, scope, parentMenu)
             -- build menus for launching CSAR missions ...
             local msnMenuText = csar.Name .. " - " .. csar:GetBeaconText() .. "\n    " .. DCAF.GetBullseyeText(csar.RescueEstimateLocation, csar.DistressedGroup.Coalition)
             local csarMenu = menu(msnMenuText, _csarMainMenu)
-            local rescueMissions = sortedMissions(csar, csar.RescueMissionTemplates)
+Debug("nisse - buildCSARMenus :: validCoalition: " .. Dump(dcsCoalition))
+            local rescueMissions = sortedMissions(csar, DCAF.CSAR.GetRescueMissionTemplates(dcafCoalition)) -- csar.RescueMissionTemplates)
             local count = 0
             for _, msn in ipairs(rescueMissions) do
                 for _, airbase in ipairs(msn.Airbases) do

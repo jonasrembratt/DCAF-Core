@@ -30,7 +30,7 @@ DCAF.CSAR.InitDistressedGroup(
 DCAF.CSAR.InitDistressBeacon("CSAR Distress Beacon")
 
 -- rescue
-DCAF.CSAR.InitRescueMissions(
+DCAF.CSAR.InitRescueMissions(Coalition.Blue,
     DCAF.CSAR.Mission:New("Blackhawk + 2 Apaches", 
         DCAF.CSAR.RescueGroup:New("BLUE Rescue Blackhawk"):WithCapabilities(true, true),
         DCAF.CSAR.RescueGroup:New("BLUE Rescue Apache", 2)):AddAirbases(BlueAirforceCSARAirbases),
@@ -43,7 +43,7 @@ DCAF.CSAR.InitRescueMissions(
         DCAF.CSAR.RescueGroup:New("BLUE Rescue Seahawk"):WithCapabilities(true, true),
         DCAF.CSAR.RescueGroup:New("BLUE Rescue Cobra", 2)):AddAirbases({ LHA_1 }))--.InitCallsign("Roman")
 
-DCAF.CSAR.InitCaptureMissions(
+DCAF.CSAR.InitCaptureMissions(Coalition.Red,
     DCAF.CSAR.Mission:New("Mi-8 + 2 Ka-50", 
         DCAF.CSAR.RescueGroup:New("RED Capture Heli-transport"):WithCapabilities(nil, true),
         DCAF.CSAR.RescueGroup:New("RED Capture Heli-escort", 2)):AddAirbases({ AIRBASE.PersianGulf.Jiroft_Airport }))
@@ -52,8 +52,7 @@ DCAF.CSAR.InitCaptureMissions(
 -- local csar = DCAF.CSAR:New(nil, "Downed Pilot", "CSAR-1"):StartRescue():StartCapture()
 local options = DCAF.CSAR.Options:New():WithCodewords("JamesBond")--:WithTrigger(CSAR_Trigger.Ejection)
 Debug("nisse - MIZ :: options: " .. DumpPrettyDeep(options))
-DCAF.CSAR.MenuControlled(options, "Test CSAR") --, "_C2") -- NewOnPilotEjects(options)
-
+DCAF.CSAR.MenuControlled(options, "Test CSAR", "_C2") --, "_C2") -- NewOnPilotEjects(options)
 DCAF.CSAR.RunScenarioInZone("TZ_CSAR", Coalition.Blue, options)
 
 -- GROUP IN DISTRESS...
