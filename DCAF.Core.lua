@@ -75,7 +75,7 @@ end
 VariableValue = {
     ClassName = "VariableValue",
     Value = 100,           -- #number - fixed value)
-    VarianSearchGroup      -- #number - variance (0.0 --> 1.0)
+    Variance = nil         -- #number - variance (0.0 --> 1.0)
 }
 
 function isString( value ) return type(value) == "string" end
@@ -664,23 +664,60 @@ function VariableValue:New(value, variance)
     return vv
 end
 
+function VariableValue:NewRange(min, max, minVariance, maxVariance)
+    if not isNumber(min) then
+        error("VariableValue:New :: `min` must be a number but was " .. type(min)) end
+    if not isNumber(max) then
+        error("VariableValue:New :: `max` must be a number but was " .. type(max)) end
+    if minVariance ~= nil and not isNumber(minVariance) then
+        error("VariableValue:New :: `minVariance` must be a number but was " .. type(minVariance)) end
+    if maxVariance ~= nil and not isNumber(maxVariance) then
+        error("VariableValue:New :: `maxVariance` must be a number but was " .. type(maxVariance)) end
+        
+    if min > max then
+        min, max = swap(min, max)
+    elseif min == max then
+        return VariableValue:New(min, minVariance)
+    end
+
+    local vv = DCAF.clone(VariableValue)
+    vv.MinValue = min
+    vv.MaxValue = max
+    vv.MinVariance = minVariance
+    vv.MaxVariance = maxVariance
+    return vv
+end
+
 function VariableValue:GetValue()
-    if self.Variance == 0 then
-        return self.Value
+    local function getValue(value, variance)
+        if variance == nil or variance == 0 then
+            return value end
+
+        local rndVar = math.random(variance * 100) / 100
+        local var = rndVar * value
+        if math.random(100) <= 50 then
+            return value - var
+        else
+            return value + var
+        end
     end
-    local rndVar = math.random(self.Variance * 100) / 100
-    local var = rndVar * self.Value
-    if math.random(100) <= 50 then
-        return self.Value - var
-    else
-        return self.Value + var
+
+    local function getBoundedValue()
+        local minValue = getValue(self.MinValue, self.MinVariance)
+        local maxValue = getValue(self.MaxValue, self.MaxVariance or self.MinVariance)
+        return math.random(minValue, maxValue )
     end
+
+    if self.MinValue then
+        return getBoundedValue()
+    end
+    return getValue(self.Value, self.Variance)
 end
 
 function Vec3_FromBullseye(aCoalition)
     local testCoalition = Coalition.Resolve(aCoalition, true)
     if isNumber(testCoalition) then
-Debug("nisse - Vec3_FromBullseye :: gets bullseye for coalition: " .. Dump(aCoalition))
+-- Debug("nisse - Vec3_FromBullseye :: gets bullseye for coalition: " .. Dump(aCoalition))
         return coalition.getMainRefPoint(testCoalition)
     end
 end
@@ -939,8 +976,11 @@ function errorOnDebug(message)
 end
 
 function Delay( seconds, userFunction, data )
-    if (not isNumber(seconds)) then error("Delay :: seconds was not specified") end
-    if (userFunction == nil) then error("Delay :: userFunction was not specified") end
+    if isVariableValue(seconds) then
+        seconds = seconds:GetValue()
+    end
+    if not isNumber(seconds) then error("Delay :: `seconds` must be #number or #VariableValue, but was: " .. DumpPretty(seconds)) end
+    if not isFunction(userFunction) then error("Delay :: `userFunction` must be function, but was: " .. type(userFunction)) end
     
     if seconds == 0 then
         userFunction(data)
@@ -1316,6 +1356,18 @@ function getGroup( source )
     end
 end
 
+function getControllable( source )
+    local unit = getUnit(source)
+    if (unit ~= nil) then 
+      return unit end
+    
+    local group = getGroup(source)
+    if (group ~= nil) then 
+      return group end
+
+    return nil
+end
+
 function getStatic( source )
     if isStatic(source) then
         return source end
@@ -1338,6 +1390,19 @@ function getAirbase( source )
 
     if isNumber(source) then
         return AIRBASE:FindByID(source) end
+end
+
+function getZone( source )
+Debug("nisse - getZone :: source: " .. DumpPretty(source))
+    if isZone(source) then
+        return source end
+
+    if not isAssignedString(source) then
+        return end
+
+    local zone = ZONE:FindByName(source)
+Debug("nisse - getZone :: source: " .. source .. " :: zone: " .. Dump(zone~=nil))
+    return zone
 end
 
 function activateNow( source )
@@ -1408,6 +1473,8 @@ DCAF.Location = {
 }
 
 function DCAF.Location:NewNamed(name, source, throwOnFail)
+-- Debug("nisse - DCAF.Location:NewNamed :: source: " .. DumpPretty(source))
+
     if source == nil then
         error("DCAF.Location:New :: `source` cannot be unassigned") end
 
@@ -1452,12 +1519,12 @@ function DCAF.Location:NewNamed(name, source, throwOnFail)
         return location
     else
         -- try resolve source...
+        local zone = getZone(source)
+        if zone then return DCAF.Location:New(zone) end
         local group = getGroup(source)
         if group then return DCAF.Location:New(group) end
         local unit = getUnit(source)
         if unit then return DCAF.Location:New(unit) end
-        local zone = getZone(source)
-        if zone then return DCAF.Location:New(zone) end
         local airbase = getAirbase(source)
         if airbase then return DCAF.Location:New(airbase) end
         local static = getStatic(source)
@@ -1971,22 +2038,6 @@ function GetEscortClientGroup( source, maxDistance, resolveSubjective )
 
 end
   
-function getControllable( source )
-    local unit = getUnit(source)
-    if (unit ~= nil) then 
-      return unit end
-    
-    local group = getGroup(source)
-    if (group ~= nil) then 
-      return group end
-
-    return nil
-end
-
-function getZone( source )
-    return ZONE:FindByName( source )
-end
-
 function GetOtherCoalitions( source, excludeNeutral )
     local c
     if isAssignedString(source) then
@@ -2021,6 +2072,10 @@ function GetOtherCoalitions( source, excludeNeutral )
     elseif c == Coalition.Neutral or c == coalition.side.NEUTRAL then
         return { Coalition.Red, Coalition.Blue }
     end
+end
+
+function GetHostileCoalition(source)
+    return GetOtherCoalitions(source, true)[1]
 end
 
 --[[
@@ -2104,18 +2159,18 @@ function MessageTo(recipient, message, duration )
             MessageTo(group, message, duration)
             return
         end
-        local testCoalition = Coalition.Resolve(recipient)
-        if testCoalition then
+        local dcafCoalition = Coalition.Resolve(recipient)
+        if dcafCoalition then
             if (string.match(message, ".\.ogg") or string.match(message, ".\.wav")) then
                 local audio = USERSOUND:New(message)
-                if testCoalition == Coalition.Blue then
+                if dcafCoalition == Coalition.Blue then
                     audio:ToCoalition(coalition.side.BLUE)
-                elseif testCoalition == Coalition.Red then
+                elseif dcafCoalition == Coalition.Red then
                     audio:ToCoalition(coalition.side.RED)
                 end
                 return
             end
-            if testCoalition == Coalition.Blue then
+            if dcafCoalition == Coalition.Blue then
                 MessageToBlue(message, duration)
             elseif coalition == Coalition.Red then
                 MessageToRed(message, duration)
@@ -2127,6 +2182,7 @@ function MessageTo(recipient, message, duration )
     end
 
     if (string.match(message, ".\.ogg") or string.match(message, ".\.wav")) then
+Debug("nisse - MessageTo :: sound: " .. message)        
         local audio = USERSOUND:New(message)
         if recipient == nil or DebugAudioMessageToAll then
             Trace("MessageTo (audio) :: (all) :: '" .. message .. "'")
@@ -6027,6 +6083,80 @@ local function DCAF_Service_OnFuelState(args)
     MissionEvents:OnFuelState(args.Service.Group, args.State, function() args.Func(args.Service) end)
 end
 
+local DCAF_AttackedHVAA = { -- dictionary
+    -- key = #string :: HVAA group name
+}
+
+function AttackHVAA(controllable, nRadius, callsign, callsignNo)
+    local group = getGroup(controllable)
+    if not group then
+        return Warning("AttackAirService :: cannot resolve group from `controlable`: " .. DumpPretty(ControlledPlane)) 
+    end
+    if not isNumber(nRadius) then 
+        nRadius = NauticalMiles(60)
+    end
+    local coord = group:GetCoordinate()
+    local zone = ZONE_GROUP:New(group.GroupName, group, nRadius)
+    local set_groups = SET_GROUP:New():FilterZones({ zone }):FilterOnce()
+    local hvaaGroups = {}
+
+    local function setupAttack(hvaaGroup)
+Debug("AttackAirHVAA :: '" .. group.GroupName .. " attacks " .. hvaaGroup.GroupName)
+        local countAttacks = DCAF_AttackedHVAA[hvaaGroup.GroupName]
+        if not countAttacks then
+            countAttacks = 1
+        else
+            countAttacks = countAttacks + 1
+        end
+        DCAF_AttackedHVAA[hvaaGroup.GroupName] = countAttacks
+        TaskAttackGroup(group, hvaaGroup)
+    end
+
+    local function sortHVAAGroupsForAttack()
+        table.sort(hvaaGroups, function(a, b)
+            if a == nil then
+                return false end
+
+            if b == nil then
+                return true end
+
+            local countA = DCAF_AttackedHVAA[a.GroupName]
+            local countB = DCAF_AttackedHVAA[b.GroupName]
+            if not countA then countA = 0 end
+            if not countB then countB = 0 end
+            return countA < countB
+
+        end)
+        return hvaaGroups
+    end
+
+    set_groups:ForEachGroup(function(hvaaGroup)
+        local hvaaCallsign, number = IsAirService(hvaaGroup)
+        if not hvaaCallsign then 
+            return end
+
+        if callsign then
+            if callsign ~= hvaaCallsign then
+                return end
+            
+            if callsignNo then
+                if callsignNo ~= number then
+                    return end
+                
+                return setupAttack(hvaaGroup)
+            else
+                return setupAttack(hvaaGroup)
+            end
+        end
+
+        table.insert(hvaaGroups, hvaaGroup)
+    end)
+
+    local sortedHVAA = sortHVAAGroupsForAttack()
+    setupAttack(sortedHVAA[1])
+
+end
+
 local function onFuelState(service, state, func)
     local self = service
     if self:IsMissing() then
@@ -6894,11 +7024,12 @@ function DCAF.TankerTrack:ActivateAirbase(tankerInfo, route, behavior)
         return { wpIngress, wpIP }
     end
 
-    if DCAF.AIR_ROUTE and isClass(route, DCAF.AIR_ROUTE.ClassName) then
+Debug("nisse - DCAF.TankerTrack:ActivateAirbase :: route: " .. DumpPretty(route))    
+    if DCAF.AIR_ROUTE and isRoute(route) then
         airbase = route.DepartureAirbase
         waypoints = listJoin(route.Waypoints, trackIngressWaypoints())
         wpIP = #route.Waypoints
-    elseif isClass(route, AIRBASE.ClassName) then
+    elseif isAirbase(route) then
         airbase = route
         local coordAirbase = airbase:GetCoordinate()
         local wpDeparture = coordAirbase:WaypointAirTakeOffParkingHot(COORDINATE.WaypointAltType.BARO) -- todo consider ability to configure type of takeoff
@@ -7282,14 +7413,14 @@ local function buildTankerMenus(caption, scope)
     if not isAssignedString(caption) then
         caption = "Tankers"
     end
-    local testCoalition = Coalition.Resolve(scope, true)
+    local dcafCoalition = Coalition.Resolve(scope, true)
     local group
-    if not testCoalition then
+    if not dcafCoalition then
         group = getGroup(scope)
         if not group then
             error("buildTankerMenus :: unrecognized `scope` (expected #Coalition or #GROUP/group name): " .. DumpPretty(scope)) end
 
-        testCoalition = group:GetCoalition()
+        dcafCoalition = group:GetCoalition()
     end
     local tracks = sortedTracks()
     if _tanker_menu then
@@ -7298,7 +7429,7 @@ local function buildTankerMenus(caption, scope)
         if group then
             _tanker_menu = MENU_GROUP:New(group, caption)
         else
-            _tanker_menu = MENU_COALITION:New(testCoalition, caption)
+            _tanker_menu = MENU_COALITION:New(dcafCoalition, caption)
         end
     end
     for _, track in ipairs(tracks) do
@@ -7306,7 +7437,7 @@ local function buildTankerMenus(caption, scope)
         if group then
             menuTrack = MENU_GROUP:New(group, track.Name, _tanker_menu)
         else
-            menuTrack = MENU_COALITION:New(testCoalition, track.Name, _tanker_menu)
+            menuTrack = MENU_COALITION:New(dcafCoalition, track.Name, _tanker_menu)
         end
 
         if not track:IsBlocked() then
@@ -7318,7 +7449,7 @@ local function buildTankerMenus(caption, scope)
                 if group then
                     MENU_GROUP_COMMAND:New(group, "DEACTIVATE", menuTrack, deactivateTrack)
                 else
-                    MENU_COALITION_COMMAND:New(testCoalition, "DEACTIVATE", menuTrack, deactivateTrack)
+                    MENU_COALITION_COMMAND:New(dcafCoalition, "DEACTIVATE", menuTrack, deactivateTrack)
                 end
             end
             
@@ -7347,7 +7478,7 @@ local function buildTankerMenus(caption, scope)
                     if group then
                         rtbMenu = MENU_GROUP:New(group, "RTB " .. tanker.DisplayName, menuTrack)
                     else
-                        rtbMenu = MENU_COALITION:New(testCoalition, "RTB " .. tanker.DisplayName, menuTrack)
+                        rtbMenu = MENU_COALITION:New(dcafCoalition, "RTB " .. tanker.DisplayName, menuTrack)
                     end
                 end
                 for _, airServiceBase in ipairs(airdromes) do
@@ -7360,14 +7491,14 @@ Debug("nisse - MENU :: rtbRoute :: name: " .. rtbRoute.Name .. " :: waypoints: "
                              if group then
                                 rtbMenu:GroupCommand(group, menuText .. " (" .. rtbRoute.Name .. ")", sendTankerHome, airbaseName, rtbRoute)
                              else
-                                rtbMenu:CoalitionCommand(testCoalition, menuText .. " (" .. rtbRoute.Name .. ")", sendTankerHome, airbaseName, rtbRoute)
+                                rtbMenu:CoalitionCommand(dcafCoalition, menuText .. " (" .. rtbRoute.Name .. ")", sendTankerHome, airbaseName, rtbRoute)
                              end
                         end
                     else
                         if group then
                             MENU_GROUP_COMMAND:New(group, menuText, rtbMenu or menuTrack, sendTankerHome, airbaseName)
                         else
-                            MENU_COALITION_COMMAND:New(testCoalition, menuText, rtbMenu or menuTrack, sendTankerHome, airbaseName)
+                            MENU_COALITION_COMMAND:New(dcafCoalition, menuText, rtbMenu or menuTrack, sendTankerHome, airbaseName)
                         end
                     end
                 end
@@ -7388,30 +7519,43 @@ Debug("nisse - MENU :: rtbRoute :: name: " .. rtbRoute.Name .. " :: waypoints: "
                         end
                         local menuTanker
                         if group then
-                            menuTanker = MENU_GROUP:New(group, tankerInfo:ToStrin(), menuTrack)
+                            menuTanker = MENU_GROUP:New(group, tankerInfo:ToString(), menuTrack)
                         else
-                            menuTanker = MENU_COALITION:New(testCoalition, tankerInfo:ToString(), menuTrack)
+                            menuTanker = MENU_COALITION:New(dcafCoalition, tankerInfo:ToString(), menuTrack)
                         end
+                        -- if group then
+                        --     MENU_GROUP_COMMAND:New(group, "Activate AIR", menuTanker, activateAir)
+                        --     MENU_GROUP_COMMAND:New(group, "Activate GND", menuTanker, activateGround)
+                        --     -- todo Support multiple airbases/routes for group senctric menu
+                        -- else
                         if group then
                             MENU_GROUP_COMMAND:New(group, "Activate AIR", menuTanker, activateAir)
-                            MENU_GROUP_COMMAND:New(group, "Activate GND", menuTanker, activateGround)
-                            -- todo Support multiple airbases/routes for group senctric menu
                         else
-                            MENU_COALITION_COMMAND:New(testCoalition, "Activate AIR", menuTanker, activateAir)
-                            if isList(tankerInfo.Airbases) then
-                                local mnuAirbases = DCAF.MENU:New(menuTanker)
-                                for _, airServiceBase in ipairs(tankerInfo.Airbases) do  -- #DCAF_AirServiceBase
-                                    local airbaseName = airServiceBase.Airbase.AirbaseName
-                                    if isList(airServiceBase.Routes) then
-                                        for _, route in ipairs(airServiceBase.Routes) do -- #DCAF.AIR_ROUTE
-                                            local mnuText = "Activate from " .. airbaseName .. " (" .. route.Name  .. ")"
-                                            mnuAirbases:CoalitionCommand(testCoalition, mnuText,  activateGround, route)
+                            MENU_COALITION_COMMAND:New(dcafCoalition, "Activate AIR", menuTanker, activateAir)
+                        end
+                        -- MENU_COALITION_COMMAND:New(dcafCoalition, "Activate AIR", menuTanker, activateAir)
+                        if isList(tankerInfo.Airbases) then
+                            local mnuAirbases = DCAF.MENU:New(menuTanker)
+                            for _, airServiceBase in ipairs(tankerInfo.Airbases) do  -- #DCAF_AirServiceBase
+                                local airbaseName = airServiceBase.Airbase.AirbaseName
+                                if isList(airServiceBase.Routes) then
+                                    for _, route in ipairs(airServiceBase.Routes) do -- #DCAF.AIR_ROUTE
+                                        local mnuText = "Activate from " .. airbaseName .. " (" .. route.Name  .. ")"
+                                        if group then
+                                            mnuAirbases:GroupCommand(group, mnuText,  activateGround, route)
+                                        else
+                                            mnuAirbases:CoalitionCommand(dcafCoalition, mnuText,  activateGround, route)
                                         end
+                                    end
+                                else
+                                    if group then
+                                        mnuAirbases:GroupCommand(group, "Activate from " .. airbaseName, activateGround, airServiceBase.Airbase)
                                     else
-                                        mnuAirbases:CoalitionCommand(testCoalition, "Activate from " .. airbaseName, activateGround, airServiceBase.Airbase)
+                                        mnuAirbases:CoalitionCommand(dcafCoalition, "Activate from " .. airbaseName, activateGround, airServiceBase.Airbase)
                                     end
                                 end
                             end
+                            -- end
                         end
                     elseif tankerInfo.Track.Name ~= track.Name then
                         table.insert(activeTankers, tankerInfo)
@@ -7426,7 +7570,7 @@ Debug("nisse - MENU :: rtbRoute :: name: " .. rtbRoute.Name .. " :: waypoints: "
                         if group then
                             MENU_GROUP_COMMAND:New(group, "REASSIGN " .. tanker:ToString() .. " @ " .. tanker.Track.Name, menuTrack, reassignTanker, tanker)
                         else
-                            MENU_COALITION_COMMAND:New(testCoalition, "REASSIGN " .. tanker:ToString() .. " @ " .. tanker.Track.Name, menuTrack, reassignTanker, tanker)
+                            MENU_COALITION_COMMAND:New(dcafCoalition, "REASSIGN " .. tanker:ToString() .. " @ " .. tanker.Track.Name, menuTrack, reassignTanker, tanker)
                         end
                     end
                 end

@@ -1,3 +1,9 @@
+-- ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+--        DCAF.CSAR - CSAR missions, created dynamically when pilots ejects or doctored to suit a storyline (or both)
+--                                                Digital Coalition Air Force
+--                                                          2023
+-- ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 DCAF.Weather = {
     Factor = 1,
 }
@@ -79,6 +85,7 @@ local PinnedNavyMissionName
 
 DCAF.CSAR = {
     ClassName = "DCAF.CSAR",
+    Debug = false,                          -- #bool - true wil draw distressed pilot locations and search on 
     Name = nil,
     RescueState = CSAR_MissionState.Pending,-- #CSAR_MissionState
     DistressedGroup = nil,                  -- #DCAF.CSAR.DistressedGroup
@@ -95,6 +102,10 @@ DCAF.CSAR = {
     -- Weather = DCAF.Weather:Static()
 }
 
+function DCAF.CSAR.IsDebugging()
+    return DCAF.Debug and DCAF.CSAR.Debug
+end
+
 DCAF.CSAR.Options = {
     ClassName = "DCAF.CSAR.Options",
     NotifyScope = nil,                      -- #GROUP (, group name,) or #Coalition
@@ -104,7 +115,8 @@ DCAF.CSAR.Options = {
     DelayCaptureMission = VariableValue:New(Minutes(10), .5), -- #number or #VariableValue - time before capture mission launches (not started if DistressedGroupTemplate.CanBeCatured is false)
     AutoSpawnRescueMission = true,          -- #bool - automatically spawns a rescue mission when a pilot ejects and lands
     Trigger = CSAR_Trigger.Landing,         -- #CSAR_Trigger - specifies when a CSAR is created (when pilot ejects or later, as he's landed on the ground/in water)
-    TriggerRandom = .5                      -- only applies when Trigger == CSAR_Trigger.Random (0.0-value = Ejection; value-1.0 = Landing)
+    TriggerRandom = .5,                     -- only applies when Trigger == CSAR_Trigger.Random (0.0-value = Ejection; value-1.0 = Landing)
+    CaptureMissionsDelay = VariableValue:New(Minutes(5), 0.5)
 }
 
 DCAF.CSAR.DistressedGroup = {
@@ -331,7 +343,7 @@ end
 
 local function debug_markLocation(dg)
     -- only updates every 10 seconds
-    if not DCAF.Debug or dg._lastCoordinate == dg._markCoordinate then
+    if not DCAF.CSAR.IsDebugging() or dg._lastCoordinate == dg._markCoordinate then
         return end
 
     local now = UTILS.SecondsOfToday()
@@ -506,7 +518,7 @@ Debug("nisse - move :: not dry path")
         setCoordinate(dg, coordMove)
         dg._nextCoordinate = coordNext
         dg._heading = hdgNext
-        if DCAF.Debug then
+        if DCAF.CSAR.IsDebugging() then
             local color = { 1, .5, 1 }
             if dg._nextCoordinateMarkID then
                 COORDINATE:RemoveMark(dg._nextCoordinateMarkID)
@@ -597,9 +609,9 @@ local function continueOnFoot(dg, coord, heading)
     local locClosestSafe = findClosestSafeLocation(dg)
     if locClosestSafe then
 
-if DCAF.Debug then        
-    locClosestSafe.Coordinate:CircleToAll(9000)
-end
+        if DCAF.CSAR.IsDebugging() then        
+            locClosestSafe.Coordinate:CircleToAll(4000, nil, {0,1,0})
+        end
         Debug(DCAF.CSAR.ClassName .. " :: " .. dg.Name .. " continues on land, trying to reach safety")
         dg:MoveTo(locClosestSafe)
     end 
@@ -733,6 +745,16 @@ local function despawnAndMove(dg)
     end
     setDistressedGroupState(dg, CSAR_DistressedGroupState.Moving)
     scheduleDistressedGroup(dg)
+end
+
+function DCAF.CSAR.OnStarted(func)
+    if not isFunction(func) then
+        error("DCAF.CSAR.OnStarted :: `func` must be function, but was: " .. type(func)) end
+    if DCAF.CSAR.OnStartedFunc then
+        error("DCAF.CSAR.OnStarted :: 'OnStarted' function was already set") end
+
+    DCAF.CSAR.OnStarted = func
+    return DCAF.CSAR
 end
 
 function DCAF.CSAR.DistressedGroup:NewTemplate(sTemplate, bCanBeCaptured, smoke, flares)
@@ -1012,12 +1034,12 @@ function DCAF.CSAR.DistressedGroup:MoveTo(location, speedKmph)
 
     local coordOwn = self:GetCoordinate(false)
     self._targetLocation = testLocation
-    self._coordSafeLocation = coordLocation
+    self._coordSafeLocation = coordLocation 
     despawnAndMove(self)
-if DCAF.Debug then        
+    if DCAF.CSAR.IsDebugging() then        
 -- Debug("nisse - DCAF.CSAR.DistressedGroup:MoveTo :: self._coordSafeLocation: " .. DumpPretty(self._coordSafeLocation))
-    self._coordSafeLocation:CircleToAll(9000)
-end    
+        self._coordSafeLocation:CircleToAll(9000)
+    end    
     return self
 end
 
@@ -1287,7 +1309,7 @@ local function debug_clearSearchArea(sg)
 end
 
 local function debug_drawSearchArea(sg, color)
-    if not DCAF.Debug then return end
+    if not DCAF.CSAR.IsDebugging() then return end
     debug_clearSearchArea(sg)
     local color
     if sg:IsCaptureGroup() then
@@ -2072,7 +2094,35 @@ function DCAF.CSAR:Start(options)
     if not options.IsMenuControlled then
         self:TriggerRescueMissions(options)
     end
-    self:TriggerCaptureMissions(options)
+
+    -- automatically trigger capture missions (when configuration permits)...
+    local hostileCoalition = GetHostileCoalition(self.Coalition)
+    local autoTrigger 
+-- Debug("nisse - DCAF.CSAR:Start :: self.AutoTriggerMissions: " .. DumpPrettyDeep(DCAF.CSAR.AutoTriggerMissions, 3))
+    if DCAF.CSAR.AutoTriggerMissions then
+        autoTrigger = DCAF.CSAR.AutoTriggerMissions[hostileCoalition]
+    end 
+    if autoTrigger and autoTrigger.CaptureMissions then
+        local delay
+        if autoTrigger.CaptureMissionsDelay then
+            if isVariableValue(autoTrigger.CaptureMissionsDelay) then
+                delay = autoTrigger.CaptureMissionsDelay:GetValue()
+            else
+                delay = autoTrigger.CaptureMissionsDelay
+            end
+        end
+        if delay then
+-- Debug("nisse - DCAF.CSAR:Start :: delay: " .. Dump(delay))
+            Delay(delay, function()
+                self:TriggerCaptureMissions(options)
+            end)
+        else
+            self:TriggerCaptureMissions(options)
+        end
+    end
+    if DCAF.CSAR.OnStarted then
+        pcall(DCAF.CSAR.OnStarted, self)
+    end
     Debug("DCAF.CSAR:Start :: " .. self.Type .. " type CSAR started :: name: " .. self.Name)
 end
 
@@ -2251,12 +2301,13 @@ local function simulateEjectedPilotLanding(coordRef, funcOnLanded)
     CSAR_Scheduler:Run()
 end
 
-function DCAF.CSAR.MenuControlled(options, caption, scope, parentMenu)
+function DCAF.CSAR.MenuControlled(caption, scope, options, parentMenu)
+    options = options or DCAF.CSAR.Options:New()
     options.IsMenuControlled = true
     DCAF.CSAR.NewOnPilotEjects(options, function(csar)
         DCAF.CSAR.BuildMenus(caption, scope, parentMenu)
     end)
-    DCAF.CSAR.OnScenario(function(csar) 
+    DCAF.CSAR.OnScenario(options, function(csar) 
         DCAF.CSAR.BuildMenus(caption, scope, parentMenu)
     end)
 end
@@ -2292,7 +2343,7 @@ local function triggerCSAR(options, coalition, coordDG, funcOnCreated)
     return csar
 end
 
-function DCAF.CSAR.OnScenario(func)
+function DCAF.CSAR.OnScenario(options, func)
     if not isFunction(func) then
         error("DCAF.CSAR.OnScenario :: `func` musy be function, but was: " .. type(func)) end
 
@@ -2695,6 +2746,21 @@ function DCAF.CSAR.InitCaptureMissions(coalition, ...)
         error("DCAF.CSAR.InitCaptureMissions :: cannot resolve coalition from: " .. DumpPretty(coalition)) end
 
     initMissions(validCoalition, DCAF.CSAR.CaptureMissionTemplates, ...)
+    return DCAF.CSAR, validCoalition
+end
+
+function DCAF.CSAR.InitDelayedCaptureMissions(coalition, delay, ...)
+    local _, validCoalition = DCAF.CSAR.InitCaptureMissions(coalition, ...)
+
+    if not isNumber(delay) and not isVariableValue(delay) then
+        error("DCAF.CSAR.InitDelayedCaptureMissions :: `delay` must be #number or #" .. VariableValue.ClassName) end
+
+    DCAF.CSAR.AutoTriggerMissions = DCAF.CSAR.AutoTriggerMissions or {}
+    DCAF.CSAR.AutoTriggerMissions[validCoalition] = {
+        CaptureMissions = true,
+        CaptureMissionsDelay = delay
+    }
+Debug("nisse - DCAF.CSAR.InitDelayedCaptureMissions :: DCAF.CSAR.AutoTriggerMissions: " .. DumpPrettyDeep(DCAF.CSAR.AutoTriggerMissions, 3))
     return DCAF.CSAR
 end
 
