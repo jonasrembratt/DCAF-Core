@@ -1164,7 +1164,7 @@ function Coalition.FromNumber(coalitionValue)
         return Coalition.Blue end
         
     if coalitionValue == coalition.side.NEUTRAL then
-        return Coalition.Neutral end   
+        return Coalition.Neutral end
 end
 
 function Coalition.Equals(a, b)
@@ -2182,7 +2182,7 @@ function MessageTo(recipient, message, duration )
     end
 
     if (string.match(message, ".\.ogg") or string.match(message, ".\.wav")) then
-Debug("nisse - MessageTo :: sound: " .. message)        
+Debug("nisse - MessageTo :: sound: " .. message)
         local audio = USERSOUND:New(message)
         if recipient == nil or DebugAudioMessageToAll then
             Trace("MessageTo (audio) :: (all) :: '" .. message .. "'")
@@ -3594,6 +3594,29 @@ function HasDeactivateBeaconTask(controllabe) return HasAction(controllabe, "Dea
 
 MissionEvents = { }
 
+MissionEvents.MapMark = {
+    EventID = nil,                      -- #number - event id
+    Coalition = nil,                    -- #Coalition
+    Index = nil,                        -- #number - mark identity
+    Time = nil,                         -- #number - game world time in seconds (UTILS.SecondsOfToday)
+    Text = nil,                         -- #string - map mark text
+    GroupID = nil,                      -- #number - I have NOOO idea what this is (doesn't seem to identify who added the mark)
+    Location = nil,                     -- DCAF.Location
+}
+
+function MissionEvents.MapMark:New(event)
+    local mark = DCAF.clone(MissionEvents.MapMark)
+    mark.ID = event.id
+    mark.Coalition = Coalition.Resolve(event.coalition)
+    mark.Index = event.index
+    mark.Time = event.time
+    mark.Text = event.text
+    mark.GroupID = event.groupID
+    local coord = COORDINATE:New(event.pos.x, event.pos.y, event.pos.z)
+    mark.Location = DCAF.Location:New(coord)
+    return mark
+end
+
 local _missionEventsHandlers = {
     _missionEndHandlers = {},
     _groupSpawnedHandlers = {},
@@ -3614,6 +3637,9 @@ local _missionEventsHandlers = {
     _unitEnteredZone = {},
     _unitInsideZone = {},
     _unitLeftZone = {},
+    _mapMarkAddedHandlers = {},
+    _mapMarkChangedHandlers = {},
+    _mapMarkDeletedHandlers = {},
 }
 
 local PlayersAndUnits = { -- dictionary
@@ -3814,6 +3840,18 @@ function _e:onEvent( event )
         return
     end
 
+    if event.id == EVENTS.MarkAdded then
+        MissionEvents:Invoke(_missionEventsHandlers._mapMarkAddedHandlers, MissionEvents.MapMark:New(event))
+        return
+    end
+    if event.id == EVENTS.MarkChange then
+        MissionEvents:Invoke(_missionEventsHandlers._mapMarkChangedHandlers, MissionEvents.MapMark:New(event))
+        return
+    end
+    if event.id == EVENTS.MarkRemoved then
+        MissionEvents:Invoke(_missionEventsHandlers._mapMarkDeletedHandlers, MissionEvents.MapMark:New(event))
+        return
+    end
 end
 
 function MissionEvents:AddListener(listeners, func, predicateFunc, insertFirst )
@@ -3886,6 +3924,21 @@ function MissionEvents:OnAircraftLanded( func, insertFirst )
     MissionEvents:AddListener(_missionEventsHandlers._aircraftLandedHandlers, func, nil, insertFirst) 
 end
 function MissionEvents:EndOnAircraftLanded( func ) MissionEvents:RemoveListener(_missionEventsHandlers._aircraftLandedHandlers, func) end
+
+function MissionEvents:OnMapMarkAdded( func, insertFirst )
+    MissionEvents:AddListener(_missionEventsHandlers._mapMarkAddedHandlers, func, nil, insertFirst)
+end
+function MissionEvents:EndOnMapMarkAdded( func ) MissionEvents:RemoveListener(_missionEventsHandlers._mapMarkAddedHandlers, func) end
+
+function MissionEvents:OnMapMarkChanged( func, insertFirst )
+    MissionEvents:AddListener(_missionEventsHandlers._mapMarkChangedHandlers, func, nil, insertFirst)
+end
+function MissionEvents:EndOnMapMarkChanged( func ) MissionEvents:RemoveListener(_missionEventsHandlers._mapMarkChangedHandlers, func) end
+
+function MissionEvents:OnMapMarkDeleted( func, insertFirst )
+    MissionEvents:AddListener(_missionEventsHandlers._mapMarkDeletedHandlers, func, nil, insertFirst)
+end
+function MissionEvents:EndOnMapMarkDeleted( func ) MissionEvents:RemoveListener(_missionEventsHandlers._mapMarkDeletedHandlers, func) end
 
 --- CUSTOM EVENTS
 --- A "collective" event to capture a unit getting destroyed, regardless of how it happened
@@ -6827,6 +6880,7 @@ DCAF.TankerTrack = {
     Capacity = 2,           -- #number - no. of tankers thack can work this track
     DefaultBehavior = nil,  -- #DCAF.AirServiceBehavior
     DrawIdle = true,
+    IsDynamic = false,      -- #boolean - true = track was created from a F10 map marker
     Tankers = {
         -- list of #DCAF.AvailableTanker (currently active in track)
     },
@@ -6857,6 +6911,7 @@ local function getBlock(track)
 end
 
 function DCAF.TankerTrack:New(name, coalition, heading, coordIP, length, frequencies, blocks, capacity, behavior, appearance)
+Debug("nisse - DCAF.TankerTrack:New :: name: " .. Dump(name) .. " :: coalition: " .. Dump(coalition) .. " :: heading: " .. Dump(heading))
     local track = DCAF.clone(DCAF.TankerTrack)
     track.Name = name
     track.Heading = heading
@@ -7408,12 +7463,16 @@ local function sortedTracks()
     return DCAF.TankerTracks
 end
 
-local rebuildMenus
+local isDynamicTankerTracksSupported = false
+local rebuildTankerMenus
+local _defaultTankerMenuCaption
+local _defaultTankerMenuScope
 local function buildTankerMenus(caption, scope)
     if not isAssignedString(caption) then
-        caption = "Tankers"
+        caption = _defaultTankerMenuCaption or "Tankers"
     end
-    local dcafCoalition = Coalition.Resolve(scope, true)
+    _defaultTankerMenuCaption = caption
+    local dcafCoalition = Coalition.Resolve(scope or _defaultTankerMenuScope, true)
     local group
     if not dcafCoalition then
         group = getGroup(scope)
@@ -7422,6 +7481,7 @@ local function buildTankerMenus(caption, scope)
 
         dcafCoalition = group:GetCoalition()
     end
+    _defaultTankerMenuScope = group or dcafCoalition
     local tracks = sortedTracks()
     if _tanker_menu then
         _tanker_menu:RemoveSubMenus()
@@ -7444,7 +7504,7 @@ local function buildTankerMenus(caption, scope)
             if track:IsActive() then
                 local function deactivateTrack()
                     track:Deactivate()
-                    rebuildMenus(caption, scope)
+                    rebuildTankerMenus(caption, scope)
                 end
                 if group then
                     MENU_GROUP_COMMAND:New(group, "DEACTIVATE", menuTrack, deactivateTrack)
@@ -7458,13 +7518,12 @@ local function buildTankerMenus(caption, scope)
                 local tanker = tankerInfo.Tanker
 
                 local function sendTankerHome(airbaseName, route)
--- Debug("nisse - " .. tanker.DisplayName .. " is RTB (" .. airbaseName .. ")")
                     local airbase = AIRBASE:FindByName(airbaseName)
                     track:RemoveTanker(tankerInfo)
                     tanker:RTB(airbase, nil, route)
                     tankerInfo.GroupRTB = tankerInfo.Group
                     tankerInfo:Deactivate()
-                    rebuildMenus(caption, scope)
+                    rebuildTankerMenus(caption, scope)
                 end        
 
                 local airdromes
@@ -7487,7 +7546,6 @@ local function buildTankerMenus(caption, scope)
                     if airServiceBase.RTBRoutes and #airServiceBase.RTBRoutes > 0 then
                         local rtbMenu = DCAF.MENU:New(rtbMenu or menuTrack)
                         for _, rtbRoute in ipairs(airServiceBase.RTBRoutes) do
-Debug("nisse - MENU :: rtbRoute :: name: " .. rtbRoute.Name .. " :: waypoints: " .. DumpPrettyDeep(rtbRoute.Waypoints, 3))
                              if group then
                                 rtbMenu:GroupCommand(group, menuText .. " (" .. rtbRoute.Name .. ")", sendTankerHome, airbaseName, rtbRoute)
                              else
@@ -7511,11 +7569,11 @@ Debug("nisse - MENU :: rtbRoute :: name: " .. rtbRoute.Name .. " :: waypoints: "
                     if not tankerInfo:IsActive() then
                         local function activateAir()
                             track:ActivateAir(tankerInfo)
-                            rebuildMenus(caption, scope)
+                            rebuildTankerMenus(caption, scope)
                         end
                         local function activateGround(airbase, route)
                             track:ActivateAirbase(tankerInfo, route or airbase)
-                            rebuildMenus(caption, scope)
+                            rebuildTankerMenus(caption, scope)
                         end
                         local menuTanker
                         if group then
@@ -7564,7 +7622,7 @@ Debug("nisse - MENU :: rtbRoute :: name: " .. rtbRoute.Name .. " :: waypoints: "
                 if #activeTankers > 0 then
                     local function reassignTanker(tanker)
                         track:Reassign(tanker)
-                        rebuildMenus(caption, scope)
+                        rebuildTankerMenus(caption, scope)
                     end
                     for _, tanker in ipairs(activeTankers) do
                         if group then
@@ -7578,10 +7636,66 @@ Debug("nisse - MENU :: rtbRoute :: name: " .. rtbRoute.Name .. " :: waypoints: "
         end
     end
 end
-rebuildMenus = buildTankerMenus
+rebuildTankerMenus = buildTankerMenus
 
 function DCAF.TankerTracks:BuildMenus(caption, scope)
     buildTankerMenus(caption, scope)
+    return self
+end
+
+function DCAF.TankerTracks:AllowDynamicTracks(value)
+    if value == isDynamicTankerTracksSupported then
+        return end
+
+    isDynamicTankerTracksSupported = value
+
+    local function listenForDynamicTrackMarks(event)
+Debug("nisse - listenForDynamicTrackMarks :: event: " .. DumpPretty(event))
+        -- format: AAR <name> <heading> <length> <capacity> 
+        if string.len(event.Text) < 3 then
+            return end
+
+        local tokens = {}
+        for word in event.Text:gmatch("%w+") do
+            table.insert(tokens, word)
+        end
+        local ident = tokens[1]
+
+        -- requires as a minimum the ident 'AAR' and a name for the new track...
+        if #tokens < 2 or string.upper(tokens[1]) ~= "AAR" then
+            return end
+
+        local default = DCAF.TankerTracks[#DCAF.TankerTracks]
+        local name = tokens[2]
+
+        local function resolveNumeric(name, sValue, fallback)
+            local value
+-- Debug("nisse - resolveNumeric :: name: " .. name .. " :: sValue: " .. sValue .. " :: fallback: " .. Dump(fallback))
+            if isAssignedString(sValue) then
+                value = tonumber(sValue)
+            elseif default then
+                value = default[name]
+            end
+            return value or fallback
+        end
+
+-- Debug("nisse - listenForDynamicTrackMarks :: tokens: " .. DumpPretty(tokens))
+
+        local sHeading = tokens[3]
+        local heading = resolveNumeric("Heading", tokens[3], 360)
+        local length = resolveNumeric("Length", tokens[4])
+        local capacity = resolveNumeric("Capacity", tokens[5], 2)
+
+        DCAF.TankerTrack:New(name, event.Coalition, heading, event.Location.Source, length):Draw()
+        rebuildTankerMenus()
+    end
+
+    if value then
+        MissionEvents:OnMapMarkChanged(listenForDynamicTrackMarks)
+    else
+        MissionEvents:EndOnMapMarkChanged(listenForDynamicTrackMarks)
+    end
+    
 end
 
 -- /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
