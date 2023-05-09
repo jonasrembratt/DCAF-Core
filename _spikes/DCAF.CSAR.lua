@@ -4,6 +4,8 @@
 --                                                          2023
 -- ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+-- good info here: https://taskforcereaper.weebly.com/combat-search--rescue.html
+
 DCAF.Weather = {
     Factor = 1,
 }
