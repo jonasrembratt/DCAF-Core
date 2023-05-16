@@ -4,7 +4,11 @@
 --                                                          2023
 -- ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+<<<<<<< HEAD:DCAF.CSAR.lua
 -- https://www.airuniversity.af.edu/Portals/10/ASPJ/journals/Volume-35_Issue-2/V-Ayers_Wahlman.pdf
+=======
+-- good info here: https://taskforcereaper.weebly.com/combat-search--rescue.html
+>>>>>>> main:_spikes/DCAF.CSAR.lua
 
 DCAF.Weather = {
     Factor = 1,
