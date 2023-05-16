@@ -46,15 +46,10 @@ DCAF.CSAR.InitRescueMissions(Coalition.Blue,
 
 local between_3_and_10_minutes = VariableValue:NewRange(Minutes(3), Minutes(10))
 DCAF.CSAR.InitDelayedCaptureMissions(Coalition.Red, between_3_and_10_minutes,
--- DCAF.CSAR.InitCaptureMissions(Coalition.Red,
     DCAF.CSAR.Mission:New("Mi-8 + 2 Ka-50", 
         DCAF.CSAR.RescueGroup:New("RED Capture Heli-transport"):WithCapabilities(nil, true),
         DCAF.CSAR.RescueGroup:New("RED Capture Heli-escort", 2)):AddAirbases({ AIRBASE.PersianGulf.Jiroft_Airport, Farp_Tehran }))
         
--- actively create CSAR story (for testing) ...
--- local csar = DCAF.CSAR:New(nil, "Downed Pilot", "CSAR-1"):StartRescue():StartCapture()
--- local options = DCAF.CSAR.Options:New():WithCodewords("JamesBond")--:WithTrigger(CSAR_Trigger.Ejection)
-
 local c2_group = "_C2"
 DCAF.CSAR.OnStarted(function(csar) 
     MessageTo(nil, "ALERT! Pilot in distress, codeword '" .. csar.Name .. "'")

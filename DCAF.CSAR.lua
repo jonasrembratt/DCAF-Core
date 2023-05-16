@@ -4,11 +4,8 @@
 --                                                          2023
 -- ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-<<<<<<< HEAD:DCAF.CSAR.lua
 -- https://www.airuniversity.af.edu/Portals/10/ASPJ/journals/Volume-35_Issue-2/V-Ayers_Wahlman.pdf
-=======
 -- good info here: https://taskforcereaper.weebly.com/combat-search--rescue.html
->>>>>>> main:_spikes/DCAF.CSAR.lua
 
 DCAF.Weather = {
     Factor = 1,
@@ -28,6 +25,7 @@ local CSAR_Pickups = {
     ["UH-60A"] = true,
     ["Mi-24P"] = true,
     ["Mi-8MT"] = true,
+    -- todo Add gazelle variants
 }
 
 local CSAR_MissionState = {
@@ -1387,6 +1385,32 @@ local function newSearchGroup(template, name, sTemplate, distressedGroup, locSta
     return sg
 end
 
+local function canPickup(unit)
+    return CSAR_Pickups[unit:GetTypeName()]
+end
+
+local function countExtractionUnits(group)
+    local count = 0
+    for _, unit in ipairs(group:GetUnits()) do
+        if unit:IsAlive() and canPickup(unit) then
+            count = count + 1
+        end
+    end
+    return
+end
+
+local function countEscortUnits(group)
+    local count = 0
+    for _, unit in ipairs(group:GetUnits()) do
+local _canPickup = canPickup(unit)
+Debug("nisse - countEscortUnits :: unit: " .. unit.UnitName .. " :: canPickup: " .. Dump(_canPickup) .. " :: isAlive: " .. Dump(unit:IsAlive()))
+        if unit:IsAlive() and not canPickup(unit) then
+            count = count + 1
+        end
+    end
+    return count
+end
+
 local function withCapabilities(sg, bCanPickup, bInfraredSensor, bIsBeaconTuned, bHasBeaconSensor)
     if isBoolean(bCanPickup) then
         sg.CanPickup = bCanPickup
@@ -1394,7 +1418,7 @@ local function withCapabilities(sg, bCanPickup, bInfraredSensor, bIsBeaconTuned,
         local units = sg.GroupTemplate:GetUnits()
         for _, u in pairs(units) do
             local type = u:GetTypeName()
-            sg.CanPickup = CSAR_Pickups[type]
+            sg.CanPickup = canPickup(u)
             if sg.CanPickup then
                 break
             end
@@ -1701,7 +1725,13 @@ local function startSearchAir(sg)
     local initialHdg
     local alias
     sg.Mission._unitNo = 1
-    local spawn 
+    local spawn
+    local missionType
+    if sg:IsRescueGroup() then
+        missionType = CSAR_MissionType.Rescue
+    else
+        missionType = CSAR_MissionType.Capture
+    end 
     if sg.Alias then
         spawn = getSpawnWithAlias(sg.Template, sg.Alias)
     else
@@ -1711,10 +1741,97 @@ local function startSearchAir(sg)
     spawn:InitSkill(sg.Skill)
     local group = sg.Group
 
+    local _expandAgain
+    local function expandSearchPatternWhenSearchComplete(searchPattern)
+        local lastWP = searchPattern[#searchPattern]
+        WaypointCallback(lastWP, function() 
+            Debug("DCAF.CSAR.CaptureGroup :: last search waypoint reached :: expands search area")
+            sg.SearchRadius = sg.SearchRadius + NauticalMiles(5)
+            initialHdg = COORDINATE_FromWaypoint(lastWP):HeadingTo(sg.SearchCenter)
+            local searchPattern = getAirSearchStarPattern(sg.Group:GetCoordinate(), sg.SearchCenter, initialHdg, sg.SearchRadius, sg.Altitude, sg.AltitudeType, sg.Speed)
+            _expandAgain(searchPattern)
+            if sg.BingoFuelState then
+                testRtbCriteria(sg, searchPattern)
+            end
+            protectCSAR(sg, searchPattern)
+            group:Route(searchPattern)
+            debug_drawSearchArea(sg)
+        end)
+    end
+    _expandAgain = expandSearchPatternWhenSearchComplete
+    
+    local function initSearch()
+        local function getHoldAndWaitForEscortPattern(sg)
+            local coordDG = sg.CSAR.RescueEstimateLocation.Source
+            local distHold = coordDG:Get2DDistance(coord0)
+            local coord0 = sg.Group:GetCoordinate():Translate(NauticalMiles(3), initialHdg)
+            local wp0 = coord0:WaypointAirTakeOffParkingHot(sg.AltitudeType)
+            wp0.name = "TAKEOFF"
+            local coord1 = coord0:Translate(NauticalMiles(3), initialHdg)
+            local orbitTask = sg.Group:TaskOrbitCircleAtVec2(coord0:GetVec2(), sg.Altitude, sg.Speed)
+            local wp1 = coord1:WaypointAirTurningPoint(sg.AltitudeType, sg.Speed, { orbitTask })
+            wp1.name = "HOLD"
+            -- local wp2 = coord1:Translate(NauticalMiles(6), initialHdg):WaypointAirTurningPoint(sg.AltitudeType, sg.Speed)
+            -- wp2.name = "DUMMY"
+
+            local scheduleID
+            scheduleID = CSAR_Scheduler:Schedule(sg, function() 
+                -- orbit until escort groups have passed...
+                local escortGroups = sg.CSAR:GetEscortGroups(missionType)
+                if #escortGroups > 0 then
+                    for _, escortGroup in pairs(escortGroups) do
+                        local coordEscort = escortGroup.Group:GetCoordinate()
+                        local distEscort = coordEscort:Get2DDistance(coordDG)
+                        if distHold - NauticalMiles(3) < distEscort then
+                            return end
+                    end
+                end
+                -- end orbit and head for search area...
+                CSAR_Scheduler:Stop(scheduleID)
+                initSearch()
+            end, { }, 1, 5)
+            CSAR_Scheduler:Run()
+    
+            return { wp0, wp1, wp2 }
+        end
+    
+        local speedMax = UTILS.MpsToKmph(getMaxSpeed(group))
+        local speedSearch
+        if group:IsHelicopter() then
+            speedSearch = UTILS.KnotsToKmph(40)
+        elseif group:IsAirPlane() then
+            speedSearch = UTILS.KnotsToKmph(270)
+        elseif group:IsGround() then
+            speedSearch = UTILS.KnotsToKmph(70)
+        end
+        sg.Speed = 150 -- speedMax
+    
+        local searchPattern 
+        if sg.CanPickup and not sg.WasHolding and #sg.CSAR:GetEscortGroups(missionType) > 0 then
+            searchPattern = getHoldAndWaitForEscortPattern(sg, initialHdg)
+Debug("nisse - hold :: searchPattern: " .. DumpPretty(searchPattern))
+            group:Route(searchPattern)
+            sg.WasHolding = true
+        else
+            searchPattern = getAirSearchStarPattern(sg.Group:GetCoordinate(), sg.SearchCenter, initialHdg, sg.SearchRadius, sg.Altitude, sg.AltitudeType, sg.Speed)
+            protectCSAR(sg, searchPattern)
+            local wpFirst = searchPattern[2]
+            wpFirst.name = "START"
+            expandSearchPatternWhenSearchComplete(searchPattern)
+            group:Route(searchPattern)
+            scheduleSearchGroupDetection(sg)
+        end
+        debug_drawSearchArea(sg)
+        if sg.BingoFuelState then
+            testRtbCriteria(sg, searchPattern)
+        end        
+    end
+
     if group then
         -- resumes CSAR mission from current location...
         local coord0 = group:GetCoordinate()
         initialHdg = coord0:HeadingTo(sg.SearchCenter)
+        initSearch()
     else
         if not sg.StartLocation then
             -- spawn at random location 1 nm outside search pattern...
@@ -1742,50 +1859,96 @@ local function startSearchAir(sg)
         end
         sg:SetGroup(group)
         sg.BeaconDetection.NextCheck = UTILS.SecondsOfToday() + Minutes(10)
+        Delay(1, initSearch)
     end
 
-    local _expandAgain
-    local function expandSearchPatternWhenSearchComplete(searchPattern)
-        local lastWP = searchPattern[#searchPattern]
-        WaypointCallback(lastWP, function() 
-            Debug("DCAF.CSAR.CaptureGroup :: last search waypoint reached :: expands search area")
-            sg.SearchRadius = sg.SearchRadius + NauticalMiles(5)
-            initialHdg = COORDINATE_FromWaypoint(lastWP):HeadingTo(sg.SearchCenter)
-            local searchPattern = getAirSearchStarPattern(sg.Group:GetCoordinate(), sg.SearchCenter, initialHdg, sg.SearchRadius, sg.Altitude, sg.AltitudeType, sg.Speed)
-            _expandAgain(searchPattern)
-            if sg.BingoFuelState then
-                testRtbCriteria(sg, searchPattern)
-            end
-            protectCSAR(sg, searchPattern)
-            group:Route(searchPattern)
-            debug_drawSearchArea(sg)
-        end)
-    end
-    _expandAgain = expandSearchPatternWhenSearchComplete
+--     local _expandAgain
+--     local function expandSearchPatternWhenSearchComplete(searchPattern)
+--         local lastWP = searchPattern[#searchPattern]
+--         WaypointCallback(lastWP, function() 
+--             Debug("DCAF.CSAR.CaptureGroup :: last search waypoint reached :: expands search area")
+--             sg.SearchRadius = sg.SearchRadius + NauticalMiles(5)
+--             initialHdg = COORDINATE_FromWaypoint(lastWP):HeadingTo(sg.SearchCenter)
+--             local searchPattern = getAirSearchStarPattern(sg.Group:GetCoordinate(), sg.SearchCenter, initialHdg, sg.SearchRadius, sg.Altitude, sg.AltitudeType, sg.Speed)
+--             _expandAgain(searchPattern)
+--             if sg.BingoFuelState then
+--                 testRtbCriteria(sg, searchPattern)
+--             end
+--             protectCSAR(sg, searchPattern)
+--             group:Route(searchPattern)
+--             debug_drawSearchArea(sg)
+--         end)
+--     end
+--     _expandAgain = expandSearchPatternWhenSearchComplete
 
-    local speedMax = UTILS.MpsToKmph(getMaxSpeed(group))
-    local speedSearch
-    if group:IsHelicopter() then
-        speedSearch = UTILS.KnotsToKmph(40)
-    elseif group:IsAirPlane() then
-        speedSearch = UTILS.KnotsToKmph(270)
-    elseif group:IsGround() then
-        speedSearch = UTILS.KnotsToKmph(70)
-    end
-    sg.Speed = 150 -- speedMax
+--     local function getHoldAndWaitForEscortPattern(sg)
+-- Debug("nisse - getHoldAndWaitForEscortPattern :: sg: " .. Dump(sg:ToString()))        
 
-    local searchPattern = getAirSearchStarPattern(sg.Group:GetCoordinate(), sg.SearchCenter, initialHdg, sg.SearchRadius, sg.Altitude, sg.AltitudeType, sg.Speed)
-    protectCSAR(sg, searchPattern)
-    local wpFirst = searchPattern[2]
-    wpFirst.name = "START"
-    expandSearchPatternWhenSearchComplete(searchPattern)
-    group:Route(searchPattern)
-    debug_drawSearchArea(sg)
-    if sg.BingoFuelState then
-        testRtbCriteria(sg, searchPattern)
-    end
+--         local coordWP0 = sg.Group:GetCoordinate():Translate(NauticalMiles(3), initialHdg)
+--         local coordDG = sg.CSAR.RescueEstimateLocation.Source
+--         local distHold coordDG:Get2DDistance(coordWP0)
+--         local orbitTask = sg.Group:TaskOrbitCircleAtVec2(coordWP0:GetVec2(), sg.Altitude, sg.Speed)
+--         local wp0 = coordWP0:WaypointAirTurningPoint(sg.AltitudeType, sg.Speed, { orbitTask })
+--         local scheduleID = CSAR_Scheduler:Schedule(sg, function() 
+--             -- orbit until escort groups have passed...
+--             local escortGroups = sg.CSAR:GetEscortGroups(missionType)
+--             if escortGroups > 0 then
+--                 for _, escortGroup in pairs(escortGroups) do
+--                     local coord = escortGroup:GetCoordinate()
+--                     local dist = coord:Get2DDistance(coordDG)
+--                     if distHold - NauticalMiles(3) < dist then
+--                         return end
+--                 end
+--             end
+--             -- end orbit and head for ...
+--             local searchPattern = getAirSearchStarPattern(sg.Group:GetCoordinate(), sg.SearchCenter, initialHdg, sg.SearchRadius, sg.Altitude, sg.AltitudeType, sg.Speed)
+--             protectCSAR(sg, searchPattern)
+--             local wpFirst = searchPattern[2]
+--             wpFirst.name = "START"
+--             expandSearchPatternWhenSearchComplete(searchPattern)
+--             scheduleSearchGroupDetection(sg)
+--             if sg.BingoFuelState then
+--                 testRtbCriteria(sg, searchPattern)
+--             end
+--         end)
+--         CSAR_Scheduler:Run()
 
-    scheduleSearchGroupDetection(sg)
+--         return { wp0 }
+--     end
+
+--     local speedMax = UTILS.MpsToKmph(getMaxSpeed(group))
+--     local speedSearch
+--     if group:IsHelicopter() then
+--         speedSearch = UTILS.KnotsToKmph(40)
+--     elseif group:IsAirPlane() then
+--         speedSearch = UTILS.KnotsToKmph(270)
+--     elseif group:IsGround() then
+--         speedSearch = UTILS.KnotsToKmph(70)
+--     end
+--     sg.Speed = 150 -- speedMax
+
+--     local searchPattern 
+
+-- local countEscortGroups = #sg.CSAR:GetEscortGroups(missionType)
+-- Debug("nisse - countEscortGroups: " .. Dump(countEscortGroups))
+
+--     if sg.CanPickup and #sg.CSAR:GetEscortGroups(missionType) > 0 then
+--         searchPattern = getHoldAndWaitForEscortPattern(sg, initialHdg)
+--         group:Route(searchPattern)
+--     else
+--         searchPattern = getAirSearchStarPattern(sg.Group:GetCoordinate(), sg.SearchCenter, initialHdg, sg.SearchRadius, sg.Altitude, sg.AltitudeType, sg.Speed)
+--         protectCSAR(sg, searchPattern)
+--         local wpFirst = searchPattern[2]
+--         wpFirst.name = "START"
+--         expandSearchPatternWhenSearchComplete(searchPattern)
+--         group:Route(searchPattern)
+--         scheduleSearchGroupDetection(sg)
+--     end
+--     debug_drawSearchArea(sg)
+--     if sg.BingoFuelState then
+--         testRtbCriteria(sg, searchPattern)
+--     end
+
     return sg.Group
 end
 
@@ -1807,7 +1970,7 @@ local function startSearch(sg, speed, alt, altType)
     sg.Altitude = alt
     sg.AltitudeType = altType
     if sg.GroupTemplate:IsAir() then
-        sg.Group = startSearchAir(sg)
+        startSearchAir(sg)
         return sg
     elseif sg.GroupTemplate:IsGround() then
         return startSearchGround(sg)
@@ -2074,9 +2237,9 @@ local function directCapableGroupsToPickup(groups)
             return false end
 
         if sg.Group:IsHelicopter() or sg:IsGround() then
-            for _, u in pairs(sg.Group:GetUnits()) do
+for _, u in pairs(sg.Group:GetUnits()) do
 Debug("nisse - canPickup :: u: " .. u.UnitName .. " :: type: " .. Dump(u:GetTypeName()) .. " :: sg.CanPickup: " .. Dump(sg.CanPickup))            
-            end
+end
             return sg.CanPickup and countPickups < maxCountPickups
         else
             return false
@@ -2732,7 +2895,7 @@ function DCAF.CSAR:StartRescueMission(missionTemplate, airbase)
     setRescueMissionState(self, CSAR_MissionState.Searching)
     local locStart = DCAF.Location:New(airbase)
     local countMissionGroups = #msn.MissionGroups
-    for _, missionGroupTemplate in ipairs(msn.MissionGroups) do
+    for _, missionGroupTemplate in ipairs(missionTemplate.MissionGroups) do
         local count
         if isNumber(missionGroupTemplate.Count) then
             count = missionGroupTemplate.Count
@@ -2745,12 +2908,12 @@ function DCAF.CSAR:StartRescueMission(missionTemplate, airbase)
                 alias = alias .. "-" .. Dump(unitNo)
                 unitNo = unitNo + 1
             end
-            local rg = DCAF.CSAR.RescueGroup:NewFromTemplate(self, missionGroupTemplate, locStart) --, alias)
+            local rg = DCAF.CSAR.RescueGroup:NewFromTemplate(self, missionGroupTemplate, locStart)
                                             :WithRTB(locStart)
+            table.insert(self.RescueGroups, rg)
             rg.Mission = msn
             rg.Name = msn.Name .. "-" .. Dump(1)
             rg:Start(Knots(300))
-            table.insert(self.RescueGroups, rg)
         end
     end
     table.insert(CSAR_Missions, msn)
@@ -3105,6 +3268,41 @@ Debug("DCAF.CSAR.Mission:AddAirbases :: " .. self.Name .. " :: tAirbases: " .. D
 
     Debug("DCAF.CSAR.Mission:AddAirbases :: " .. self.Name .. " self.Airbases: " .. DumpPretty(self.Airbases))
     return self
+end
+
+--- Returns number of groups that can recover distressed group
+function DCAF.CSAR:CountRecoveryGroups(type)
+    local groups 
+    if type == CSAR_MissionType.Rescue then
+        groups = self.RescueGroups
+    else
+        groups = self.CaptureGroups
+    end
+    local count = 0
+    for _, sg in pairs(groups) do
+        if sg.CanPickup and sg.Group:IsAlive() and countExtractionUnits(sg.Group) > 0 then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+--- Returns mission groups that cannot recover distressed group
+function DCAF.CSAR:GetEscortGroups(type)
+    local groups 
+    if type == CSAR_MissionType.Rescue then
+        groups = self.RescueGroups
+    else
+        groups = self.CaptureGroups
+    end
+-- Debug("nisse - DCAF.CSAR:GetEscortGroups :: type: " .. Dump(type) .. " :: groups: " .. DumpPrettyDeep(groups, 1))
+    local escortGroups = {}
+    for _, sg in pairs(groups) do
+        if countEscortUnits(sg.Group) > 0 then
+            table.insert(escortGroups, sg)
+        end
+    end
+    return escortGroups
 end
 
 function DCAF.CSAR:DisplayRescueState()
