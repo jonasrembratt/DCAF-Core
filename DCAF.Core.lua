@@ -72,6 +72,58 @@ function DCAF.clone(template, deep, suppressDebugData)
     return cloned
 end
 
+local function resolveSource(source)
+    if isTable(source) then
+        return source end
+
+    local obj = getUnit(source)
+    if obj then
+        return obj end
+
+    obj = getGroup(source)
+    if obj then 
+        return obj end
+
+end
+
+function DCAF.tagGet(source, key)
+    local obj = resolveSource(source)
+    if not obj then 
+        return end
+
+    if not isTable(obj.DCAF) then
+        return end
+
+    return obj.DCAF[key]
+end
+
+function DCAF.tagSet(source, key, value)
+    local obj = resolveSource(source)
+    if not obj then
+        error("DCAF.tagSet :: could not resolve `source`: " .. DumpPretty(source)) end
+
+    if not isTable(obj.DCAF) then
+        obj.DCAF = {}
+    end
+    obj.DCAF[key] = value
+    return value, obj
+end
+
+function DCAF.tagEnsure(source, key, value)
+    local obj = resolveSource(source)
+    if not obj then
+        error("DCAF.tagEnsure :: could not resolve `source`: " .. DumpPretty(source)) end
+
+    if not isTable(obj.DCAF) then
+        obj.DCAF = {}
+    end
+    if obj.DCAF[key] ~= nil then
+        return obj.DCAF[key], obj end
+
+    obj.DCAF[key] = value
+    return value, obj
+end
+
 VariableValue = {
     ClassName = "VariableValue",
     Value = 100,           -- #number - fixed value)
@@ -802,27 +854,20 @@ function DCAF.DateTime:ToString()
     return Dump(self.Year) .. "/" .. Dump(self.Month) .. "/" ..Dump(self.Day) .. " " .. Dump(self.Hour) .. ":" .. Dump(self.Minute) .. ":" .. Dump(self.Second)
 end
 
-
 local Deg2Rad = math.pi / 180.0;
 local Rad2Deg = 180.0 / math.pi
 
 function COORDINATE:SunPosition(dateTime)
     if not isClass(dateTime, DCAF.DateTime.ClassName) then
-        -- dateTime = DCAF.DateTime:Now():AddHours(-1)--:ToUTC()
         dateTime = DCAF.DateTime:Now()--:ToUTC()
-    -- elseif not dateTime.IsUTC then
-    --     dateTime = dateTime:ToUTC()
-    --     -- dateTime = dateTime:AddHours(-1)--:ToUTC()
     end
     if dateTime.IsDST then
         dateTime = dateTime:AddHours(-1)
     end
--- Debug("nisse - COORDINATE:SunPosition :: dateTime: " .. DumpPretty(dateTime))
     -- Get latitude and longitude as radians
     local latitude, longitude = self:GetLLDDM()
     latitude = math.rad(latitude)
     longitude = math.rad(longitude)
--- Debug("nisse . latitude: " .. Dump(latitude) .. " :: longitude: " .. Dump(longitude) .. " :: text coords: " .. self:ToStringLLDMS())
 
     local function correctAngle(angleInRadians)
         if angleInRadians < 0 then
@@ -880,6 +925,96 @@ function COORDINATE:SunPosition(dateTime)
         azimuth = azimuth + 2 * math.pi
     end
     return altitude * Rad2Deg, azimuth * Rad2Deg
+end
+
+function COORDINATE:GetFlatArea(flatAreaSize, searchAreaSize, excludeSelf, maxInclination)
+    if not isNumber(flatAreaSize) then
+        error("COORDINATE:GetFlatArea :: `radius` must be number, but was: " .. DumpPretty(flatAreaSize)) end
+
+    if not isNumber(searchAreaSize) then
+        searchAreaSize = 200 
+    end
+    if not isBoolean(excludeSelf) then
+        excludeSelf = false
+    end
+    searchAreaSize = math.max(searchAreaSize, flatAreaSize)
+    if not isNumber(maxInclination) then
+        maxInclination = 0.06
+    end
+    maxInclination = math.max(0.005, maxInclination)
+    if not excludeSelf then
+        local inclination = self:GetLandInclination(flatAreaSize)
+        if inclination <= maxInclination then
+            return self end
+    end
+
+    local function searchSquareEdge(searchSize) -- 1, 2, 3... (eg. 2 = `flatAreaSize` x 2)
+        local coord = self:Translate(flatAreaSize * searchSize, 360):Translate(flatAreaSize * searchSize, 270)
+        local function searchHeading(hdg)
+            for i = 1, searchSize*2, 1 do
+                coord = coord:Translate(flatAreaSize, hdg)
+                local inclination = coord:GetLandInclination(flatAreaSize)
+                if inclination <= maxInclination then
+                    return coord end
+            end
+        end
+
+        for _, hdg in ipairs({90, 180, 270, 360}) do
+            local coordFlat = searchHeading(hdg)
+            if coordFlat then
+                return coordFlat end
+        end
+    end
+
+    local maxSearchSize = searchAreaSize / flatAreaSize
+    for size = 1, maxSearchSize, 1 do
+        local coord = searchSquareEdge(size)
+        if coord then
+            return coord end
+    end
+end
+
+function COORDINATE:GetLandInclination(gridSizeX, gridSizeY, measureInterval)
+    if not isNumber(gridSizeX) then
+        gridSizeX = 200 -- meters
+    end
+    if not isNumber(gridSizeY) then
+        gridSizeY = gridSizeX
+    end
+    if not isNumber(measureInterval) then
+        measureInterval = math.max(gridSizeX, gridSizeY) / 10 -- 10 measurepoints 
+    end
+
+    local heightMin = 9999999999
+    local coordMin
+    local heightMax = 0
+    local coordMax
+    local function measureHeight(coord)
+        local height = coord:GetLandHeight()
+        if height < heightMin then
+            heightMin = height;
+            coordMin = coord
+        end
+        if height > heightMax then
+            heightMax = height
+            coordMax = coord
+        end
+    end
+
+    local coordX = self:Translate(gridSizeX / 2, 360):Translate(gridSizeY / 2, 270)
+    measureHeight(coordX)
+    for x = measureInterval, gridSizeX - measureInterval, measureInterval do
+        for y = measureInterval, gridSizeY - measureInterval, measureInterval do
+            local coordY = coordX:Translate(y, 180)
+            measureHeight(coordY)
+        end
+        coordX = coordX:Translate(x, 90)
+        measureHeight(coordX)
+    end
+
+    local distMinMax = coordMin:Get2DDistance(coordMax)
+    local heightDifference = heightMax - heightMin
+    return heightDifference / distMinMax
 end
 
 function COORDINATE_FromWaypoint(wp)
@@ -3352,16 +3487,16 @@ function ROEWeaponFree( ... )
     for _, controllable in ipairs(arg) do
         local group = getGroup( controllable )
         if (group == nil) then
-            Warning("ROEWeaponsFree-? :: cannot resolve group "..Dump(controllable) .." :: IGNORES")
+            Warning("ROEWeaponFree-? :: cannot resolve group "..Dump(controllable) .." :: IGNORES")
         else
             if (group:IsShip()) then
                 ROEOpenFireWeaponFree( group )
                 return
             end
             group:OptionAlarmStateAuto()
-            Trace("ROEWeaponsFree-"..group.GroupName.." :: is alarm state AUTO")
+            Trace("ROEWeaponFree-"..group.GroupName.." :: is alarm state AUTO")
             group:OptionROEWeaponFree()
-            Trace("ROEWeaponsFree-"..group.GroupName.." :: is weapons free")
+            Trace("ROEWeaponFree-"..group.GroupName.." :: is weapons free")
         end
     end
 end
@@ -3370,13 +3505,13 @@ function ROEDefensive( ... )
     for _, controllable in ipairs(arg) do
         local group = getGroup( controllable )
         if (group == nil) then
-            Warning("ROEWeaponsFree-? :: cannot resolve group "..Dump(controllable) .." :: IGNORES")
+            Warning("ROEDefensive-? :: cannot resolve group "..Dump(controllable) .." :: IGNORES")
         else
             ROTEvadeFire( controllable )
             group:OptionAlarmStateRed()
-            Trace("ROEWeaponsFree-"..group.GroupName.." :: is alarm state RED")
+            Trace("ROEDefensive-"..group.GroupName.." :: is alarm state RED")
             ROEHoldFire( group )
-            Trace("ROEWeaponsFree-"..group.GroupName.." :: is weapons free")
+            Trace("ROEDefensive-"..group.GroupName.." :: is weapons free")
         end
     end
 end
@@ -3672,7 +3807,7 @@ function MissionEvents:Invoke(handlers, data)
 end
 
 function _e:onEvent( event )
--- Debug("nisse - _e:onEvent-? :: event: " .. DumpPrettyDeep(event, 2)) -- nisse
+---Debug("nisse - _e:onEvent-? :: event: " .. Dump(event))
 
     if event.id == world.event.S_EVENT_MISSION_END then
         MissionEvents:Invoke( _missionEventsHandlers._missionEndHandlers, event )
@@ -3840,15 +3975,15 @@ function _e:onEvent( event )
         return
     end
 
-    if event.id == EVENTS.MarkAdded then
+    if event.id == world.event.S_EVENT_MARK_ADDED then
         MissionEvents:Invoke(_missionEventsHandlers._mapMarkAddedHandlers, MissionEvents.MapMark:New(event))
         return
     end
-    if event.id == EVENTS.MarkChange then
+    if event.id == world.event.S_EVENT_MARK_CHANGE then
         MissionEvents:Invoke(_missionEventsHandlers._mapMarkChangedHandlers, MissionEvents.MapMark:New(event))
         return
     end
-    if event.id == EVENTS.MarkRemoved then
+    if event.id == world.event.S_EVENT_MARK_REMOVED then
         MissionEvents:Invoke(_missionEventsHandlers._mapMarkDeletedHandlers, MissionEvents.MapMark:New(event))
         return
     end
@@ -6308,7 +6443,7 @@ function RTBNow(controllable, airbase, onLandedFunc, altitude, altitudeType)
 
     if IsOnAirbase(controllable, airbase) then
         -- controllable is already on specified airbase - despawn
-Debug("nisse - RTBNow_IsOnAirbase :: controllable: " .. DumpPretty(controllable))
+-- Debug("nisse - RTBNow_IsOnAirbase :: controllable: " .. DumpPretty(controllable))
         group:Destroy()
         return
     end
@@ -6386,24 +6521,24 @@ Debug("nisse - buildRoute :: airbase:IsShip: " .. Dump(airbase:IsShip()))
     end
 
     local function buildCarrierRoute(carrier, wpLanding)
-        return buildRoute(airbase, wpLanding, true)
---         -- todo Implement CASE I, II, and III approaches for RTB to carriers
---         local altType = COORDINATE.WaypointAltType.RADIO
---         if group:IsHelicopter() then
+        -- return buildRoute(airbase, wpLanding, true)
+        local altType = COORDINATE.WaypointAltType.RADIO
+        if group:IsHelicopter() then
 -- Debug("nisse - RTBNow :: helicopter landing at carrier...")            
---             local hdg3oclock = (carrier:GetHeading() + 90) % 360
---             local wpDummy = group:GetCoordinate():WaypointAirFlyOverPoint(altType, group:GetVelocityKMH())
---             local coordInitial = carrier:GetCoordinate():Translate(NauticalMiles(2), hdg3oclock)
---             coordInitial:SetAltitude(Feet(200))
---             local wpInitial = coordInitial:WaypointAirTurningPoint(altType, UTILS.KnotsToKmph(100))
---             wpInitial.name = "INITIAL"
---             if not wpLanding then
---                 wpLanding = WaypointLandAt(carrier)
---             end
---             return { wpDummy, wpInitial, wpLanding }
---         else
---             return buildRoute(airbase, wpLanding, true)
---         end
+            local hdg3oclock = (carrier:GetHeading() + 90) % 360
+            local wpDummy = group:GetCoordinate():WaypointAirFlyOverPoint(altType, group:GetVelocityKMH())
+            local coordInitial = carrier:GetCoordinate():Translate(NauticalMiles(2), hdg3oclock)
+            coordInitial:SetAltitude(Feet(200))
+            local wpInitial = coordInitial:WaypointAirTurningPoint(altType, UTILS.KnotsToKmph(100))
+            wpInitial.name = "INITIAL"
+            if not wpLanding then
+                wpLanding = WaypointLandAt(carrier)
+            end
+            return { wpDummy, wpInitial, wpLanding }
+        else
+--         -- todo Implement CASE I, II, and III approaches for RTB to carriers
+            return buildRoute(airbase, wpLanding, true)
+        end
     end
 
     local wpLanding
@@ -6428,7 +6563,7 @@ Debug("nisse - buildRoute :: airbase:IsShip: " .. Dump(airbase:IsShip()))
         end
     end
     local waypoints = buildRoute(airbase, wpLanding) or buildCarrierRoute(airbase, wpLanding)
-Debug("nisse - RTBNow :: group: " .. group.GroupName .. " :: waypoints: " .. DumpPrettyDeep(waypoints))
+-- Debug("nisse - RTBNow :: group: " .. group.GroupName .. " :: waypoints: " .. DumpPrettyDeep(waypoints))
     group:Route(waypoints)
     return group, waypoints
 end
@@ -6816,6 +6951,15 @@ function DCAF.AvailableTanker:ToString()
     return CALLSIGN.Tanker:ToString(self.Callsign, self.Number)
 end
 
+function DCAF.AvailableTanker:FromAirbases(airbases)
+    if not isList(airbases) then
+        error("DCAF.AvailableTanker:FromAirbases :: `airbases` must be a list, but was: " .. DumpPretty) end
+
+    for _, airbase in ipairs(airbases) do
+        self:FromAirbase(airbase)
+    end
+end
+
 function DCAF.AvailableTanker:FromAirbase(airbase, depRoutes, arrRoutes)
     if not isList(self.Airbases) then 
         self.Airbases = {}
@@ -6916,7 +7060,7 @@ Debug("nisse - DCAF.TankerTrack:New :: name: " .. Dump(name) .. " :: coalition: 
     track.Name = name
     track.Heading = heading
     track.CoordIP = coordIP
-    track.Length = length
+    track.Length = length or NauticalMiles(30)
     track.Capacity = capacity or DCAF.TankerTrack.Capacity
     track.DefaultBehavior = behavior or DCAF.TankerTrack.DefaultBehavior
     track.Appearance = appearance or DCAF.TrackAppearance:New()
@@ -7079,7 +7223,8 @@ function DCAF.TankerTrack:ActivateAirbase(tankerInfo, route, behavior)
         return { wpIngress, wpIP }
     end
 
-Debug("nisse - DCAF.TankerTrack:ActivateAirbase :: route: " .. DumpPretty(route))    
+-- Debug("nisse - DCAF.TankerTrack:ActivateAirbase :: route: " .. DumpPretty(route))
+
     if DCAF.AIR_ROUTE and isRoute(route) then
         airbase = route.DepartureAirbase
         waypoints = listJoin(route.Waypoints, trackIngressWaypoints())
@@ -7091,6 +7236,7 @@ Debug("nisse - DCAF.TankerTrack:ActivateAirbase :: route: " .. DumpPretty(route)
         wpDeparture.airdromeId = airbase:GetID()
         waypoints = listJoin({ wpDeparture }, trackIngressWaypoints())
         wpIP = 2
+-- Debug("nisse - DCAF.TankerTrack:ActivateAirbase (aaa) :: wpIP: " .. Dump(wpIP) .. " :: waypoints: " .. DumpPrettyDeep(waypoints, 2))
     else
         local msg = "DCAF.TankerTrack:ActivateAirbase :: `route` must be an " .. AIRBASE.ClassName
         if DCAF.AIR_ROUTE then
@@ -7102,12 +7248,10 @@ Debug("nisse - DCAF.TankerTrack:ActivateAirbase :: route: " .. DumpPretty(route)
         wpIP = 1
     end
     
-
     -- spawn...
     local group = DCAF.Tanker:FindGroupWithCallsign(tankerInfo.Callsign, tankerInfo.Number)
     local spawn = getSpawn(group.GroupName)
     spawn:InitGroupHeading(self.Heading)
--- Debug("nisse - DCAF.TankerTrack:ActivateAirbase :: airbase: " .. DumpPretty(airbase))
     local group = spawn:SpawnAtAirbase(airbase)
     tankerInfo.Tanker = DCAF.Tanker:New(group, nil, tankerInfo.Callsign, tankerInfo.Number)
     if isClass(behavior, DCAF.AirServiceBehavior.ClassName) then
@@ -7127,6 +7271,7 @@ Debug("nisse - DCAF.TankerTrack:ActivateAirbase :: route: " .. DumpPretty(route)
             local coordActivate = coord0:Translate(NauticalMiles(10))
             local wpActivate = coord0:Translate(NauticalMiles(10), heading):SetAltitude(Feet(15000)):WaypointAirFlyOverPoint(COORDINATE.WaypointAltType.BARO, UTILS.KnotsToKmph(350))
             table.insert(waypoints, 2, wpActivate)
+            wpIP = wpIP+1
         end
     end
     tankerInfo.Tanker:SetRoute(waypoints)
@@ -7139,7 +7284,7 @@ Debug("nisse - DCAF.TankerTrack:ActivateAirbase :: route: " .. DumpPretty(route)
     end
     if behavior.Availability == DCAF.AirServiceAvailability.Always then
         tankerInfo.Tanker:ActivateService(1)
-        wpIP = wpIP+1
+-- Debug("nisse - DCAF.TankerTrack:ActivateAirbase (bbb) :: wpIP: " .. Dump(wpIP) .. " :: waypoints: " .. DumpPrettyDeep(waypoints, 2))
     end
     tankerInfo.Tanker:SetTrack(wpIP, self.Heading, self.Length, block):Start()
     if tankerInfo.Tanker.Behavior.SpawnReplacementFuelState > 0 then
@@ -7644,13 +7789,16 @@ function DCAF.TankerTracks:BuildMenus(caption, scope)
 end
 
 function DCAF.TankerTracks:AllowDynamicTracks(value)
+    if  not isBoolean(value) then
+        value = true
+    end
     if value == isDynamicTankerTracksSupported then
         return end
 
     isDynamicTankerTracksSupported = value
 
     local function listenForDynamicTrackMarks(event)
-Debug("nisse - listenForDynamicTrackMarks :: event: " .. DumpPretty(event))
+-- Debug("nisse - listenForDynamicTrackMarks :: event: " .. DumpPretty(event))
         -- format: AAR <name> <heading> <length> <capacity> 
         if string.len(event.Text) < 3 then
             return end

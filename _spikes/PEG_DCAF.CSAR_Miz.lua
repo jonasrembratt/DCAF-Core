@@ -4,6 +4,7 @@ local ThunbIsl = AIRBASE:FindByName(AIRBASE.PersianGulf.Tunb_Island_AFB)
 local Jiroft = AIRBASE:FindByName(AIRBASE.PersianGulf.Jiroft_Airport)
 
 local Farp_London = AIRBASE:FindByName("FARP London-1")
+local Farp_Tehran = AIRBASE:FindByName("FARP Tehran-1")
 local CVN_73 = AIRBASE:FindByName("CVN-73 George Wshington")
 local LHA_1 = AIRBASE:FindByName("LHA-1 Tarawa-1-1")
 local BlueAirforceCSARAirbases = {
@@ -48,7 +49,7 @@ DCAF.CSAR.InitDelayedCaptureMissions(Coalition.Red, between_3_and_10_minutes,
 -- DCAF.CSAR.InitCaptureMissions(Coalition.Red,
     DCAF.CSAR.Mission:New("Mi-8 + 2 Ka-50", 
         DCAF.CSAR.RescueGroup:New("RED Capture Heli-transport"):WithCapabilities(nil, true),
-        DCAF.CSAR.RescueGroup:New("RED Capture Heli-escort", 2)):AddAirbases({ AIRBASE.PersianGulf.Jiroft_Airport }))
+        DCAF.CSAR.RescueGroup:New("RED Capture Heli-escort", 2)):AddAirbases({ AIRBASE.PersianGulf.Jiroft_Airport, Farp_Tehran }))
         
 -- actively create CSAR story (for testing) ...
 -- local csar = DCAF.CSAR:New(nil, "Downed Pilot", "CSAR-1"):StartRescue():StartCapture()
@@ -59,39 +60,38 @@ DCAF.CSAR.OnStarted(function(csar)
     MessageTo(nil, "ALERT! Pilot in distress, codeword '" .. csar.Name .. "'")
 end)
 
-DCAF.CSAR.MenuControlled("Test CSAR", "_C2", options) --, "_C2") -- NewOnPilotEjects(options)
+DCAF.CSAR.OnRescueUnitTargeted(function(event) 
+    MessageTo(nil, "OnRescueUnitTargeted :: event\n" .. DumpPretty(event))
+end)
+
+DCAF.CSAR.OnDistressedGroupLocated(function(event) 
+    MessageTo(nil, "OnDistressedGroupLocated :: event\n" .. DumpPretty(event))
+end)
+
+DCAF.CSAR.OnDistressedGroupExtracted(function(event) 
+    MessageTo(nil, "OnDistressedGroupExtracted :: event\n" .. DumpPretty(event))
+end)
+
+DCAF.CSAR.OnRescueUnitHit(function(event) 
+    MessageTo(nil, "OnRescueUnitHit :: event\n" .. DumpPretty(event))
+end)
+
+DCAF.CSAR.OnRescueUnitDestroyed(function(event) 
+    MessageTo(nil, "OnRescueUnitDestroyed :: event\n" .. DumpPretty(event))
+end)
+
+DCAF.CSAR.OnRecoveryUnitDestroyed(function(event) 
+    MessageTo(nil, "OnRecoveryUnitDestroyed :: event\n" .. DumpPretty(event))
+end)
+
+DCAF.CSAR.OnRecoveryUnitSafe(function(event) 
+    MessageTo(nil, "SAFELY LANDED :: event: " .. DumpPretty(event))
+end)
+
+-- DCAF.CSAR.OnDistressedGroupAttractAttention(function(event) 
+--     MessageTo(nil, "OnDistressedGroupAttractAttention :: event\n" .. DumpPretty(event))
+-- end)
+
+DCAF.CSAR.MarkControlled("Test CSAR") --, "_C2", options)
+-- DCAF.CSAR.MenuControlled("Test CSAR", "_C2", options)
 DCAF.CSAR.RunScenarioInZone("TZ_CSAR", Coalition.Blue, options)
-
--- GROUP IN DISTRESS...
-
--- local distressed = DCAF.CSAR.DistressedGroup:New(nil, "Downed Pilot", "CSAR-1")
---                  :WithBeacon("Downed Pilot-Beacon"):MoveTo(Nellis, 6)
---                  :Start()
--- local csar = distressed.CSAR
-
--- HUNTERS...
--- DCAF.CSAR.HunterGroup:New("Hunter 1", "RED Pursuing Heli-transport", distressed) --, Mesquite)
---                      :WithRTB(Mesquite)
---                      :Start(Knots(200))
--- DCAF.CSAR.HunterGroup:New("Hunter 2", "RED Pursuing Heli-transport", distressed) --, Mesquite)
---                      :WithRTB(Mesquite)
---                      :Start(Knots(200))
--- DCAF.CSAR.HunterGroup:New("Hunter 3", "RED Pursuing Heli-escort", distressed) --, Mesquite)
---                      :WithCapabilities(false) -- cannot pickup unit (KA-50s can't transport)
---                      :WithRTB(Mesquite)
---                      :Start(Knots(250))
-
--- RESCUERS...                    
--- DCAF.CSAR.RescueGroup:New(csar, "BLUE Rescue Blackhawk", distressed) --, Nellis)
---                      :WithRTB(Nellis)
---                      :Start(Knots(300))
--- DCAF.CSAR.RescueGroup:New(csar, "BLUE Rescue Apache", distressed) --, Nellis)
---                      :WithRTB(Nellis)
---                      :WithCapabilities(false) -- cannot pickup unit (Apaches can't transport)
---                      :Start(Knots(300))
--- DCAF.CSAR.RescueGroup:New(csar, "BLUE Rescue Apache", distressed) --, Nellis)
---                      :WithRTB(Nellis)
---                      :WithCapabilities(false) -- cannot pickup unit (Apaches can't transport)
---                      :Start(Knots(300))
-
-                     
