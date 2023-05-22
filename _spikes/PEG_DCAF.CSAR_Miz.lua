@@ -26,29 +26,31 @@ local Godu = DCAF.Location:NewNamed("Godu", COORDINATE:NewFromLLDD(26.95750000, 
 DCAF.InitBullseyeName("DART")
 DCAF.CSAR.InitSafeLocations(Coalition.Blue, Godu)
 DCAF.CSAR.InitDistressedGroup(
-    DCAF.CSAR.DistressedGroup:NewTemplate("CSAR Distressed Ground", true, DCAF.Smoke:New(2), DCAF.Flares:New(4), true),
-    DCAF.CSAR.DistressedGroup:NewTemplate("CSAR Distressed Water", true, DCAF.Smoke:New(2), DCAF.Flares:New(4)), true)
+    DCAF.CSAR.DistressedGroup:NewTemplate("CSAR Distressed Ground", true, DCAF.Smoke:New(2), DCAF.Flares:New(4), false),
+    DCAF.CSAR.DistressedGroup:NewTemplate("CSAR Distressed Water", true, DCAF.Smoke:New(2), DCAF.Flares:New(4)), false)
 DCAF.CSAR.InitDistressBeacon("CSAR Distress Beacon")
 
 -- rescue
 DCAF.CSAR.InitRescueMissions(Coalition.Blue,
     DCAF.CSAR.Mission:New("Blackhawk + 2 Apaches", 
-        DCAF.CSAR.RescueGroup:New("BLUE Rescue Blackhawk"):WithCapabilities(true, true),
+        DCAF.CSAR.RescueGroup:New("BLUE Rescue Blackhawk"):WithCapabilities(true, true, true, true),
         DCAF.CSAR.RescueGroup:New("BLUE Rescue Apache", 2)):AddAirbases(BlueAirforceCSARAirbases),
     DCAF.CSAR.Mission:New("Chinook + 2 Apaches", 
         DCAF.CSAR.RescueGroup:New("BLUE Rescue Chinook"):WithCapabilities(true, true),
         DCAF.CSAR.RescueGroup:New("BLUE Rescue Apache", 2)):AddAirbases({ Khasab }),
     DCAF.CSAR.Mission:New("2 x Seahawks",
         DCAF.CSAR.RescueGroup:New("BLUE Rescue Seahawk", 2):WithCapabilities(true, true)):AddAirbases({ CVN_73 }),
+    DCAF.CSAR.Mission:New("Single Seahawk",
+        DCAF.CSAR.RescueGroup:New("BLUE Rescue Seahawk"):WithCapabilities(true, true, true, true)):AddAirbases({ LHA_1 }),
     DCAF.CSAR.Mission:New("Seahawk + 2 Cobras",
-        DCAF.CSAR.RescueGroup:New("BLUE Rescue Seahawk"):WithCapabilities(true, true),
-        DCAF.CSAR.RescueGroup:New("BLUE Rescue Cobra", 2)):AddAirbases({ LHA_1 }))--.InitCallsign("Roman")
+        DCAF.CSAR.RescueGroup:New("BLUE Rescue Seahawk"):WithCapabilities(true, true, true, true),
+        DCAF.CSAR.RescueGroup:New("BLUE Rescue Cobra", 2)):AddAirbases({ LHA_1 }))
 
 local between_3_and_10_minutes = VariableValue:NewRange(Minutes(3), Minutes(10))
-DCAF.CSAR.InitDelayedCaptureMissions(Coalition.Red, between_3_and_10_minutes,
-    DCAF.CSAR.Mission:New("Mi-8 + 2 Ka-50", 
-        DCAF.CSAR.RescueGroup:New("RED Capture Heli-transport"):WithCapabilities(nil, true),
-        DCAF.CSAR.RescueGroup:New("RED Capture Heli-escort", 2)):AddAirbases({ AIRBASE.PersianGulf.Jiroft_Airport, Farp_Tehran }))
+-- DCAF.CSAR.InitDelayedCaptureMissions(Coalition.Red, between_3_and_10_minutes,
+--     DCAF.CSAR.Mission:New("Mi-8 + 2 Ka-50", 
+--         DCAF.CSAR.RescueGroup:New("RED Capture Heli-transport"):WithCapabilities(nil, true),
+--         DCAF.CSAR.RescueGroup:New("RED Capture Heli-escort", 2)):AddAirbases({ AIRBASE.PersianGulf.Jiroft_Airport, Farp_Tehran }))
         
 local c2_group = "_C2"
 DCAF.CSAR.OnStarted(function(csar) 
@@ -87,7 +89,7 @@ end)
 --     MessageTo(nil, "OnDistressedGroupAttractAttention :: event\n" .. DumpPretty(event))
 -- end)
 
-DCAF.CSAR.MarkControlled("Test CSAR") --, "_C2", options)
+DCAF.CSAR.MapControlled("Test CSAR") --, "_C2", options)
 -- DCAF.CSAR.MenuControlled("Test CSAR", "_C2", options)
 DCAF.CSAR.RunScenarioInZone("TZ_CSAR", Coalition.Blue, options)
 DCAF.CSAR.RunScenarioInZone("TZ_CSAR-2", Coalition.Blue, options)

@@ -939,7 +939,7 @@ function COORDINATE:GetFlatArea(flatAreaSize, searchAreaSize, excludeSelf, maxIn
     end
     searchAreaSize = math.max(searchAreaSize, flatAreaSize)
     if not isNumber(maxInclination) then
-        maxInclination = 0.06
+        maxInclination = 0.05
     end
     maxInclination = math.max(0.005, maxInclination)
     if not excludeSelf then
