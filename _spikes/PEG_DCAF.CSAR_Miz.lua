@@ -43,7 +43,7 @@ DCAF.CSAR.InitRescueMissions(Coalition.Blue,
     DCAF.CSAR.Mission:New("Single Seahawk",
         DCAF.CSAR.RescueGroup:New("BLUE Rescue Seahawk"):WithCapabilities(true, true, true, true)):AddAirbases({ LHA_1 }),
     DCAF.CSAR.Mission:New("Seahawk + 2 Cobras",
-        DCAF.CSAR.RescueGroup:New("BLUE Rescue Seahawk"):WithCapabilities(true, true, true, true),
+        DCAF.CSAR.RescueGroup:New("BLUE Rescue Seahawk", 2):WithCapabilities(true, true, true, true),
         DCAF.CSAR.RescueGroup:New("BLUE Rescue Cobra", 2)):AddAirbases({ LHA_1 }))
 
 local between_3_and_10_minutes = VariableValue:NewRange(Minutes(3), Minutes(10))
