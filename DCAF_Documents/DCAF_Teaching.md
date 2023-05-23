@@ -8,7 +8,7 @@ Principles
     (Exceptions might be; unwilling/unable to invest time to keep up)
 
 - Coaching over criticism
-    -- Cadet often has higher demands on self than teacher adn might suffer unwarranted low self esteem after a hop that wasn't perfect
+    -- Cadet often has higher demands on self than teacher and might suffer unwarranted low self esteem after a hop that wasn't perfect
     -- Make cadet think ahead
     -- Be constructive; suggest ways cadet can improve by him/helself before next hop (we might offer .miz file for it)
 
