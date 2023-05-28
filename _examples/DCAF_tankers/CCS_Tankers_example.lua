@@ -38,7 +38,7 @@ DCAF.TankerTrack:New("PINE",
                      :Draw()
 
 ----- MENUS ----- 
-DCAF.TankerTracks:BuildMenus("AAR", Coalition.Blue)
+DCAF.TankerTracks:BuildF10Menus("AAR", Coalition.Blue)
                  :AllowDynamicTracks(true)
 
 ---- DONE ----

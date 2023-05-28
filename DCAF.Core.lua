@@ -12,7 +12,8 @@ DCAF = {
     WaypointNames = {
         RTB = '_rtb_',
         Divert = '_divert_',
-    }
+    },
+    Scheduler = SCHEDULER:New()
 }
 
 DCAF.DateTime = {
@@ -135,7 +136,12 @@ function isBoolean( value ) return type(value) == "boolean" end
 function isNumber( value ) return type(value) == "number" end
 function isTable( value ) return type(value) == "table" end
 function isFunction( value ) return type(value) == "function" end
-function isClass( value, class ) return isTable(value) and value.ClassName == class end
+function isClass( value, class ) 
+    if isTable(class) then
+        class = class.ClassName
+    end
+    return isTable(value) and value.ClassName == class 
+end
 function isUnit( value ) return isClass(value, UNIT.ClassName) end
 function isGroup( value ) return isClass(value, GROUP.ClassName) end
 function isZone( value ) return isClass(value, ZONE.ClassName) or isClass(value, ZONE_POLYGON_BASE.ClassName) or isClass(value, ZONE_POLYGON.ClassName) end
@@ -278,7 +284,24 @@ function DCAF.parseSpawnedUnitName(name)
         return name end
     
     local unitIndex = string.sub(indexer, dashAt+1)
-    return groupName,AirTurningPoint
+    return groupName,AirTurnBuildF10Menus
+end
+
+function DCAF.startScheduler(func, interval, delay, args, randomizeFactor, stop, masterObject)
+    if not isNumber(delay) then
+        delay = interval
+    end
+    return DCAF.Scheduler:Schedule(masterObject or DCAF, func, args or {}, delay, interval, randomizeFactor, stop)
+end
+
+function DCAF.stopScheduler(id, bRemove)
+    if not id then
+        return end
+
+    DCAF.Scheduler:Stop(id)
+    if isBoolean(bRemove) and bRemove then
+        DCAF.Scheduler:Stop(id)
+    end
 end
 
 function isGroupNameInstanceOf( name, templateName )
@@ -2018,11 +2041,15 @@ local function isEscortingFromTask( escortGroup, clientGroup )
 end
 
 --- Retrieves the textual form of MOOSE's 
-function CALLSIGN.Tanker:ToString(nCallsign, number)
+function CALLSIGN.Tanker:ToString(callsign, number)
     local name
-    if     nCallsign == CALLSIGN.Tanker.Arco then name = "Arco"
-    elseif nCallsign == CALLSIGN.Tanker.Shell then name = "Shell"
-    elseif nCallsign == CALLSIGN.Tanker.Texaco then name = "Texaco"
+    if isNumber(callsign) then
+        if     callsign == CALLSIGN.Tanker.Arco then name = "Arco"
+        elseif callsign == CALLSIGN.Tanker.Shell then name = "Shell"
+        elseif callsign == CALLSIGN.Tanker.Texaco then name = "Texaco"
+        end
+    elseif isAssignedString(callsign) then
+        name = callsign
     end
     if isNumber(number) then
         return name .. " " .. tostring(number)
@@ -2546,7 +2573,8 @@ DumpPrettyOptions = {
     asJson = false,
     indentSize = 2,
     deep = false,             -- boolean or number (number can control how many levels to present for 'deep')
-    includeFunctions = false
+    includeFunctions = false,
+    skipKeys = nil            -- #list of assigned strings; names of values/functions to be ignored (this can help alleviate recursion)
 }
 
 function DumpPrettyOptions:New()
@@ -2571,6 +2599,17 @@ function DumpPrettyOptions:Deep( value )
     return self
 end
 
+function DumpPrettyOptions:Skip(...)
+    self.skipKeys = self.skipKeys or {}
+    for i = 1, #arg, 1 do
+        self.skipKeys[arg[i]] = true
+    end
+end
+
+function DumpPrettyOptions:IsSkipped(key)
+    return self.skipKeys and self.skipKeys[key]
+end
+
 function DumpPrettyOptions:IncludeFunctions( value )
     self.includeFunctions = value or true
     return self
@@ -2581,12 +2620,21 @@ function DumpPretty(value, options)
     options = options or DumpPrettyOptions
     local idtSize = options.indentSize or DumpPrettyOptions.indentSize
     local asJson = options.asJson or DumpPrettyOptions.asJson
+    local dumpedValues = { }
+
+    local function isAlreadyDumped(value)
+        for _, v in ipairs(dumpedValues) do
+            if v == value then
+                return true
+            end
+        end
+    end
    
     local function dumpRecursive(value, ilvl)
-    if type(value) ~= 'table' then
-        if (isString(value)) then
-            return '"' .. tostring(value) .. '"'
-        end
+        if not isTable(value) then
+            if (isString(value)) then
+                return '"' .. tostring(value) .. '"'
+            end
             return tostring(value)
         end
 
@@ -2596,26 +2644,37 @@ function DumpPretty(value, options)
         end
         if (not deep or not DCAF.Debug) and ilvl > 0 then
             if options.asJson then
-            return "{ }" 
-        end
-        if tableIsUnassigned(value) then
-            return "{ }"
-        else
-            return "{ --[[ data omitted ]] }"
-        end
-      end
-  
-      local s = '{\n'
-      local indent = mkIndent(ilvl * idtSize)
-      for k,v in pairs(value) do
-        if (options.includeFunctions or type(v) ~= "function") then
-            if (asJson) then
-                s = s .. indent..'"'..k..'"'..' : '
+                return "{ }" 
+            end
+            if tableIsUnassigned(value) then
+                return "{ }"
             else
-                if type(k) ~= 'number' then k = '"'..k..'"' end
-                s = s .. indent.. '['..k..'] = '
+                return "{ --[[ data omitted ]] }"
+            end
+        end
+
+        if isTable(value) then
+            table.insert(dumpedValues, value)
+        end
+        local s = '{\n'
+        local indent = mkIndent(ilvl * idtSize)
+        for k, v in pairs(value) do
+        if (options.includeFunctions or type(v) ~= "function") then
+            if isAlreadyDumped(v) then
+                if asJson then
+                    s = s .. indent..'"'..k..'"'..' : ' .. " {},\n"
+                else 
+                    s = s .. indent..'["'..k..'"]'..' : ' .. " { --[[ recursive table ]] },\n"
                 end
-                s = s .. dumpRecursive(v, ilvl+1, idtSize) .. ',\n'
+            else -- if not options:IsSkipped(k) then
+                if (asJson) then
+                    s = s .. indent..'"'..k..'"'..' : '
+                else
+                    if type(k) ~= 'number' then k = '"'..k..'"' end
+                    s = s .. indent.. '['..k..'] = '
+                    end
+                    s = s .. dumpRecursive(v, ilvl+1, idtSize) .. ',\n'
+                end
             end
         end
         return s .. mkIndent((ilvl-1) * idtSize) .. '}'
@@ -4167,6 +4226,17 @@ local _missionEventsAircraftFielStateMonitor = {
     CountMonitored = 0,           -- ¤number; no. of items in $self.Units
 }
 
+function GROUP:GetFuelLowState()
+    local lowState = 35535
+    for _, unit in ipairs(self:GetUnits()) do
+        local state = unit:GetFuel()
+        if state < lowState then
+            lowState = state
+        end
+    end
+    return lowState
+end
+
 function _missionEventsAircraftFielStateMonitor:Start(key, units, fuelState, func)
 
     local monitored = _missionEventsAircraftFielStateMonitor.Monitored[key]
@@ -4194,11 +4264,12 @@ function _missionEventsAircraftFielStateMonitor:Start(key, units, fuelState, fun
             for _, info in ipairs(monitored) do
                 for index, unit in pairs(info.Units) do
                     local state = unit:GetFuel()
+-- Debug("monitor fuel state :: unit: " .. unit.UnitName .. " :: state: " .. Dump(state) .. " :: info.State: " .. Dump(info.State))                
                     if state == nil or info.State == nil then
                         -- stop monitoring (unit was probably despawned)
                         table.insert(triggeredKeys, { Key = key, Index = index })
                     elseif state <= info.State then
--- Debug("monitor fuel state :: unit: " .. unit.UnitName .. " :: state: " .. Dump(state) .. " :: info.State: " .. Dump(info.State))                
+-- Debug("monitor fuel state :: TRIGGER :: unit: " .. unit.UnitName .. " :: state: " .. Dump(state) .. " :: info.State: " .. Dump(info.State))                
 -- Debug("triggers onfuel state :: unit: " .. unit.UnitName .. " :: state: " .. Dump(state) .. " :: info.State: " .. Dump(info.State))                
                         info.Func(unit)
                         table.insert(triggeredKeys, { Key = key, Index = index })
@@ -4214,7 +4285,7 @@ function _missionEventsAircraftFielStateMonitor:Start(key, units, fuelState, fun
         end
     end
     
-    self.Timer = TIMER:New(monitorFuelStates):Start(1, 60)
+    self.Timer = TIMER:New(monitorFuelStates):Start(1, 7)
 end
 
 function _missionEventsAircraftFielStateMonitor:End(key, index)
@@ -6849,7 +6920,7 @@ function DCAF.AirServiceAvailability:IsValid(value)
     return false
 end
 
-DCAF.AvailableTanker = { -- todo Remove and use DCAF.Tanker instead
+DCAF.AvailableTanker = { 
     ClassName = "DCAF.AvailableTanker",
     Callsign = nil,     -- #number
     Number = nil,       -- #number
@@ -7054,8 +7125,29 @@ local function getBlock(track)
     return track.Blocks[index]
 end
 
-function DCAF.TankerTrack:New(name, coalition, heading, coordIP, length, frequencies, blocks, capacity, behavior, appearance)
+function DCAF.TankerTrack:New(name, coalition, heading, ip, length, frequencies, blocks, capacity, behavior, appearance)
 Debug("nisse - DCAF.TankerTrack:New :: name: " .. Dump(name) .. " :: coalition: " .. Dump(coalition) .. " :: heading: " .. Dump(heading))
+    local coordIP
+
+    local function processIP_and_heading()
+        local locIP = DCAF.Location.Resolve(ip)
+        if not locIP then
+            error("DCAF.TankerTrack:New :: cannot resolve track IP location from `ip`: " .. DumpPretty(ip)) end
+
+        coordIP = locIP:GetCoordinate()
+        if isNumber(length) then
+            return end
+        
+        local locEnd = DCAF.Location.Resolve(length)
+        if not locEnd then
+            error("DCAF.TankerTrack:New :: cannot resolve track length from: " .. DumpPretty(ip)) end
+
+        local coordEnd = locEnd:GetCoordinate()
+        length = coordEnd:Get2DDistance(coordIP)
+        heading = coordIP:GetHeadingTo(locEnd)
+    end
+    processIP_and_heading()
+
     local track = DCAF.clone(DCAF.TankerTrack)
     track.Name = name
     track.Heading = heading
@@ -7223,8 +7315,6 @@ function DCAF.TankerTrack:ActivateAirbase(tankerInfo, route, behavior)
         return { wpIngress, wpIP }
     end
 
--- Debug("nisse - DCAF.TankerTrack:ActivateAirbase :: route: " .. DumpPretty(route))
-
     if DCAF.AIR_ROUTE and isRoute(route) then
         airbase = route.DepartureAirbase
         waypoints = listJoin(route.Waypoints, trackIngressWaypoints())
@@ -7236,7 +7326,6 @@ function DCAF.TankerTrack:ActivateAirbase(tankerInfo, route, behavior)
         wpDeparture.airdromeId = airbase:GetID()
         waypoints = listJoin({ wpDeparture }, trackIngressWaypoints())
         wpIP = 2
--- Debug("nisse - DCAF.TankerTrack:ActivateAirbase (aaa) :: wpIP: " .. Dump(wpIP) .. " :: waypoints: " .. DumpPrettyDeep(waypoints, 2))
     else
         local msg = "DCAF.TankerTrack:ActivateAirbase :: `route` must be an " .. AIRBASE.ClassName
         if DCAF.AIR_ROUTE then
@@ -7389,7 +7478,7 @@ local function drawArc(coordCenter, radius, heading, coalition, rgbColor, lineTy
     return markIDs
 end
 
-local function drawServiceTrackInfo(track)
+local function drawServiceTrackInfo(track, options)
     local rgbColor 
     if isTable(track.Color) then
         rgbColor = track.Color
@@ -7433,6 +7522,16 @@ local function drawServiceTrackInfo(track)
         alpha = 1
         local tanker = tankerInfo.Tanker
         tankersText = tankersText .. "\n" .. tanker.DisplayName
+
+        DCAF.TankerTrackOptions = {
+            ClassName = "DCAF.TankerTrackOptions",
+            DrawFuelState = true,
+            UpdateInterval = Minutes(1)
+        }
+        if options.DrawFuelState then
+            local lowState = tanker.Group:GetFuelLowState() * 100
+            tankersText = tankersText .. " (" .. string.format("%d%%", lowState) .. ")"
+        end
         local prefix = '\n  '
         if (tanker.Frequency) then
             tankersText = tankersText .. prefix .. string.format("%.3f", tanker.Frequency)
@@ -7453,7 +7552,7 @@ local function drawServiceTrackInfo(track)
     return anchor:TextToAll(text, track.Coalition, rgbColor, alpha, nil, 0, 11, true)
 end
 
-local function drawActiveServiceTrack(track)
+local function drawActiveServiceTrack(track, options)
     local rgbColor 
     if isTable(track.Color) then
         rgbColor = track.Color
@@ -7490,13 +7589,13 @@ local function drawActiveServiceTrack(track)
     markIDs = listJoin(markIDs, arcMarkIDs)
 
     -- info block 
-    markID = drawServiceTrackInfo(track)
+    markID = drawServiceTrackInfo(track, options)
     table.insert(markIDs, markID)
 
     return markIDs
 end
 
-local function drawIdleServiceTrack(track)
+local function drawIdleServiceTrack(track, options)
     local markIDs = {}
     local rgbColor 
     if isTable(track.Color) then
@@ -7530,13 +7629,27 @@ local function drawIdleServiceTrack(track)
     table.insert(markIDs, markID)
 
     -- info block 
-    markID = drawServiceTrackInfo(track)
+    markID = drawServiceTrackInfo(track, options)
     table.insert(markIDs, markID)
 
     return markIDs
 end
 
-function DCAF.TankerTrack:Draw(infoAnchorPoint)
+DCAF.TankerTrackOptions = {
+    ClassName = "DCAF.TankerTrackOptions",
+    DrawFuelState = true,
+    UpdateInterval = Minutes(1)
+}
+
+function DCAF.TankerTrackOptions:New()
+    local options = DCAF.clone(DCAF.TankerTrackOptions)
+    return options
+end
+
+function DCAF.TankerTrack:Draw(infoAnchorPoint, options)
+    if not isClass(options, DCAF.TankerTrackOptions.ClassName) then
+        options = DCAF.TankerTrackOptions:New()
+    end
     self.IsDrawn = true
     if isNumber(infoAnchorPoint) then
         self.InfoAnchorPoint = infoAnchorPoint
@@ -7544,10 +7657,15 @@ function DCAF.TankerTrack:Draw(infoAnchorPoint)
     self:EraseTrack()
     if self:IsActive() then
         self._isActiveMarkIDs = true
-        self._markIDs = drawActiveServiceTrack(self)
+        self._markIDs = drawActiveServiceTrack(self, options)
+        self._drawSchedulerID = DCAF.startScheduler(function()
+            self:EraseTrack()
+            self._markIDs = drawActiveServiceTrack(self, options)
+        end, options.UpdateInterval)
     else
         self._isActiveMarkIDs = false
         self._markIDs = drawIdleServiceTrack(self)
+        DCAF.stopScheduler(self._drawSchedulerID)
     end
     return self
 end
@@ -7783,7 +7901,8 @@ local function buildTankerMenus(caption, scope)
 end
 rebuildTankerMenus = buildTankerMenus
 
-function DCAF.TankerTracks:BuildMenus(caption, scope)
+function DCAF.TankerTracks:BuildF10Menus(caption, scope)
+    scope = scope or coalition.side.BLUE
     buildTankerMenus(caption, scope)
     return self
 end
@@ -7851,6 +7970,12 @@ end
 -- /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DCAF.MENU = {}
+
+function getMenuText(menu)
+    if isList(menu.MenuPath) then
+        return menu.MenuPath[#menu.MenuPath]
+    end
+end
 
 function DCAF.MENU:New(parentMenu, maxCount, count, nestedMenuCaption)
     local menu = DCAF.clone(DCAF.MENU)
@@ -8297,7 +8422,6 @@ function DCAF.WeaponSimulation:Start(safetyDistance)
                 self:_OnWeaponHits(wpn, iniUnit, tgtUnit)
             end
         end
-
         scheduleId = scheduler:Schedule(self, trackWeapon, { }, 1, .05)
         scheduler:Start(scheduleId)
         self.__countTrackedWeapons = self.__countTrackedWeapons+1
@@ -8305,7 +8429,6 @@ function DCAF.WeaponSimulation:Start(safetyDistance)
 
     MissionEvents:OnWeaponFired(self.__monitorFunc)
     table.insert( __wpnSim_simulations, self )
-    -- scheduler:Start()
     if isFunction(self.OnStarted) then
         self:OnStarted()
     end

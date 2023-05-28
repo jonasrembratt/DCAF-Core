@@ -81,7 +81,8 @@ DCAF.GBAD_DIFFICULTY = {
     },   
 }
 
-SAM_AREA = {
+local SAM_AREA = {
+    ClassName = "",
     Name = nil,
     Zones = {
         -- list of #ZONE
@@ -109,7 +110,8 @@ SAM_AREA = {
     MANTIS_Info = nil,
     Skynet_Info = nil,
     IADS = nil,
-    IADS_Type = nil
+    IADS_Type = nil,
+    _refreshMenusFunc = nil
 }
 
 DCAF.GBAD = {
@@ -150,6 +152,8 @@ end
 -- /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 --                                                                IADS
 -- /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+local TracePrefix = "BadLand :: "             -- used for traces
 
 local function teardownMantisIADS(area, force)
     if not area.IADS then
@@ -192,6 +196,18 @@ function SAM_AREA:WithMANTIS(sSAMPrefix, sSHORADPrefix, sEWRPrefix, sHQ, bDebug)
 
     self.MANTIS_Info = IADS_INFO:New(IADS_Types.MANTIS, sSAMPrefix, sSHORADPrefix, sEWRPrefix, sHQ, bDebug)
     return self
+end
+
+function SAM_AREA:OnRefreshMenus(func)
+    self._refreshMenusFunc = func
+end
+
+local function refreshAreaMenus(area, defaultFunc)
+    if isFunction(area._refreshMenusFunc) then
+        self._refreshMenusFunc(self)
+    else
+        defaultFunc(self)
+    end
 end
 
 local function buildMANTIS_IADS(area)
@@ -626,13 +642,14 @@ function DCAF.GBAD:WithSimulatedSAMMissiles(weaponSimulation)
     return DCAF.GBAD
 end
 
-function DCAF.GBAD:AddArea(sName, ...)
+local function addArea(sName, bIsInvisible, ...)
     if not isAssignedString(sName) then
         error("SAM_TRAINING:AddArea :: `sName` must be assigned string but was: " .. DumpPretty(sName)) end
 
     local area = DCAF.clone(SAM_AREA)
     area.Name = sName
     area.SetZones = SET_ZONE:New()
+    area.IsInvisible = bIsInvisible
     for i = 1, #arg, 1 do
         local zoneName = arg[i]
         if isAssignedString(zoneName) then
@@ -654,6 +671,14 @@ function DCAF.GBAD:AddArea(sName, ...)
     end
     table.insert(DCAF.GBAD.Areas, area)
     return area
+end
+
+function DCAF.GBAD:AddArea(sName, ...)
+    return addArea(sName, false, ...)
+end
+
+function DCAF.GBAD:AddInvisibleArea(sName, ...)
+    return addArea(sName, true, ...)
 end
 
 function SAM_AREA:WithEWR(displayName, template)
@@ -710,25 +735,6 @@ local function buildCoalitionSettings(gbad, menus, parentMenu, forCoalition)
             _buildCoalitionSettings(gbad, menus, parentMenu, forCoalition)
         end)
     end
-
-    -- -- SAM missiles simulation... obsolete - moved to 
-    -- if DCAF.GBAD.WeaponsSimulation then
-    --     local wpnSimMenuCaption = "Simulated SAM missiles: "
-    --     if DCAF.GBAD.WeaponsSimulation:IsActive() then
-    --         wpnSimMenuCaption = wpnSimMenuCaption .. "YES"
-    --     else
-    --         wpnSimMenuCaption = wpnSimMenuCaption .. "NO"
-    --     end
-    --     local wpnSimMenu = MENU_COALITION_COMMAND:New(forCoalition, wpnSimMenuCaption, menus.MainMenu, function() 
-    --         if DCAF.GBAD.WeaponsSimulation:IsActive() then
-    --             DCAF.GBAD.WeaponsSimulation:Stop()
-    --             _buildCoalitionSettings(gbad, menus, parentMenu, forCoalition)
-    --             return
-    --         end
-    --         DCAF.GBAD.WeaponsSimulation:Start()
-    --         _buildCoalitionSettings(gbad, menus, parentMenu, forCoalition)
-    --     end)
-    -- end
 end
 _buildCoalitionSettings = buildCoalitionSettings
 
@@ -756,49 +762,59 @@ function SETTINGS_MENUS:BuildGroup(parentMenu, group)
     end
 end
 
--- local _area_buildMANTISCoalitionMenuFunc
+function SETTINGS_MENUS:Reset()
+    self.MainMenu = nil
+    self.SkyNetMenu = nil
+end
+
+local _area_buildMANTISCoalitionMenuFunc
+local _area_buildMANTISCoalitionMenuParentMenu
 local function buildMANTISCoalitionMenu(area, forCoalition, parentMenu, rebuildMenusFunc)
     if not area.MANTIS_Info then
         return end
 
--- Debug("nisse - buildMANTISCoalitionMenu :: area.IADS_Type: " .. Dump(area.IADS_Type))
-
+    if rebuildMenusFunc == nil then
+        rebuildMenusFunc = _area_buildMANTISCoalitionMenuFunc
+    end
+    parentMenu = parentMenu or _area_buildMANTISCoalitionMenuParentMenu
+    _area_buildMANTISCoalitionMenuParentMenu = parentMenu
     if area.IADS_Type == IADS_Types.MANTIS then
         MENU_COALITION_COMMAND:New(forCoalition, "Deactivate " .. IADS_Types.MANTIS, parentMenu, function()
             MessageTo(nil, IADS_Types.MANTIS .. " is turned OFF in '" .. area.Name .. "'")
             teardownIADS(area, true)
-            rebuildMenusFunc(area)
-            -- _area_buildMANTISCoalitionMenuFunc(area, forCoalition, parentMenu)
+            rebuildMenusFunc(area, forCoalition, parentMenu, rebuildMenusFunc)
         end)
     else
         MENU_COALITION_COMMAND:New(forCoalition, "Activate " .. IADS_Types.MANTIS, parentMenu, function() 
             area.IADS_Type = IADS_Types.MANTIS
             MessageTo(nil, IADS_Types.MANTIS .. " is activated in '" .. area.Name .. "'")
             buildMANTIS_IADS(area) 
-            rebuildMenusFunc(area)
-            -- _area_buildMANTISCoalitionMenuFunc(area, forCoalition, parentMenu)
+            rebuildMenusFunc(area, forCoalition, parentMenu, rebuildMenusFunc)
         end)
     end
 end
--- _area_buildMANTISCoalitionMenuFunc = buildMANTISCoalitionMenu
+_area_buildMANTISCoalitionMenuFunc = buildMANTISCoalitionMenu
 
 local _area_buildMANTISGroupMenuFunc
-local function buildMANTISGroupMenu(area, forGroup, parentMenu)
+local function buildMANTISGroupMenu(area, forGroup, parentMenu, rebuildMenusFunc)
     if not area.Skynet_Info then
         return end
 
+    if rebuildMenusFunc == nil then
+        rebuildMenusFunc = _area_buildMANTISGroupMenuFunc
+    end
     if area.IADS_Type == IADS_Types.MANTIS then
         MENU_GROUP_COMMAND:New(forGroup, "Deactivate " .. IADS_Types.MANTIS, parentMenu, function()
             MessageTo(nil, IADS_Types.MANTIS .. " is turned OFF in '" .. area.Name .. "'")
             teardownIADS(area)
-            _area_buildMANTISGroupMenuFunc(area, forGroup, parentMenu)
+            rebuildMenusFunc(area, forGroup, parentMenu)
         end)
     else
         MENU_GROUP_COMMAND:New(forGroup, "Activate " .. IADS_Types.MANTIS, parentMenu, function() 
             area.IADS_Type = IADS_Types.MANTIS
             MessageTo(nil, IADS_Types.MANTIS .. " is activated in '" .. area.Name .. "'")
             buildMANTIS_IADS(area) 
-            _area_buildMANTISGroupMenuFunc(area, forGroup, parentMenu)
+            rebuildMenusFunc(area, forGroup, parentMenu)
         end)
     end
 end
@@ -838,44 +854,90 @@ local function buildSkynetGroupMenu(area, forGroup, parentMenu)
         MENU_GROUP_COMMAND:New(forGroup, "Deactivate Skynet", parentMenu, function()
             MessageTo(forGroup, "Skynet is turned OFF in '" .. area.Name .. "'")
             teardownIADS(area)
-            _area_buildSkynetGroupMenuFunc(area, forGroup, parentMenu)
+            refreshAreaMenus(area, function() 
+                _area_buildSkynetGroupMenuFunc(area, forGroup, parentMenu)
+            end)
         end)
     else
         MENU_GROUP_COMMAND:New(forGroup, "Activate Skynet", parentMenu, function() 
             area.IADS_Type = IADS_Types.Skynet
             MessageTo(forGroup, "Skynet is activated in '" .. area.Name .. "' (all SAMs are added to IADS)")
             buildSkynet_IADS(area) 
-            _area_buildSkynetGroupMenuFunc(area, forGroup, parentMenu)
+            refreshAreaMenus(area, function() 
+                _area_buildSkynetGroupMenuFunc(area, forGroup, parentMenu)
+            end)
         end)
     end
 end
 _area_buildSkynetGroupMenuFunc = buildSkynetGroupMenu
 
--- local function addCoalitionMenuItemsFor(table, parentMenu, coalition, commandFunc)
---     local count = 0
---     for k, v in pairs(table) do
---         if count == 8 then
---             parentMenu = MENU_COALITION:New(coalition, "More", parentMenu)
---             count = 1
---         else
---             commandFunc(k, v, parentMenu)
---         end
---     end
--- end
+function DCAF.GBAD:BuildF10CoalitionIADSMenus(area, menuText, parentMenu, forCoalition, rebuildMenusFunc)
+    if not isClass(area, SAM_AREA.ClassName) then
+        error("DCAF.GBAD:BuildF10CoalitionIADSMenus :: `area` must be a #" .. SAM_AREA.ClassName .. ", but was: " .. DumpPretty(area)) end
 
+    if not isAssignedString(menuText) then
+        menuText = "IADS"
+    end
+    if forCoalition == nil then
+        forCoalition = coalition.side.BLUE
+    end
+    -- if parentMenu == nil then
+    --     parentMenu = MENU_COALITION:New(forCoalition, menuText)
+    -- end
+    if not area.IADS_Type or area.IADS_Type == IADS_Types.MANTIS then
+        buildMANTISCoalitionMenu(area, forCoalition, parentMenu, rebuildMenusFunc)
+    end
+    if not area.IADS_Type or area.IADS_Type == IADS_Types.Skynet then
+        buildSkynetCoalitionMenu(area, forCoalition, parentMenu, rebuildMenusFunc)
+    end
+Debug("nisse - DCAF.GBAD:BuildF10CoalitionIADSMenus :: parentMenu: " .. DumpPrettyDeep(parentMenu, 2))
+end
+
+function DCAF.GBAD:BuildF10GroupIADSMenus(area, menuText, parentMenu, forGroup, rebuildMenusFunc)
+    if not isClass(area, SAM_AREA.ClassName) then
+        error("DCAF.GBAD:BuildF10CoalitionIADSMenus :: `area` must be a #" .. SAM_AREA.ClassName .. ", but was: " .. DumpPretty(area)) end
+
+    local group = getGroup(forGroup)
+    if not group then
+        error("DCAF.GBAD:BuildF10CoalitionIADSMenus :: could not resolve `group` from: " .. DumpPretty(forGroup)) end
+    
+    if not isAssignedString(menuText) then
+        menuText = "IADS"
+    end
+    if forCoalition == nil then
+        forCoalition = coalition.side.BLUE
+    end
+    if parentMenu == nil then
+        parentMenu = MENU_COALITION:New(forCoalition, menuText)
+    end
+    if not area.IADS_Type or area.IADS_Type == IADS_Types.MANTIS then
+        buildMANTISGroupMenu(area, group, parentMenu, rebuildMenusFunc)
+    end
+    if not area.IADS_Type or area.IADS_Type == IADS_Types.Skynet then
+        buildSkynetGroupMenu(area, group, parentMenu, rebuildMenusFunc)
+    end
+end
+
+local _DEFAULT_menuText = "GBAD"
 local _coalition_area_menus = { -- ductionary
   -- key = <area name>
   -- value = MENU_COALITION
 }
-function DCAF.GBAD:BuildF10CoalitionMenus(parentMenu, forCoalition)
+function DCAF.GBAD:BuildF10CoalitionMenus(menuText, parentMenu, forCoalition, addAreaIADS)
     if _menuBuiltFor then
         error("DCAF.GBAD:BuildF10CoalitionMenus :: menu was already built") end
 
+    if not isAssignedString(menuText) then
+        menuText = _DEFAULT_menuText
+    end
     if forCoalition == nil then
         forCoalition = coalition.side.BLUE
     end
-    if isAssignedString(parentMenu) then
-        parentMenu = MENU_COALITION:New(forCoalition, parentMenu)
+    if parentMenu == nil then
+        parentMenu = MENU_COALITION:New(forCoalition, menuText)
+    end
+    if not isBoolean(addAreaIADS) then
+        addAreaIADS = true
     end
     SETTINGS_MENUS:BuildCoalition(self, parentMenu, forCoalition)
 
@@ -888,8 +950,10 @@ function DCAF.GBAD:BuildF10CoalitionMenus(parentMenu, forCoalition)
             areaMenu = MENU_COALITION:New(forCoalition, area.Name, parentMenu)
             _coalition_area_menus[area.Name] = areaMenu
         end
-        buildMANTISCoalitionMenu(area, forCoalition, areaMenu, buildAreaMenuFunc)
-        buildSkynetCoalitionMenu(area, forCoalition, areaMenu, buildAreaMenuFunc)
+        if addAreaIADS then
+            buildMANTISCoalitionMenu(area, forCoalition, areaMenu, buildAreaMenuFunc)
+            buildSkynetCoalitionMenu(area, forCoalition, areaMenu, buildAreaMenuFunc)
+        end
         MENU_COALITION_COMMAND:New(forCoalition, "Remove all", areaMenu, function() 
             area:Destroy()
         end)
@@ -930,11 +994,14 @@ function DCAF.GBAD:BuildF10CoalitionMenus(parentMenu, forCoalition)
     buildAreaMenuFunc = buildAreaMenu
 
     for i, area in ipairs(DCAF.GBAD.Areas) do
-        buildAreaMenu(area)
+        if not area.IsInvisible then
+            buildAreaMenu(area)
+        end
     end
 end
 
-function DCAF.GBAD:BuildF10GroupMenus(parentMenu, group)
+
+function DCAF.GBAD:BuildF10GroupMenus(menuText, parentMenu, group, addAreaIADS)
     if _menuBuiltFor then
         error("DCAF.GBAD:BuildF10CoalitionMenus :: menu was already built") end
 
@@ -942,13 +1009,22 @@ function DCAF.GBAD:BuildF10GroupMenus(parentMenu, group)
     if forGroup == nil then
         error("DCAF.GBAD:BuildF10GroupMenus :: cannot resolve group from: " .. DumpPretty(group)) end
     
-    if isAssignedString(parentMenu) then
-        parentMenu = MENU_GROUP:New(forGroup, parentMenu)
+    if not isAssignedString(menuText) then
+        menuText = _DEFAULT_menuText
+    end
+    if parentMenu == nil then
+        parentMenu = MENU_GROUP:New(forGroup, menuText)
+    end
+    if not isBoolean(addAreaIADS) then
+        addAreaIADS = true
     end
     SETTINGS_MENUS:BuildCoalition(self, parentMenu)
     for i, area in ipairs(DCAF.GBAD.Areas) do
         local areaMenu = MENU_GROUP:New(forGroup, area.Name, parentMenu)
-        buildSkynetGroupMenu(area, forGroup, areaMenu)
+        if addAreaIADS then
+            buildMANTISGroupMenu(area, forGroup, areaMenu)
+            buildSkynetGroupMenu(area, forGroup, areaMenu)
+        end
         MENU_GROUP_COMMAND:New(forGroup, "Remove all", areaMenu, function() 
             area:Destroy()
         end)
@@ -962,6 +1038,18 @@ function DCAF.GBAD:BuildF10GroupMenus(parentMenu, group)
             end)
         end
     end
+end
+
+function DCAF.GBAD:RemoveF10AreaCoalitionMenus(area)
+    if area == nil then
+        _coalition_area_menus = {}
+    else
+        _coalition_area_menus[area.Name] = nil
+    end
+end
+
+function DCAF.GBAD:ResetSettingsMenu()
+    SETTINGS_MENUS:Reset()
 end
 
 -- //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

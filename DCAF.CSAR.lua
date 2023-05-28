@@ -2918,9 +2918,10 @@ local CSAR_UnmarkedMissions = { -- dictionary
 }
 
 local function getPendingCSAR(dgName)
-    local csar = CSAR_UnmarkedMissions[dgName]
+    local key = string.upper(dgName)
+    local csar = CSAR_UnmarkedMissions[key]
     if csar then
-        return csar end
+        return csar, key end
 
     for key, csar in pairs(CSAR_UnmarkedMissions) do
         local ident = "R" .. string.upper(string.upper(GetTwoLetterCallsign(key)))
@@ -2933,12 +2934,12 @@ end
 local function getActiveCSAR(dgName)
     local codeword = string.upper(dgName)
     for _, msn in ipairs(CSAR_Missions) do
-        if string.upper(msn.CSAR.DistressedGroup.Name) == dgName then
-            return msn.CSAR
+        if string.upper(msn.CSAR.DistressedGroup.Name) == codeword then
+            return msn.CSAR, codeword
         else
             local ident = "R" .. string.upper(string.upper(GetTwoLetterCallsign(msn.CSAR.DistressedGroup.Name)))
-            if ident == dgName then
-                return msn.CSAR, msn.CSAR.DistressedGroup.Name
+            if ident == codeword then
+                return msn.CSAR, string.upper(msn.CSAR.DistressedGroup.Name)
             end
         end
     end
@@ -2963,7 +2964,7 @@ function DCAF.CSAR.MapControlled(menuCaption, scope, options, parentMenu)
     
         local codeword = string.upper(tokens[2])
         local useCodeword
-        local csar, useCodeword = getPendingCSAR(codeword) -- CSAR_UnmarkedMissions[codeword]
+        local csar, useCodeword = getPendingCSAR(codeword)
         if not csar then
             csar, useCodeword = getActiveCSAR(codeword)
             if not csar or isMissionResolved(csar) then
@@ -2999,6 +3000,7 @@ function DCAF.CSAR.MapControlled(menuCaption, scope, options, parentMenu)
             csar._manualLocationEstimation = {}
         end
         csar._manualLocationEstimation[event.Coalition] = true
+Debug("nisse - MissionEvents:OnMapMarkChanged :: useCodeword: " .. Dump(useCodeword))        
         CSAR_UnmarkedMissions[useCodeword] = nil
         if not csar.ActiveRescueMission then
             rebuildCSARMenus()
@@ -3532,14 +3534,14 @@ local function onScenarioStarted(csar)
     end
 end
 
-function DCAF.CSAR.RunScenarioInZone(zone, coalition, options, funcOnCreated)
+function DCAF.CSAR.RunInZone(zone, coalition, options, funcOnCreated)
     local location = DCAF.Location.Resolve(zone)
     if not location:IsZone() then
-        error("DCAF.CSAR.RunScenarioInZone :: cannot resolve zone from: " .. DumpPretty(zone)) end
+        error("DCAF.CSAR.RunInZone :: cannot resolve zone from: " .. DumpPretty(zone)) end
 
     local testCoalition = Coalition.Resolve(coalition)
     if not testCoalition then
-        error("DCAF.CSAR.RunScenarioInZone :: cannot resolve coalition from: " .. DumpPretty(coalition)) end
+        error("DCAF.CSAR.RunInZone :: cannot resolve coalition from: " .. DumpPretty(coalition)) end
 
     if not isClass(options, DCAF.CSAR.Options.ClassName) then
         options = DCAF.CSAR.Options:New()

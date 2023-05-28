@@ -26,8 +26,8 @@ local Godu = DCAF.Location:NewNamed("Godu", COORDINATE:NewFromLLDD(26.95750000, 
 DCAF.InitBullseyeName("DART")
 DCAF.CSAR.InitSafeLocations(Coalition.Blue, Godu)
 DCAF.CSAR.InitDistressedGroup(
-    DCAF.CSAR.DistressedGroup:NewTemplate("CSAR Distressed Ground", true, DCAF.Smoke:New(2), DCAF.Flares:New(4), false),
-    DCAF.CSAR.DistressedGroup:NewTemplate("CSAR Distressed Water", true, DCAF.Smoke:New(2), DCAF.Flares:New(4)), false)
+    DCAF.CSAR.DistressedGroup:NewTemplate("CSAR Distressed Ground", true, DCAF.Smoke:New(2), DCAF.Flares:New(4), true),
+    DCAF.CSAR.DistressedGroup:NewTemplate("CSAR Distressed Water", true, DCAF.Smoke:New(2), DCAF.Flares:New(4)), true)
 DCAF.CSAR.InitDistressBeacon("CSAR Distress Beacon")
 
 -- rescue
@@ -91,5 +91,5 @@ end)
 
 DCAF.CSAR.MapControlled("Test CSAR") --, "_C2", options)
 -- DCAF.CSAR.MenuControlled("Test CSAR", "_C2", options)
-DCAF.CSAR.RunScenarioInZone("TZ_CSAR", Coalition.Blue, options)
-DCAF.CSAR.RunScenarioInZone("TZ_CSAR-2", Coalition.Blue, options)
+DCAF.CSAR.RunInZone("TZ_CSAR", Coalition.Blue, options)
+DCAF.CSAR.RunInZone("TZ_CSAR-2", Coalition.Blue, options)
