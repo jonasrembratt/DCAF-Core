@@ -5790,6 +5790,12 @@ DCAF.Tanker = {
     TrackSpeed = nil,         -- #number; knots
     Track = nil,
     Events = {},              -- dictionary; key = name of event (eg. 'OnFuelState'), value = event arguments
+    MaxFuelLbs = {
+        ["KC130"] = 66139,
+        ["KC135"] = 199959,
+        ["KC135MPRS"] = 199959,
+        ["S-3B Tanker"] = 17225
+    }
 }
 
 local DCAF_AWACS = {
@@ -7744,6 +7750,11 @@ local function buildTankerMenus(caption, scope)
 
         dcafCoalition = group:GetCoalition()
     end
+    if group then
+        Debug("Building Tanker menu for group " .. group:GetName())
+    else
+        Debug("Building Tanker menu for coalition")
+    end
     _defaultTankerMenuScope = group or dcafCoalition
     local tracks = sortedTracks()
     if _tanker_menu then
@@ -7779,6 +7790,24 @@ local function buildTankerMenus(caption, scope)
             -- active tankers 
             for _, tankerInfo in ipairs(track.Tankers) do
                 local tanker = tankerInfo.Tanker
+
+                local function displayFuelState(group) 
+                    local unit = tanker.Group:GetUnit(1)
+                    local fuel = unit:GetFuel()
+                    local maxFuel = DCAF.Tanker.MaxFuelLbs[unit:GetTypeName()]
+                    if not maxFuel then
+                        error("Unknown tanker type: " .. unit:GetTypeName())
+                    end
+                        
+                    local remainingFuel = math.floor(fuel * maxFuel)
+                    local bingoFuel = math.floor(DCAF.Tanker.FuelStateRtb * maxFuel)
+                    local msg = "Tanker " .. tanker.DisplayName .. "\n  Fuel state: " .. remainingFuel .. "lbs\n  Bingo fuel: " .. bingoFuel .. "lbs\n  Remaining for AAR: " .. remainingFuel - bingoFuel .. "lbs"
+                    MESSAGE:New(msg, 10):ToGroup(group)
+                end
+
+                if group then
+                    MENU_GROUP_COMMAND:New(group, "Fuel state", menuTrack, displayFuelState, group)
+                end
 
                 local function sendTankerHome(airbaseName, route)
                     local airbase = AIRBASE:FindByName(airbaseName)
@@ -7901,9 +7930,15 @@ local function buildTankerMenus(caption, scope)
 end
 rebuildTankerMenus = buildTankerMenus
 
+ --- Build AAR menus for each player group when player enters plane. Recommended to use with
+  -- default parameters.
+  -- @param #string caption The title of the menu. Default is "AAR"
+  -- @param scope DEPRECATED
 function DCAF.TankerTracks:BuildF10Menus(caption, scope)
-    scope = scope or coalition.side.BLUE
-    buildTankerMenus(caption, scope)
+    if not caption then caption = "AAR" end
+    MissionEvents:OnPlayerEnteredAirplane(function(event)
+        buildTankerMenus("AAR", event["IniUnitName"])    
+    end)
     return self
 end
 
