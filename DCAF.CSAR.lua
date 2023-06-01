@@ -840,8 +840,12 @@ function DCAF.CSAR.DistressedGroup:NewTemplate(sTemplate, bCanBeCaptured, smoke,
         error("DCAF.CSAR.DistressedGroup:NewTemplate :: cannot resolve group from: " .. DumpPretty(sTemplate)) end
 
     local template = DCAF.clone(DCAF.CSAR.DistressedGroup)
-    if not isBoolean(gpsRadio) then
-        gpsRadio = nil 
+    if isNumber(gpsRadio) then
+        if gpsRadio > 1 then
+            gpsRadio = gpsRadio / 100
+        end
+    else
+        gpsRadio = nil
     end
     template.Template = sTemplate
     template.Smoke = smoke or DCAF.Smoke:New(2)
@@ -861,6 +865,9 @@ function DCAF.CSAR.DistressedGroup:New(name, csar, sTemplate, location, bCanBeCa
     if not isClass(csar, DCAF.CSAR.ClassName) then
         csar = DCAF.CSAR
     end
+
+Debug("nisse - DCAF.CSAR.DistressedGroup:New :: gpsRadio: " .. Dump(gpsRadio))
+
     if not group then
         error("DCAF.CSAR.DistressedGroup:New :: cannot resolve group from: " .. DumpPretty(sTemplate)) end
 
@@ -909,6 +916,12 @@ function DCAF.CSAR.DistressedGroup:NewFromTemplate(name, csar, location)
         t = CSAR_DistressedGroupTemplates.GroundTemplate
         if not t then
             error("DCAF.CSAR.DistressedGroup:NewFromTemplate :: no ground template was specified") end
+    end
+    local gpsRadio
+    if isNumber(t.GpsRadio) then
+        local dice = math.random(100)
+Debug("nisse - DCAF.CSAR.DistressedGroup:NewFromTemplate :: t.GpsRadio: " .. Dump(t.GpsRadio) .. " :: dice: " .. Dump(dice))
+        t.GpsRadio = dice <= t.GpsRadio * 100
     end
     local dg = DCAF.CSAR.DistressedGroup:New(name, csar, t.Template, location, t.CanBeCatured, t.Smoke, t.Flares, t.GpsRadio)
     if isClass(DCAF.CSAR.DistressBeaconTemplate, CSAR_DistressBeaconTemplate.ClassName) then
@@ -2950,6 +2963,14 @@ function DCAF.CSAR.MapControlled(menuCaption, scope, options, parentMenu)
     options.IsMarkControlled = true
 
     MissionEvents:OnMapMarkChanged(function(event)
+-- NISSE
+-- local coord = event.Location.Source
+-- local units, statics, scenery = coord:ScanObjects(40)
+-- local scenery = coord:ScanScenery(40)
+-- local closestScenery = coord:FindClosestScenery(40)
+-- Debug("nisse - TEST SCAN SCENERY :: closest: " .. DumpPretty(closestScenery) .. " scenery: " .. DumpPrettyDeep({Units = units, Statics = statics, Scenery = scenery}, 2))
+-- Debug("nisse - TEST SCAN SCENERY :: closest: " .. DumpPretty(closestScenery) .. " scenery: " .. DumpPrettyDeep(scenery, 2))
+
         local tokens = {}
         for word in event.Text:gmatch("%w+") do
             table.insert(tokens, word)

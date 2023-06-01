@@ -26,8 +26,8 @@ local Godu = DCAF.Location:NewNamed("Godu", COORDINATE:NewFromLLDD(26.95750000, 
 DCAF.InitBullseyeName("DART")
 DCAF.CSAR.InitSafeLocations(Coalition.Blue, Godu)
 DCAF.CSAR.InitDistressedGroup(
-    DCAF.CSAR.DistressedGroup:NewTemplate("CSAR Distressed Ground", true, DCAF.Smoke:New(2), DCAF.Flares:New(4), true),
-    DCAF.CSAR.DistressedGroup:NewTemplate("CSAR Distressed Water", true, DCAF.Smoke:New(2), DCAF.Flares:New(4)), true)
+    DCAF.CSAR.DistressedGroup:NewTemplate("CSAR Distressed Ground", true, DCAF.Smoke:New(2), DCAF.Flares:New(4), .3),
+    DCAF.CSAR.DistressedGroup:NewTemplate("CSAR Distressed Water", true, DCAF.Smoke:New(2), DCAF.Flares:New(4)), .3)
 DCAF.CSAR.InitDistressBeacon("CSAR Distress Beacon")
 
 -- rescue
@@ -47,42 +47,44 @@ DCAF.CSAR.InitRescueMissions(Coalition.Blue,
         DCAF.CSAR.RescueGroup:New("BLUE Rescue Cobra", 2)):AddAirbases({ LHA_1 }))
 
 local between_3_and_10_minutes = VariableValue:NewRange(Minutes(3), Minutes(10))
--- DCAF.CSAR.InitDelayedCaptureMissions(Coalition.Red, between_3_and_10_minutes,
---     DCAF.CSAR.Mission:New("Mi-8 + 2 Ka-50", 
---         DCAF.CSAR.RescueGroup:New("RED Capture Heli-transport"):WithCapabilities(nil, true),
---         DCAF.CSAR.RescueGroup:New("RED Capture Heli-escort", 2)):AddAirbases({ AIRBASE.PersianGulf.Jiroft_Airport, Farp_Tehran }))
+DCAF.CSAR.InitDelayedCaptureMissions(Coalition.Red, between_3_and_10_minutes,
+    DCAF.CSAR.Mission:New("Mi-8 + 2 Ka-50", 
+        DCAF.CSAR.RescueGroup:New("RED Capture Heli-transport"):WithCapabilities(nil, true),
+        DCAF.CSAR.RescueGroup:New("RED Capture Heli-escort", 2)):AddAirbases({ AIRBASE.PersianGulf.Jiroft_Airport, Farp_Tehran }))
         
-local c2_group = "_C2"
+local c2_group -- = "_C2"
+
 DCAF.CSAR.OnStarted(function(csar) 
-    MessageTo(nil, "ALERT! Pilot in distress, codeword '" .. csar.Name .. "'")
+    MessageTo(c2_group, "CSAR_PilotDown.ogg")
+    MessageTo(c2_group, "ALERT! Pilot in distress, codeword '" .. csar.Name .. "'")
 end)
 
 DCAF.CSAR.OnRescueUnitTargeted(function(event) 
-    MessageTo(nil, "OnRescueUnitTargeted :: event\n" .. DumpPretty(event))
+    MessageTo(c2_group, "OnRescueUnitTargeted :: event\n" .. DumpPretty(event))
 end)
 
 DCAF.CSAR.OnDistressedGroupLocated(function(event) 
-    MessageTo(nil, "OnDistressedGroupLocated :: event\n" .. DumpPretty(event))
+    MessageTo(c2_group, "OnDistressedGroupLocated :: event\n" .. DumpPretty(event))
 end)
 
 DCAF.CSAR.OnDistressedGroupExtracted(function(event) 
-    MessageTo(nil, "OnDistressedGroupExtracted :: event\n" .. DumpPretty(event))
+    MessageTo(c2_group, "OnDistressedGroupExtracted :: event\n" .. DumpPretty(event))
 end)
 
 DCAF.CSAR.OnRescueUnitHit(function(event) 
-    MessageTo(nil, "OnRescueUnitHit :: event\n" .. DumpPretty(event))
+    MessageTo(c2_group, "OnRescueUnitHit :: event\n" .. DumpPretty(event))
 end)
 
 DCAF.CSAR.OnRescueUnitDestroyed(function(event) 
-    MessageTo(nil, "OnRescueUnitDestroyed :: event\n" .. DumpPretty(event))
+    MessageTo(c2_group, "OnRescueUnitDestroyed :: event\n" .. DumpPretty(event))
 end)
 
 DCAF.CSAR.OnRecoveryUnitDestroyed(function(event) 
-    MessageTo(nil, "OnRecoveryUnitDestroyed :: event\n" .. DumpPretty(event))
+    MessageTo(c2_group, "OnRecoveryUnitDestroyed :: event\n" .. DumpPretty(event))
 end)
 
 DCAF.CSAR.OnRecoveryUnitSafe(function(event) 
-    MessageTo(nil, "SAFELY LANDED :: event: " .. DumpPretty(event))
+    MessageTo(c2_group, "SAFELY LANDED :: event: " .. DumpPretty(event))
 end)
 
 -- DCAF.CSAR.OnDistressedGroupAttractAttention(function(event) 

@@ -575,8 +575,9 @@ function SAM_AREA:Spawn(template, destroyExisting)
     local zone = self.Zones[zoneIndex]
     local vec2 = zone:GetRandomVec2()
     local coord = COORDINATE:NewFromVec2(vec2)
-    -- only spawn on land and no closer to "scenery" than 400 meters (right now I don't know how to filter on different types of scenery -Jonas)
-    while not coord:IsSurfaceTypeLand() or coord:FindClosestScenery(400) do
+
+    -- only spawn on land and no closer to "scenery" than 100 meters (right now I don't know how to filter on different types of scenery -Jonas)
+    while not coord:IsSurfaceTypeLand() or coord:FindClosestScenery(100) do
         vec2 = zone:GetRandomVec2()
         coord = COORDINATE:NewFromVec2(vec2)
     end

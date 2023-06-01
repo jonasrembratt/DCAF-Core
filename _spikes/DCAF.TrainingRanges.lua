@@ -95,19 +95,22 @@ function DCAF.TrainingRange:IsActive(name)
     return DCAF.TrainingRange:Find(name).IsActive
 end
 
-function DCAF.TrainingRange:Spawn(source)
-    local spawn
-    if isAssignedString(source) then
-        spawn = self.Spawns[source]
-        if not spawn then
-            spawn = SPAWN:New(source)
-            self.Spawns[source] = spawn
+function DCAF.TrainingRange:Spawn(...)
+    for i = 1, #arg, 1 do
+        local source = arg[i]
+        local spawn
+        if isAssignedString(source) then
+            spawn = self.Spawns[source]
+            if not spawn then
+                spawn = SPAWN:New(source)
+                self.Spawns[source] = spawn
+            end
+        elseif isClass(source, SPAWN.ClassName) then
+            spawn = source
         end
-    elseif isClass(source, SPAWN.ClassName) then
-        spawn = source
+        local group = spawn:Spawn()
+        table.insert(self._groups, group)
     end
-    local group = spawn:Spawn()
-    table.insert(self._groups, group)
 end
 
 --- Activates all groups associated with range
