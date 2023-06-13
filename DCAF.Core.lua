@@ -7736,7 +7736,7 @@ local isDynamicTankerTracksSupported = false
 local rebuildTankerMenus
 local _defaultTankerMenuCaption
 local _defaultTankerMenuScope
-local function buildTankerMenus(caption, scope)
+local function buildControllerTankerMenus(caption, scope)
     if not isAssignedString(caption) then
         caption = _defaultTankerMenuCaption or "Tankers"
     end
@@ -7790,24 +7790,6 @@ local function buildTankerMenus(caption, scope)
             -- active tankers 
             for _, tankerInfo in ipairs(track.Tankers) do
                 local tanker = tankerInfo.Tanker
-
-                local function displayFuelState(group) 
-                    local unit = tanker.Group:GetUnit(1)
-                    local fuel = unit:GetFuel()
-                    local maxFuel = DCAF.Tanker.MaxFuelLbs[unit:GetTypeName()]
-                    if not maxFuel then
-                        error("Unknown tanker type: " .. unit:GetTypeName())
-                    end
-                        
-                    local remainingFuel = math.floor(fuel * maxFuel)
-                    local bingoFuel = math.floor(DCAF.Tanker.FuelStateRtb * maxFuel)
-                    local msg = "Tanker " .. tanker.DisplayName .. "\n  Fuel state: " .. remainingFuel .. "lbs\n  Bingo fuel: " .. bingoFuel .. "lbs\n  Remaining for AAR: " .. remainingFuel - bingoFuel .. "lbs"
-                    MESSAGE:New(msg, 10):ToGroup(group)
-                end
-
-                if group then
-                    MENU_GROUP_COMMAND:New(group, "Fuel state", menuTrack, displayFuelState, group)
-                end
 
                 local function sendTankerHome(airbaseName, route)
                     local airbase = AIRBASE:FindByName(airbaseName)
@@ -7928,16 +7910,56 @@ local function buildTankerMenus(caption, scope)
         end
     end
 end
-rebuildTankerMenus = buildTankerMenus
+rebuildTankerMenus = buildControllerTankerMenus
+
+-- Adds a menu for each tanker to the F10 menu that displays important tanker info to the player's group
+local function buildPlayerTankerMenus(unitName) 
+
+    local function displayTankerState(group, tanker) 
+        local unit = tanker.Group:GetUnit(1)
+        local fuel = unit:GetFuel()
+        local maxFuel = DCAF.Tanker.MaxFuelLbs[unit:GetTypeName()]
+        if not maxFuel then
+            error("Unknown tanker type: " .. unit:GetTypeName())
+        end
+            
+        local remainingFuel = math.floor(fuel * maxFuel)
+        local bingoFuel = math.floor(DCAF.Tanker.FuelStateRtb * maxFuel)
+        local msg = string.format("%s:\n  Freq: %s Mhz\n  TCN: %s%s\n", 
+                        tanker.DisplayName, 
+                        tanker.Frequency, 
+                        tanker.TACANChannel,
+                        tanker.TACANMode)
+        local msg = msg .. string.format("  Fuel state:\n    Current: %s lbs\n    Bingo: %s lbs\n    Remaining for AAR: %s lbs\n", 
+                        remainingFuel, 
+                        bingoFuel, 
+                        remainingFuel - bingoFuel)
+        MESSAGE:New(msg, 15):ToGroup(group)
+    end
+
+    local tracks = sortedTracks()
+    local group = UNIT:FindByName(unitName):GetGroup()
+
+    for _, track in ipairs(tracks) do
+        for _, tankerInfo in ipairs(track.Tankers) do
+            local tanker = tankerInfo.Tanker
+            if group then
+                MENU_GROUP_COMMAND:New(group, tanker.DisplayName, nil, displayTankerState, group, tanker)
+            end
+        end
+    end
+
+end
 
  --- Build AAR menus for each player group when player enters plane. Recommended to use with
   -- default parameters.
   -- @param #string caption The title of the menu. Default is "AAR"
-  -- @param scope DEPRECATED
+  -- @param scope Blue coalition by default for controller menus.
 function DCAF.TankerTracks:BuildF10Menus(caption, scope)
-    if not caption then caption = "AAR" end
+    buildControllerTankerMenus(caption or "AAR", scope or Coalition.Blue)
+
     MissionEvents:OnPlayerEnteredAirplane(function(event)
-        buildTankerMenus("AAR", event["IniUnitName"])    
+        buildPlayerTankerMenus(event["IniUnitName"])
     end)
     return self
 end
