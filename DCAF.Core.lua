@@ -5790,6 +5790,12 @@ DCAF.Tanker = {
     TrackSpeed = nil,         -- #number; knots 
     Track = nil, 
     Events = {},              -- dictionary; key = name of event (eg. 'OnFuelState'), value = event arguments 
+    MaxFuelLbs = {
+        ["KC130"] = 66139,
+        ["KC135"] = 199959,
+        ["KC135MPRS"] = 199959,
+        ["S-3B Tanker"] = 17225
+    }
 } 
  
 local DCAF_AWACS = { 
