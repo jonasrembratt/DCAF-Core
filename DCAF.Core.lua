@@ -7944,7 +7944,7 @@ local function buildPlayerTankerMenus(unitName)
         for _, tankerInfo in ipairs(track.Tankers) do
             local tanker = tankerInfo.Tanker
             if group then
-                MENU_GROUP_COMMAND:New(group, tanker.DisplayName, nil, displayTankerState, group, tanker)
+                MENU_GROUP_COMMAND:New(group, "Tanker info - " .. tanker.DisplayName, nil, displayTankerState, group, tanker)
             end
         end
     end
