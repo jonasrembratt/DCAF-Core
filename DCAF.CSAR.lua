@@ -76,7 +76,7 @@ function CSAR_Trigger.IsValid(value)
     return value == CSAR_Trigger.Ejection or value == CSAR_Trigger.Landing or value == CSAR_Trigger.Random
 end
 
-local CSAR_DefaultCodewords = { "Cinderella", "Pocahontas", "Ariel", "Anastasia", "Leia", "Astrid", "Fiona" }
+local CSAR_DefaultCodewords = DCAF.Codewords.Princesses -- { "Cinderella", "Pocahontas", "Ariel", "Anastasia", "Leia", "Astrid", "Fiona" }
 
 local AirForceMissionNames = {
     ["Balin"] = { Count = 0 },
@@ -2013,7 +2013,6 @@ local function startSearchAir(sg)
             end
             protectCSAR(sg, searchPattern)
             sg:SetRoute(searchPattern)
-            -- group:Route(searchPattern)
             debug_drawSearchArea(sg)
         end)
     end
@@ -2244,11 +2243,11 @@ local function hoverAndPickup(sg, destroyDG)
 
     local waypoints = { wpIngress, wpHover1, wpHoverEnd }
     sg:SetRoute(waypoints)
-    -- sg.Group:Route(waypoints)
 end
 
 local function landAndPickup(sg)
-    local coord = sg.DistressedGroup._lastCoordinate:GetFlatArea(20, 400, true)
+    -- note: Each flat spot gets blocked for 5 mins, avoiding choppers trying to land on same coordinate
+    local coord = sg.DistressedGroup._lastCoordinate:GetFlatArea(20, 400, true, nil):Occupy(Minutes(5))
     if not coord then
         -- could not find a spot to land - hover and pickup instead
         hoverAndPickup(sg)
@@ -2284,7 +2283,6 @@ local function landAndPickup(sg)
     end)
     protectCSAR(sg, waypoints, nil, NauticalMiles(1))
     sg:SetRoute(waypoints)
-    -- sg.Group:Route(waypoints)
 end
 
 local function rtbGroundNow(sg, location)
@@ -2433,7 +2431,7 @@ local function directCapableGroupsToPickup(groups)
     end
 
     local countPickups = 0
-    local maxCountPickups = math.random(1, #groups)
+    local maxCountPickups = 2 -- math.random(1, #groups)
 
     local function extractDistressedGroup(sg)
         if sg:IsRescueGroup() and sg.CSAR.RescueMissionState == CSAR_MissionState.Fetching then
@@ -3037,7 +3035,7 @@ Debug("nisse - MissionEvents:OnMapMarkChanged :: useCodeword: " .. Dump(useCodew
     end)
     DCAF.CSAR.OnScenario(options, function(csar) 
         CSAR_UnmarkedMissions[string.upper(csar.Name)] = csar
-        DCAF.CSAR.BuildMenus(menuCaption, scope, parentMenu)
+        DCAF.CSAR.BuildF10Menu(menuCaption, scope, parentMenu)
      end)
 end
 
@@ -3978,7 +3976,7 @@ local function buildCSARMenus(caption, scope, parentMenu)
 end
 rebuildCSARMenus = buildCSARMenus
 
-function DCAF.CSAR.BuildMenus(caption, scope, parentMenu)
+function DCAF.CSAR.BuildF10Menu(caption, scope, parentMenu)
     if scope == nil then
         scope = Coalition.Blue
     end

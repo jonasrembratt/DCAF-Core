@@ -186,7 +186,7 @@ function isListOfAssignedStrings(list, ignoreFunctions)
     end  
     return true  
 end  
-  
+
 function isDictionary( value )   
     local tableType = getTableType(value)  
     return tableType == "dictionary"  
@@ -228,7 +228,23 @@ function isAssignedString( value )
         return false end  
   
     return string.len(value) > 0   
-end  
+end
+
+KeyValue = {
+    ClassName = "DCAF_KEY_VALUE",
+    Name = nil,
+    Value = nil
+}
+
+function KeyValue:New(key, value)
+    if key == nil then
+        error("KeyValue:New :: `key` must be assigned") end
+
+    local kv = DCAF.clone(KeyValue)
+    kv.Key = key
+    kv.Value = value
+    return kv
+end
   
 Skill = {  
     Average = "Average",  
@@ -236,7 +252,15 @@ Skill = {
     Good = "Good",  
     Excellent = "Excellent",  
     Random = "Random"  
-}  
+}
+
+Altitude = {
+    VeryLow = "Very low",
+    Low = "Low",
+    Medium = "Medium",
+    High = "High",
+    VeryHigh = "Very high"
+}
   
 function Skill.Validate(value)  
     if not isAssignedString(value) then  
@@ -467,7 +491,7 @@ end
   
 function ReciprocalAngle(angle)  
     return (angle + 180) % 360  
-end  
+end
   
 function trim(s)  
     return (s:gsub("^%s*(.-)%s*$", "%1"))  
@@ -763,14 +787,14 @@ function VariableValue:NewRange(min, max, minVariance, maxVariance)
     return vv  
 end  
   
-function VariableValue:GetValue()  
+function VariableValue:GetValue()
     local function getValue(value, variance)  
         if variance == nil or variance == 0 then  
             return value end  
   
         local rndVar = math.random(variance * 100) / 100  
         local var = rndVar * value  
-        if math.random(100) <= 50 then  
+        if math.random(100) <= 50 then
             return value - var  
         else  
             return value + var  
@@ -786,8 +810,36 @@ function VariableValue:GetValue()
     if self.MinValue then  
         return getBoundedValue()  
     end  
-    return getValue(self.Value, self.Variance)  
-end  
+    return getValue(self.Value, self.Variance)
+end
+
+RoundMethod = {
+    Round = 1,
+    Floor = 2,
+    Ceiling = 3
+}
+
+function VariableValue:GetIntegerValue(roundMethod)
+    local value = self:GetValue()
+    if not isNumber(roundMethod) then
+        roundMethod = RoundMethod.Round
+    end
+
+    if roundMethod == RoundMethod.Floor then
+        return math.floor(value)
+    elseif roundMethod == RoundMethod.Ceiling then
+        return math.ceil(value)
+    else
+        -- round...
+        local floor = math.floor(value)
+        local dec = value - floor
+        if dec <= .5 then
+            return floor
+        else
+            return floor+1
+        end
+    end
+end
   
 function Vec3_FromBullseye(aCoalition)  
     local testCoalition = Coalition.Resolve(aCoalition, true)  
@@ -949,6 +1001,70 @@ function COORDINATE:SunPosition(dateTime)
     end  
     return altitude * Rad2Deg, azimuth * Rad2Deg  
 end  
+
+local _occupiedAreas = {
+    -- list of #DCAF_ReservedArea
+}
+local _OCCUPIED_AREAS_PURGE_INTERVAL = Minutes(2)
+local _reservedAreasPurgeTime = UTILS.SecondsOfToday() + _OCCUPIED_AREAS_PURGE_INTERVAL
+
+local DCAF_OccupiedArea = {
+    ClassName = "DCAF_OccupiedArea",
+    Coordinate = nil,               -- #COORDINATE
+    Radius = nil,                   -- #number - meters
+    Time = nil                      -- #number - seconds
+}
+
+function DCAF_OccupiedArea:New(coordinate, radius, expires)
+    local rc = DCAF.clone(DCAF_OccupiedArea)
+    rc.Coordinate = coordinate
+    rc.Radius = radius
+    rc.Expires = expires
+    table.insert(_occupiedAreas, rc)
+    return rc
+end
+
+function DCAF_OccupiedArea:Purge(now)
+    local now = now or UTILS.SecondsOfToday()
+    if now < _reservedAreasPurgeTime then
+        return end
+
+    _reservedAreasPurgeTime = now + _OCCUPIED_AREAS_PURGE_INTERVAL
+    local newOccipedAreas = {}
+    for i, occupied in ipairs(_occupiedAreas) do
+        if now < occupied.Expires then
+            table.insert(newOccipedAreas, occupied)
+        end
+    end
+    _occupiedAreas = newOccipedAreas
+end
+
+function COORDINATE:Occupy(radius, time)
+    if not self then 
+        return self end
+
+    if not isNumber(radius) then
+        radius = 0 
+    end
+    if not isNumber(time) then
+        time = 35535
+    end
+    if self:IsOccupied() then
+        error("COORDINATE:Reserve :: coordinate is already reserved") end
+
+    DCAF_OccupiedArea:New(self, radius, time + UTILS.SecondsOfToday())
+    return self
+end
+
+function COORDINATE:IsOccupied()
+    local now = UTILS.SecondsOfToday()
+    DCAF_OccupiedArea:Purge(now)
+    for _, occupied in ipairs(_occupiedAreas) do
+        if now < occupied.Expires and self:Get2DDistance(occupied.Coordinate) < occupied.Radius then
+            return true 
+        end
+    end
+end
   
 function COORDINATE:GetFlatArea(flatAreaSize, searchAreaSize, excludeSelf, maxInclination)  
     if not isNumber(flatAreaSize) then  
@@ -970,7 +1086,22 @@ function COORDINATE:GetFlatArea(flatAreaSize, searchAreaSize, excludeSelf, maxIn
         if inclination <= maxInclination then  
             return self end  
     end  
-  
+
+    local now = UTILS.SecondsOfToday()
+
+    local function purgeExpiredBlockedCoordinates()
+        if now < _reservedAreasPurgeTime then
+            return end
+
+        local newBlocked = {}
+        for i, reserved in ipairs(_occupiedAreas) do
+            if now < reserved.Expires then
+                table.insert(newBlocked, reserved)
+            end
+        end
+        _occupiedAreas = newBlocked
+    end
+ 
     local function searchSquareEdge(searchSize) -- 1, 2, 3... (eg. 2 = `flatAreaSize` x 2)  
         local coord = self:Translate(flatAreaSize * searchSize, 360):Translate(flatAreaSize * searchSize, 270)  
         local function searchHeading(hdg)  
@@ -984,8 +1115,9 @@ function COORDINATE:GetFlatArea(flatAreaSize, searchAreaSize, excludeSelf, maxIn
   
         for _, hdg in ipairs({90, 180, 270, 360}) do  
             local coordFlat = searchHeading(hdg)  
-            if coordFlat then  
-                return coordFlat end  
+            if coordFlat and not coordFlat:IsOccupied() then  
+                return coordFlat
+            end  
         end  
     end  
   
@@ -1630,9 +1762,10 @@ end
   
 DCAF.Location = {  
     ClassName = "DCAF.Location",   
-    Name = nil,        -- #string   
-    Source = nil,      -- #COORDINATE, #GROUP, #AIRBASE, or #STATIC  
-    Coordinate = nil   -- COORDINATE  
+    Name = nil,         -- #string   
+    Source = nil,       -- #COORDINATE, #GROUP, #UNIT, #AIRBASE, or #STATIC  
+    Coordinate = nil,   -- COORDINATE
+    Type = nil          -- #string - type of location
 }  
   
 function DCAF.Location:NewNamed(name, source, throwOnFail)  
@@ -1669,9 +1802,15 @@ function DCAF.Location:NewNamed(name, source, throwOnFail)
         location.IsAir = false  
         -- location.IsAirdrome = true  
         return location  
-    elseif isGroup(source) or isUnit(source) then  
+    elseif isGroup(source) then  
         location.Coordinate = source:GetCoordinate()  
         location.Name = source.GroupName  
+        location.IsAir = source:IsAir()  
+        location.IsControllable = true  
+        return location  
+    elseif isUnit(source) or isUnit(source) then  
+        location.Coordinate = source:GetCoordinate()  
+        location.Name = source.UnitName
         location.IsAir = source:IsAir()  
         location.IsControllable = true  
         return location  
@@ -1684,10 +1823,14 @@ function DCAF.Location:NewNamed(name, source, throwOnFail)
         -- try resolve source...  
         local zone = getZone(source)
         if zone then return DCAF.Location:New(zone) end  
-        local group = getGroup(source)  
-        if group then return DCAF.Location:New(group) end  
         local unit = getUnit(source)  
-        if unit then return DCAF.Location:New(unit) end  
+        if unit then 
+Debug("nisse - DCAF.Location:NewNamed :: UNIT: " .. DumpPretty(source))            
+            return DCAF.Location:New(unit) end
+        local group = getGroup(source)  
+        if group then 
+Debug("nisse - DCAF.Location:NewNamed :: GROUP: " .. DumpPretty(source))            
+            return DCAF.Location:New(group) end
         local airbase = getAirbase(source)  
         if airbase then return DCAF.Location:New(airbase) end  
         local static = getStatic(source)  
@@ -1869,12 +2012,14 @@ if #coalitions > 0 and isNumber(coalitions[1]) then
 -- Debug("DCAF.Location:GetClosestUnits_ForEachUnit :: closest: " .. DumpPretty(closest))  
     return closest  
 end  
-  
+
 function DCAF.Location:IsCoordinate() return isCoordinate(self.Source) end  
 function DCAF.Location:IsVec2() return isVec2(self.Source) end  
 function DCAF.Location:IsVec3() return isVec3(self.Source) end  
 function DCAF.Location:IsZone() return isZone(self.Source) end  
 function DCAF.Location:IsAirbase() return isAirbase(self.Source) end  
+function DCAF.Location:IsGroup() return isGroup(self.Source) end
+function DCAF.Location:IsUnit() return isUnit(self.Source) end
   
 function GetClosestFriendlyUnit(source, maxDistance, ownCoalition)  
     local coord  
@@ -3832,6 +3977,7 @@ local _missionEventsHandlers = {
     _shootingStartHandlers = {},  
     _shootingStopHandlers = {},  
     _unitHitHandlers = {},  
+    _aircraftTakeOffHandlers = {},
     _aircraftLandedHandlers = {},  
     _unitEnteredZone = {},  
     _unitInsideZone = {},  
@@ -3893,13 +4039,30 @@ function _e:onEvent( event )
     end  
   
     local function addInitiatorAndTarget( event )  
-        if event.initiator ~= nil and event.IniUnit == nil then  
-            event.IniUnit = UNIT:Find(event.initiator)  
-            event.IniUnitName = event.IniUnit.UnitName  
-            event.IniGroup = event.IniUnit:GetGroup()  
-            event.IniGroupName = event.IniGroup.GroupName  
-            event.IniPlayerName = event.IniUnit:GetPlayerName()  
-        end  
+        if event.initiator then
+            if not event.IniUnit then
+                event.IniUnit = UNIT:Find(event.initiator)  
+            end
+            if event.IniUnit then
+                event.IniUnitName = event.IniUnit.UnitName  
+                event.IniPlayerName = event.IniUnit:GetPlayerName()  
+                event.IniGroup = event.IniUnit:GetGroup()  
+                if event.IniGroup then
+                    event.IniGroupName = event.IniGroup.GroupName  
+                end
+            end
+        end
+    --    if event.initiator ~= nil and event.IniUnit ~= nil then  obsolete
+    --         event.IniGroup = event.IniUnit:GetGroup()  
+    --         if event.IniGroup then
+    --             event.IniGroupName = event.IniGroup.GroupName  
+    --         end
+    --         event.IniUnit = UNIT:Find(event.initiator)  
+    --         if event.IniUnit then
+    --             event.IniUnitName = event.IniUnit.UnitName  
+    --             event.IniPlayerName = event.IniUnit:GetPlayerName()  
+    --         end
+    --     end  
         local dcsTarget = getDCSTarget(event)  
         if event.TgtUnit == nil and dcsTarget ~= nil then  
             event.TgtUnit = UNIT:Find(dcsTarget)  
@@ -3908,10 +4071,6 @@ function _e:onEvent( event )
                 return event  
             end  
             event.TgtUnitName = event.TgtUnit.UnitName  
-            -- if DCSUnit then  
-            --   local UnitGroup = GROUP:FindByName( dcsTarget:getGroup():getName() )  
-            --   return UnitGroup  
-            -- end  
             event.TgtGroup = event.TgtUnit:GetGroup()  
             if not event.TgtGroup then  
                 Warning("_e:onEvent :: event: " .. Dump(event.id) .. " :: could not resolve TgtGroup from UNIT:GetGroup()" )  
@@ -4027,6 +4186,7 @@ function _e:onEvent( event )
             if not dcsTarget and event.weapon then  
                 dcsTarget = event.weapon:getTarget()  
             end  
+Debug("nisse - world.event.S_EVENT_SHOT :: event: " .. DumpPrettyDeep(event, 2))            
             MissionEvents:Invoke( _missionEventsHandlers._weaponFiredHandlers, addInitiatorAndTarget(event))  
         end  
         return  
@@ -4047,6 +4207,12 @@ function _e:onEvent( event )
         return  
     end  
   
+    if event.id == world.event.S_EVENT_TAKEOFF then
+        addInitiatorAndTarget(addPlace(event))  
+        MissionEvents:Invoke(_missionEventsHandlers._aircraftTakeOffHandlers, addInitiatorAndTarget(addPlace(event)))  
+        return  
+    end
+
     if event.id == world.event.S_EVENT_LAND then  
         addInitiatorAndTarget(addPlace(event))  
         MissionEvents:Invoke(_missionEventsHandlers._aircraftLandedHandlers, addInitiatorAndTarget(addPlace(event)))  
@@ -4132,7 +4298,12 @@ function MissionEvents:EndOnShootingStop( func ) MissionEvents:RemoveListener(_m
   
 function MissionEvents:OnUnitHit( func, insertFirst ) MissionEvents:AddListener(_missionEventsHandlers._unitHitHandlers, func, nil, insertFirst) end  
 function MissionEvents:EndOnUnitHit( func ) MissionEvents:RemoveListener(_missionEventsHandlers._unitHitHandlers, func) end  
-  
+
+function MissionEvents:OnAircraftTakeOff( func, insertFirst )
+    MissionEvents:AddListener(_missionEventsHandlers._aircraftTakeOffHandlers, func, nil, insertFirst)   
+end  
+function MissionEvents:EndOnAircraftTakeOff( func ) MissionEvents:RemoveListener(_missionEventsHandlers._aircraftTakeOffHandlers, func) end  
+
 function MissionEvents:OnAircraftLanded( func, insertFirst )   
     MissionEvents:AddListener(_missionEventsHandlers._aircraftLandedHandlers, func, nil, insertFirst)   
 end  
@@ -4255,7 +4426,20 @@ function GROUP:GetFuelLowState()
         end  
     end  
     return lowState  
-end  
+end 
+
+function GROUP:SetRoute(waypoints)
+    if not isList(waypoints) then
+        error("GROUP:SetRoute :: `waypoints` must be a list, but was: " .. DumpPretty(waypoints)) end
+
+    self._route = waypoints
+    self:Route(waypoints)
+    return self
+end
+  
+function GROUP:GetRoute(waypoints)
+    return self._route or self:CopyRoute()
+end
   
 function _missionEventsAircraftFielStateMonitor:Start(key, units, fuelState, func)  
   
@@ -4353,7 +4537,7 @@ function MissionEvents:OnFuelState( controllable, nFuelState, func )
     _missionEventsAircraftFielStateMonitor:Start(key, units, nFuelState, func)  
 end  
   
-------------------------------- [ EVENT PRE-REGISTRATION /LATE ACTIVATION ] -------------------------------  
+------------------------------- [ EVENT PRE-REGISTRATION / LATE ACTIVATION ] -------------------------------  
 --[[   
     This api allows Storylines to accept delegates and postpone their registration   
     until the Storyline runs  
@@ -4370,6 +4554,7 @@ end
 local _DCAFEvents_lateActivations = {} -- { key = storyline name, value = { -- list of <DCAFEventActivation> } }  
   
 DCAFEvents = {  
+    OnAircraftTookOff = "OnAircraftTookOff",  
     OnAircraftLanded = "OnAircraftLanded",  
     OnGroupDiverted = "OnGroupDiverted",  
     OnGroupEntersZone = "OnGroupEntersZone",  
@@ -4383,6 +4568,7 @@ DCAFEvents = {
 }  
   
 local _DCAFEvents = {  
+    [DCAFEvents.OnAircraftTookOff] = function(func, insertFirst) MissionEvents:OnAircraftTakeOff(func, insertFirst) end,  
     [DCAFEvents.OnAircraftLanded] = function(func, insertFirst) MissionEvents:OnAircraftLanded(func, insertFirst) end,  
     [DCAFEvents.OnGroupDiverted] = function(func, insertFirst) MissionEvents:OnGroupDiverted(func, insertFirst) end,  
     [DCAFEvents.OnUnitDestroyed] = function(func, insertFirst) MissionEvents:OnUnitDestroyed(func, insertFirst) end,  
@@ -7671,14 +7857,14 @@ DCAF.TankerTrackOptions = {
     UpdateInterval = Minutes(1)  
 }  
   
-function DCAF.TankerTrackOptions:New()  
-    local options = DCAF.clone(DCAF.TankerTrackOptions)  
-    return options  
+function DCAF.TankerTrackOptions:New()
+    local options = DCAF.clone(DCAF.TankerTrackOptions)
+    return options
 end  
   
 function DCAF.TankerTrack:Draw(infoAnchorPoint, options)  
     if not isClass(options, DCAF.TankerTrackOptions.ClassName) then  
-        options = DCAF.TankerTrackOptions:New()  
+        options = DCAF.TankerTrackOptions--:New() hack - super weird! Calling the :New() methid gives error: "attempt to call method 'New' (a nil value)"
     end  
     self.IsDrawn = true  
     if isNumber(infoAnchorPoint) then  
@@ -8236,7 +8422,7 @@ end
 function DCAF.WeaponSimulation:Manage(func) -- #function(weapon, iniUnit, tgtUnit, config)  
     if not isFunction(func) then  
         error("DCAF.WeaponSimulation:Manage :: `func` must be function, but was " .. type(func)) end  
-  
+
     table.insert(self.__managers, func)
     return self  
 end  
@@ -8379,7 +8565,7 @@ function DCAF.WeaponSimulation:Start(safetyDistance)
 -- }))  
   
     self.__monitorFunc = function(event)  
-Debug("DCAF.WeaponSimulation:Start :: event: " .. DumpPrettyDeep(event, 2))  
+-- Debug("DCAF.WeaponSimulation:Start :: event: " .. DumpPrettyDeep(event, 2))  
         local wpn = event.weapon  
         local wpnType = wpn:getTypeName()  
         local tgt = wpn:getTarget()  
@@ -8387,14 +8573,34 @@ Debug("DCAF.WeaponSimulation:Start :: event: " .. DumpPrettyDeep(event, 2))
         local tgtUnit = event.TgtUnit  
   
         local isManaged, msg = self:IsManaged(wpn, iniUnit, tgtUnit, self.Config)  
+
+        local function debugMessage(resolution)
+            local dbgMsg = "DCAF.WeaponSimulation(" .. self.Name .. ") :: " .. resolution .. " '" .. wpnType .."'"
+            if iniUnit then
+                dbgMsg = dbgMsg .. " fired by '" .. iniUnit.UnitName .. "'"
+            end
+            if tgtUnit then
+                dbgMsg = dbgMsg .. " at '" .. tgtUnit.UnitName .. "'"
+            end
+            return dbgMsg .. " (" .. msg .. ")"
+        end
+
         if not isManaged then  
-            Debug("DCAF.WeaponSimulation(" .. self.Name .. ") :: is NOT managing '" .. wpnType .."' fired by '" .. iniUnit.UnitName .. "' at " .. tgtUnit.UnitName .. " (" .. msg .. ")")  
+            -- local dbgMsg = "DCAF.WeaponSimulation(" .. self.Name .. ") :: is NOT managing '" .. wpnType .."'"
+            -- if iniUnit then
+            --     dbgMsg = dbgMsg .. " fired by '" .. iniUnit.UnitName .. "'"
+            -- end
+            -- if tgtUnit then
+            --     dbgMsg = dbgMsg .. " at '" .. tgtUnit.UnitName .. "'"
+            -- end
+            Debug(debugMessage("is NOT managing"))
             return  
         end  
   
         local isSimulated, msg = self:IsSimulated(wpn, iniUnit, tgtUnit, self.Config)  
         if not isSimulated then  
-            Debug("DCAF.WeaponSimulation(" .. self.Name .. ") :: will NOT deactive '" .. wpnType .."' fired by '" .. iniUnit.UnitName .. "' at " .. tgtUnit.UnitName .. " (" .. msg .. ")")  
+            Debug(debugMessage("will NOT deactive"))
+            -- Debug("DCAF.WeaponSimulation(" .. self.Name .. ") :: will NOT deactive '" .. wpnType .."' fired by '" .. iniUnit.UnitName .. "' at " .. tgtUnit.UnitName .. " (" .. msg .. ")")  
             return  
         end  
   

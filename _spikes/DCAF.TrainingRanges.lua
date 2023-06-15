@@ -7,6 +7,19 @@ DCAF.TrainingRange = {
     }
 }
 
+DCAF.TrainingTarget = {
+    ClassName = "DCAF.TrainingTarget",
+    Name = nil,                 -- #string - display name
+    TemplateName = nil          -- #string - name of GROUP, to be activated/spawned
+}
+
+function DCAF.TrainingTarget:New(name, templateName)
+    local tgt = DCAF.clone(DCAF.TrainingTarget)
+    tgt.Name = name
+    tgt.TemplateName = templateName
+    return tgt
+end
+
 local TRAINING_RANGES_MENUS = {
     _keyMain = "_main_"
 }
@@ -21,6 +34,8 @@ local TRAINING_RANGES_GROUPS = { -- dinctionary (helps ensuring not two ranges c
     -- key   :: #string (name of group, associated wit range)
     -- value :: #NTTR_RANGE
 }
+
+
 
 -- /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 --                                                   DCAF.TrainingRange
@@ -115,7 +130,7 @@ end
 
 --- Activates all groups associated with range
 -- @name :: #string; specifies name of range to activate
--- @interval :: #number; specifies interval (seconds) between spawning groups associated with range
+-- @interval :: #number; specifies interval (seconds) between spawning groups associated with range (set to negative value to avoid spawning assets)
 function DCAF.TrainingRange:Activate(name, interval)
 -- Debug("DCAF.TrainingRange:Activate :: name: " .. Dump(name) .. " :: interval: " .. Dump(interval) .. " :: self: " .. DumpPrettyDeep(self, 1))
     if isAssignedString(name) then
@@ -136,9 +151,9 @@ function DCAF.TrainingRange:Activate(name, interval)
 
     if not isNumber(interval) then
         interval = 0
-    else
-        -- ensure positive value...
-        interval = math.max(0, interval)
+    -- else
+    --     -- ensure positive value...
+    --     interval = math.max(0, interval)
     end
 
     self._groups = {}
@@ -147,7 +162,7 @@ function DCAF.TrainingRange:Activate(name, interval)
             local group = spawn:Spawn()
             table.insert(self._groups, group)
         end
-    else
+    elseif interval > 0 then
         local spawns = listCopy(self.Spawns)
         local _scheduler
         local scheduler = SCHEDULER:New(spawns)
@@ -213,6 +228,138 @@ function DCAF.TrainingRange:OnDeactivated(func, ...)
     self._onDeactivatedArg = arg
     return self
 end
+
+-- /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+--                                                      RANGE TARGET SCORING
+-- /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+local DCAF_TargetTracking = {
+    Targets = {
+        -- list of #DCAF_TrackedTarget
+    }
+}
+
+local DCAF_TrackedTarget = {
+    ClassName = "DCAF_TrackedTarget",
+    Name = nil,                     -- #string - name of target
+    Description = nil,              -- #string - target description
+    RangeName = nil,                -- #string - name of #DCAF.TrainingRange
+    Location = nil,                 -- #DCAF.Location (the target)
+    ScoreDefault = 1,               -- ##number - used for default, simple, scoring (1 hit = this score, regardless of where it hit etc)
+    ScoreDelegate = nil             -- #function - used to resolve score
+}
+
+local DCAF_TrackedWeapons = {
+    -- key   - #string (weapon id)
+    -- value - 
+}
+
+local DCAF_TrackedWeapon = {
+    ClassName = "DCAF_TrackedWeapon",
+    ID = nil,                   -- #string - weapon's ID
+    Coordinate = nil,           -- #COORDINATE - last known position
+    Velocity = nil,             -- #number - weapon velocity
+}
+
+local function trackHits(event)
+    Debug("nisse - trackHits :: event: " .. DumpPretty(event))
+end
+
+local function trackMisses(event)
+
+    -- {
+    --     ["IniUnit"] = { --[[ data omitted ]] },
+    --     ["IniPlayerName"] = "Wife",
+    --     ["initiator"] = { --[[ data omitted ]] },
+    --     ["id"] = 1,
+    --     ["IniUnitName"] = "Aerial-2-1",
+    --     ["time"] = 47.261,
+    --     ["IniGroup"] = { --[[ data omitted ]] },
+    --     ["IniGroupName"] = "Aerial-2",
+    --     ["weapon"] = { --[[ data omitted ]] },
+    --     ["weapon_name"] = "BDU_33",
+    --    }
+
+    Debug("nisse - trackMisses :: event: " .. DumpPrettyDeep(event.weapon))
+end
+
+function DCAF_TrackedWeapon:New(weapon)
+    local tw = DCAF.clone(DCAF_TrackedWeapon)
+    error("todo")
+
+    return tw
+end
+
+function DCAF_TrackedTarget.New(location, range, description, scoreDelegate)
+    local tt = DCAF.clone(DCAF_TrackedTarget)
+    tt.Name = location.Name
+    tt.Description = description
+    tt.RangeName = range.Name
+    tt.Location = location
+    tt.ScoreDelegate = scoreDelegate
+Debug("DCAF_TrackedTarget.New :: tt: " .. DumpPretty(tt))    
+    return tt
+end
+
+function DCAF_TargetTracking.addTarget(location, range, description, scoreDelegate)
+    local tt = DCAF_TrackedTarget.New(location, range, description, scoreDelegate)
+    table.insert(DCAF_TargetTracking.Targets, tt)
+    if #DCAF_TargetTracking.Targets == 1 then
+        MissionEvents:OnUnitHit(trackHits)
+        MissionEvents:OnWeaponFired(trackMisses)
+    end
+    return tt
+end
+
+function DCAF_TargetTracking.removeTargetsForRange(range)
+    for i, tt in ipairs(DCAF_TargetTracking.Targets) do
+        if range.Name == tt.RangeName then
+            table.remove(DCAF_TargetTracking.Targets, i)
+        end
+    end
+    if #DCAF_TargetTracking.Targets == 0 then
+        MissionEvents:EndOnUnitHit(trackHits)
+        MissionEvents:EndOnWeaponFired(trackMisses)
+    end
+end
+
+--- Looks for and returns closest #DCAF_TrackedTarget from a coordinate
+function DCAF_TargetTracking.getClosestTarget(location, radius)
+end
+
+function DCAF_TargetTracking.findByName(name)
+    for i, tt in ipairs(DCAF_TargetTracking.Targets) do
+        if tt.Name == name then
+            return tt, i
+        end
+    end
+end
+
+function DCAF.TrainingRange:TrackTargetScore(source, description, scoreDelegate)
+
+    local target = DCAF.Location.Resolve(source)
+   
+    if not target then
+        error("DCAF.TrainingRange:TrackTargetScore :: cannot resolve target from `source`: " .. DumpPretty(source)) end
+
+    if not target:IsUnit() then
+        error("DCAF.TrainingRange:TrackTargetScore :: target must be a unit, but was: " .. DumpPretty(target.Source.ClassName or target.Source)) end
+
+    if DCAF_TargetTracking.findByName(target.Name) then
+        error("DCAF.TrainingRange:TrackTargetScore :: `source` was already added: " .. DumpPretty(target.Name)) end
+
+    if description == nil then
+        description = source
+    elseif not isAssignedString(description) then
+        error("DCAF.TrainingRange:TrackTargetScore :: `description` must be string, but was: " .. type(description)) end
+        
+    if scoreDelegate ~= nil and not isFunction(scoreDelegate) then
+        error("DCAF.TrainingRange:TrackTargetScore :: `scoreDelegate` must be function, but was: " .. type(scoreDelegate)) end
+    
+    DCAF_TargetTracking.addTarget(target, self, description, scoreDelegate)
+    return self
+end
+
 
 -- /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 --                                                         F10 RADIO MENUS
@@ -434,16 +581,17 @@ Debug("BBB" .. Dump(range ~= nil))
 end
 
 local function menuCategory(structure, category, parentMenu)
--- Debug("nisse - menuCategory :: category.Text: " .. Dump(category.Text) .. " :: category.Items: " .. DumpPrettyDeep(category.Items))
+Debug("nisse - menuCategory :: category.Text: " .. Dump(category.Text) .. " :: category.Items: " .. DumpPrettyDeep(category.Items))
 
+    local forCoalition = coalition.side.BLUE
     local range = structure.Range
-    local menuCat = MENU_COALITION:New(coalition.side.BLUE, category.Text, parentMenu or range:GetMenu())
+    local mnuCat = MENU_COALITION:New(forCoalition, category.Text, parentMenu or range:GetMenu())
     for _, groups in ipairs(category.Items) do
-        MENU_COALITION_COMMAND:New(coalition.side.BLUE, _text_activateAll, menuCat, function()
+        MENU_COALITION_COMMAND:New(forCoalition, _text_activateAll, mnuCat, function()
             activateAll(range, category.Items)
-            menuCat:Remove()
+            mnuCat:Remove()
         end)
-        menuActivateGroups(structure, groups, menuCat)
+        menuActivateGroups(structure, groups, mnuCat)
     end
 end
 

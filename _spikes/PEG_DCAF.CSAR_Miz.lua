@@ -56,7 +56,7 @@ local c2_group -- = "_C2"
 
 DCAF.CSAR.OnStarted(function(csar) 
     MessageTo(c2_group, "CSAR_PilotDown.ogg")
-    MessageTo(c2_group, "ALERT! Pilot in distress, codeword '" .. csar.Name .. "'")
+    MessageTo(c2_group, "ALERT! Personnel in distress, codeword is '" .. csar.Name .. "'")
 end)
 
 DCAF.CSAR.OnRescueUnitTargeted(function(event) 
