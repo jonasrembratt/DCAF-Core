@@ -7911,46 +7911,36 @@ rebuildTankerMenus = buildControllerTankerMenus
 -- Adds a menu for each tanker to the F10 menu that displays important tanker info to the player's group
 local function buildPlayerTankerMenus(playerUnitName) 
 
-    local function availableTankerDesignation(tanker) 
-        if tanker.Callsign == 1 then return "Texaco-" .. tanker.Number end
-        if tanker.Callsign == 2 then return "Arco" .. tanker.Number end
-        if tanker.Callsign == 3 then return "Shell" .. tanker.Number end
-    end
-
     local function displayTankerState(group, tanker) 
-        if tanker:IsActive() then
-            local unit = tanker.Group:GetUnit(1)
-            local fuel = unit:GetFuel()
-            local maxFuel = DCAF.Tanker.MaxFuelLbs[unit:GetTypeName()]
-            if not maxFuel then
-                error("Unknown tanker type: " .. unit:GetTypeName())
+        for _, track in ipairs(sortedTracks()) do
+            for _, tankerInfo in ipairs(track.Tankers) do
+                local tanker = tankerInfo.Tanker
+                local unit = tanker.Group:GetUnit(1)
+                local fuel = unit:GetFuel()
+                local maxFuel = DCAF.Tanker.MaxFuelLbs[unit:GetTypeName()]
+                if not maxFuel then
+                    error("Unknown tanker type: " .. unit:GetTypeName())
+                end
+                    
+                local remainingFuel = math.floor(fuel * maxFuel)
+                local bingoFuel = math.floor(DCAF.Tanker.FuelStateRtb * maxFuel)
+                local msg = string.format("%s (%s):\n  Freq: %s Mhz\n  TCN: %s%s\n", 
+                                tanker.DisplayName, 
+                                unit:GetTypeName(),
+                                tanker.Frequency, 
+                                tanker.TACANChannel,
+                                tanker.TACANMode)
+                local msg = msg .. string.format("  Fuel state:\n    Current: %s lbs\n    Bingo: %s lbs\n    Remaining for AAR: %s lbs\n", 
+                                remainingFuel, 
+                                bingoFuel, 
+                                remainingFuel - bingoFuel)
+                MESSAGE:New(msg, 15):ToGroup(group)
             end
-                
-            local remainingFuel = math.floor(fuel * maxFuel)
-            local bingoFuel = math.floor(DCAF.Tanker.FuelStateRtb * maxFuel)
-            local msg = string.format("%s:\n  Freq: %s Mhz\n  TCN: %s%s\n", 
-                            tanker.DisplayName, 
-                            tanker.Frequency, 
-                            tanker.TACANChannel,
-                            tanker.TACANMode)
-            local msg = msg .. string.format("  Fuel state:\n    Current: %s lbs\n    Bingo: %s lbs\n    Remaining for AAR: %s lbs\n", 
-                            remainingFuel, 
-                            bingoFuel, 
-                            remainingFuel - bingoFuel)
-            MESSAGE:New(msg, 15):ToGroup(group)
-        else
-            MESSAGE:New(, 15):ToGroup(group)
-            -- PROBLEM: Only Tanker objects have frequency etc, using AvailableTanker wont work
+        end
     end
 
     local playerGroup = UNIT:FindByName(playerUnitName):GetGroup()
-
-
-    for _, tanker in ipairs(AAR_TANKERS) do
-        Debug(DumpPrettyDeep(tanker, 2))
-        MENU_GROUP_COMMAND:New(playerGroup, "Tanker info - " .. availableTankerDesignation(tanker), nil, displayTankerState, playerGroup, tanker)
-    end
-
+    MENU_GROUP_COMMAND:New(playerGroup, "Tanker info", nil, displayTankerState, playerGroup)
 end
 
  --- Build AAR menus for each player group when player enters plane. Recommended to use with
