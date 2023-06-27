@@ -1,9 +1,19 @@
+-- /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+--                                                   DCAF.TrainingRange
+-- /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 DCAF.TrainingRange = {
     ClassName = "DCAF.TrainingRange",
     Name = "TrainingRange",
     IsActive = false,
     Spawns = {
-      -- list of #SPAWN
+        -- list of #SPAWN
+    },
+    ActivateHandlers = {
+        -- list of #function( #DCAF.TrainingRange,  )
+    },
+    DeactivateHandlers = {
+        -- list of #function( #DCAF.TrainingRange,  )
     }
 }
 
@@ -34,12 +44,6 @@ local TRAINING_RANGES_GROUPS = { -- dinctionary (helps ensuring not two ranges c
     -- key   :: #string (name of group, associated wit range)
     -- value :: #NTTR_RANGE
 }
-
-
-
--- /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
---                                                   DCAF.TrainingRange
--- /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 function DCAF.TrainingRange:New(name)
     local range = DCAF.clone(DCAF.TrainingRange)
@@ -132,7 +136,7 @@ end
 -- @name :: #string; specifies name of range to activate
 -- @interval :: #number; specifies interval (seconds) between spawning groups associated with range (set to negative value to avoid spawning assets)
 function DCAF.TrainingRange:Activate(name, interval)
--- Debug("DCAF.TrainingRange:Activate :: name: " .. Dump(name) .. " :: interval: " .. Dump(interval) .. " :: self: " .. DumpPrettyDeep(self, 1))
+Debug("DCAF.TrainingRange:Activate :: name: " .. Dump(name) .. " :: interval: " .. Dump(interval) .. " :: self: " .. DumpPrettyDeep(self, 1))
     if isAssignedString(name) then
         local range = DCAF.TrainingRange:Find(name)
         if range then
@@ -151,9 +155,6 @@ function DCAF.TrainingRange:Activate(name, interval)
 
     if not isNumber(interval) then
         interval = 0
-    -- else
-    --     -- ensure positive value...
-    --     interval = math.max(0, interval)
     end
 
     self._groups = {}
@@ -182,8 +183,15 @@ function DCAF.TrainingRange:Activate(name, interval)
     end
     MessageTo(nil, "Training range '" .. self.Name .. "' was activated")
     _rebuildRadioMenus()
-    if self._onActivated then
-        self._onActivated(self, self._onActivatedArg) 
+
+Debug("nisse - DCAF.TrainingRange:Activate :: ActivateHandlers: " .. DumpPrettyDeep(self.ActivateHandlers, DumpPrettyOptions:New():IncludeFunctions()))
+    for _, info in ipairs(self.ActivateHandlers) do
+        local args = { self }
+        for i = 1, #info.Arg, 1 do
+            table.insert(args, info.Arg[i])
+        end
+Debug("nisse - DCAF.TrainingRange:Activate :: calling handler :: args: " .. DumpPretty(args))
+        info.Func(unpack(args))
     end
 end
 
@@ -206,8 +214,13 @@ function DCAF.TrainingRange:Deactivate(name)
     self._groups = nil
     MessageTo(nil, "Training range '" .. self.Name .. "' was deactivated")
     _rebuildRadioMenus()
-    if self._onDeactivated then
-        self._onDeactivated(self, self._onDeactivatedArg) 
+    for _, info in ipairs(self.DeactivateHandlers) do
+        local args = { self }
+        for i = 1, #info.Arg, 1 do
+            table.insert(args, info.Arg[i])
+        end
+Debug("nisse - DCAF.TrainingRange:Deactivate :: calling handler :: args: " .. DumpPretty(args))
+        info.Func(unpack(args))
     end
 end
 
@@ -215,8 +228,14 @@ function DCAF.TrainingRange:OnActivated(func, ...)
     if not isFunction(func) then
         error("DCAF.TrainingRange:OnActivated :: `func` must be function but was: " .. type(func)) end
 
-    self._onActivated = func
-    self._onActivatedArg = arg
+    local existingIdx = tableIndexOf(self.ActivateHandlers, function(i) return i.Func == func end)
+    if existingIdx then
+Debug("nisse - DCAF.TrainingRange:OnActivated :: Handler was already added :: IGNORES")
+        return end
+
+    table.insert(self.ActivateHandlers, { Func = func, Arg = arg })
+    -- self._onActivated = func
+    -- self._onActivatedArg = arg
     return self
 end
 
@@ -224,8 +243,12 @@ function DCAF.TrainingRange:OnDeactivated(func, ...)
     if not isFunction(func) then
         error("DCAF.TrainingRange:OnDeactivated :: `func` must be function but was: " .. type(func)) end
 
-    self._onDeactivated = func
-    self._onDeactivatedArg = arg
+    local existingIdx = tableIndexOf(self.DeactivateHandlers, function(i) return i.Func == func end)
+    if existingIdx then
+Debug("nisse - DCAF.TrainingRange:OnDeactivated :: Handler was already added :: IGNORES")
+        return end
+
+    table.insert(self.DeactivateHandlers, { Func = func, Arg = arg })
     return self
 end
 
@@ -233,10 +256,11 @@ end
 --                                                      RANGE TARGET SCORING
 -- /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-local DCAF_TargetTracking = {
+local DCAF_TargetScoreTracking = {
     Targets = {
         -- list of #DCAF_TrackedTarget
-    }
+    },
+    WpnTracker = nil,       -- #DCAF.WpnTracker
 }
 
 local DCAF_TrackedTarget = {
@@ -249,93 +273,336 @@ local DCAF_TrackedTarget = {
     ScoreDelegate = nil             -- #function - used to resolve score
 }
 
-local DCAF_TrackedWeapons = {
-    -- key   - #string (weapon id)
-    -- value - 
+-- -- used to suppress 'impact' events from weapons that also hit a unit (we're only looking for one of those events)
+-- -- each weapon, as it hits a unit, will have the corresponding 'impact' event suppressed for one second
+-- local DCAF_SuppressedImpacts = {
+--     -- key   = #number - weapond id
+--     -- value = #number - supression expire time
+-- }
+
+local DCAF_TargetImpactMark = {
+    Timestamp = nil,
+    TargetCoordinate = nil,
+    ImpactCoordinate = nil,
+    MarkIDs = nil
 }
 
-local DCAF_TrackedWeapon = {
-    ClassName = "DCAF_TrackedWeapon",
-    ID = nil,                   -- #string - weapon's ID
-    Coordinate = nil,           -- #COORDINATE - last known position
-    Velocity = nil,             -- #number - weapon velocity
+
+DCAF.TrainingRangeScoreDelegate = {
+    ClassName = "DCAF.TrainingRangeScoreDelegate"
+    --- 
 }
 
-local function trackHits(event)
-    Debug("nisse - trackHits :: event: " .. DumpPretty(event))
+DCAF.TrainingRangeVisualImpactPoint = {
+    ClassName = "DCAF.TrainingRangeVisualImpactPoint",
+    --- 
+    Size = 5,               -- meters
+    Thickness = 1,          -- thickness of circle
+}
+
+function DCAF.TrainingRangeScoreDelegate:New()
+    return DCAF.clone(DCAF.TrainingRangeScoreDelegate)
 end
 
-local function trackMisses(event)
+function DCAF.TrainingRangeScoreDelegate:GetSuccessLevel() --trackedTarget, wpnTrack, distance, success)
+    if self._success then
+        return self._success end
 
-    -- {
-    --     ["IniUnit"] = { --[[ data omitted ]] },
-    --     ["IniPlayerName"] = "Wife",
-    --     ["initiator"] = { --[[ data omitted ]] },
-    --     ["id"] = 1,
-    --     ["IniUnitName"] = "Aerial-2-1",
-    --     ["time"] = 47.261,
-    --     ["IniGroup"] = { --[[ data omitted ]] },
-    --     ["IniGroupName"] = "Aerial-2",
-    --     ["weapon"] = { --[[ data omitted ]] },
-    --     ["weapon_name"] = "BDU_33",
-    --    }
+    local MaxAllowedDistance = 150
+    if self.ImpactDistance > MaxAllowedDistance then
+        return 0 end
 
-    Debug("nisse - trackMisses :: event: " .. DumpPrettyDeep(event.weapon))
+    local hdg = self.WpnTrack.DeployCoordinate:HeadingTo(self.WpnTrack.ImpactCoordinate)
+    self._targetCoordinate = self.TrackedTarget.Location:GetCoordinate()
+    self._brgFromTarget = self._targetCoordinate:HeadingTo(self.WpnTrack.ImpactCoordinate)
+    self._relBrgFromTarget = (self._brgFromTarget - hdg) % 360
+    local clockPos, clockPosText = GetClockPosition(nil, self._relBrgFromTarget)
+    self._clockPosText = clockPosText
+    local maxAllowedDistance = MaxAllowedDistance
+    if clockPos > 4 and clockPos < 8 then
+        maxAllowedDistance = 30
+    end
+    self._success = (MaxAllowedDistance - self.ImpactDistance) / 100
+
+    -- extra info ...
+    self._coordTarget = self.TrackedTarget.Location:GetCoordinate()
+    self._coordImpact = self.WpnTrack.ImpactCoordinate
+    self._ripDistance = self._coordTarget:Get2DDistance(self.WpnTrack.DeployCoordinate)  -- meters
+    self._ripAgl = self.WpnTrack.DeployAltitudeMSL - self._coordTarget:GetLandHeight() -- meters
+    self._slantRange = self.WpnTrack.DeployCoordinate:Get3DDistance(self._coordTarget)   -- meters
+    return self._success
 end
 
-function DCAF_TrackedWeapon:New(weapon)
-    local tw = DCAF.clone(DCAF_TrackedWeapon)
-    error("todo")
+function DCAF.TrainingRangeScoreDelegate:GetResultMapText()
+    if self._mapText then
+        return self._mapText end
+    -- local trackedTarget = self.TrackedTarget
+    local wpnTrack = self.WpnTrack
+    local distance = self.ImpactDistance
+    local success = self:GetSuccessLevel()
 
-    return tw
+    local initiator = wpnTrack.IniUnit:GetPlayerName() or wpnTrack.IniUnit.UnitName
+    local slantRange = wpnTrack.DeployCoordinate:Get3DDistance(self._targetCoordinate)
+    local diveAngle = wpnTrack.DeployPitch
+
+-- RIP:    12.5Kft AGL / SR 2.5 NMI
+-- Dive:  Steep Wire  / Slightly Right
+-- Impact: 4 O'Clock
+
+    self._mapText = initiator .. " -- " .. wpnTrack.Type .. "\n" 
+                              .. "RIP:       " .. string.format('%.1f', UTILS.MetersToFeet(self._ripAgl)/1000) .. "Kft AGL / SR " .. string.format('%.1f', UTILS.MetersToNM(self._slantRange)) .." NMI\n"
+                              .. "Dive:     --- / ---\n"
+                              .. "Impact: " .. self._clockPosText .. ", " .. string.format('%.1f', distance) .. " m"
+    return self._mapText
 end
 
-function DCAF_TrackedTarget.New(location, range, description, scoreDelegate)
+function DCAF.TrainingRangeScoreDelegate:GetResultMessageText()
+    return self:GetResultMapText()
+end
+
+function DCAF.TrainingRangeScoreDelegate:GetMarkColor()
+    local success = self:GetSuccessLevel()
+    return { 1 - success, success, 0 }
+end
+
+function DCAF.TrainingRangeScoreDelegate:GetMarkAlpha()
+    if not self._markApha then
+        self._markApha = .5
+    end
+    return self._markAlpha
+end
+
+function DCAF.TrainingRangeScoreDelegate:Fade()
+    self._markAlpha = math.max(0, self:GetMarkAlpha() - .1)
+end
+
+function DCAF.TrainingRangeScoreDelegate:DrawBombTarget(target, interval, radius)
+Debug("nisse - DCAF.TrainingRangeScoreDelegate:DrawBombTarget :: target: " .. target.Name)
+    local coord = target:GetCoordinate()
+    if not coord then
+        return end
+
+    if not isNumber(interval) then
+        interval = 20 -- meters
+    end
+    if not isNumber(radius) then
+        radius = 100 -- meters
+    end
+    local colorRed = { 1, 0, 0 }
+    local colorWhite = { 1, 1, 1 }
+    local markIds = {
+        coord:CircleToAll(radius, coalition.side.BLUE, colorRed, 0, colorRed, .6)
+    }
+    local count = math.floor(radius / interval) - 1
+    for i = 1, count, 1 do
+        table.insert(markIds, coord:CircleToAll(interval, coalition.side.BLUE, colorWhite, 0, nil, 0))
+        interval = interval + interval
+    end
+    return markIds
+end
+
+function DCAF.TrainingRangeScoreDelegate:DrawImpactPoint()
+    local coordImpact = self.WpnTrack.ImpactCoordinate
+    local coordTarget = self.TrackedTarget.Location:GetCoordinate()
+    local wpnTrack = self.WpnTrack
+    local distance = self.ImpactDistance
+    local success = self:GetSuccessLevel()
+    local color = self:GetMarkColor(self.TrackedTarget, wpnTrack, distance, success)
+    local alpha = self:GetMarkAlpha()
+    local text = self:GetResultMapText()
+    return {
+        coordTarget:LineToAll(coordImpact, nil, color, alpha, 3),
+        coordImpact:CircleToAll(5, nil, color, alpha),    
+        coordImpact:Translate(6, 130):TextToAll(text, coalition.side.BLUE, color, alpha, nil, 0, 12),
+    }
+end
+
+function DCAF_TargetImpactMark:New(trackedTarget, wpnTrack, distance, success, alpha) -- coordTarget, coordImpact, distance, initiatior, success, alpha)
+    local im = DCAF.clone(DCAF_TargetImpactMark)
+    if not isNumber(success) then
+        success = 0
+    end
+    im.Delegate = trackedTarget.ScoreDelegate
+    im.Delegate.TrackedTarget = trackedTarget
+    im.Delegate.WpnTrack = wpnTrack
+    im.Delegate.ImpactDistance = distance
+    im:draw()
+    MessageTo(wpnTrack.IniUnit:GetGroup(), im.Delegate:GetResultMessageText(), 12)
+    return im
+end
+
+function DCAF_TargetImpactMark:draw()
+    self.MarkIDs = self.Delegate:DrawImpactPoint() 
+end
+
+function DCAF_TargetImpactMark:fade()
+    self.Delegate:Fade()
+    self:erase()
+    self:draw()
+end
+
+function DCAF_TargetImpactMark:erase()
+    for _, id in ipairs(self.MarkIDs) do
+        self.ImpactCoordinate:RemoveMark(id)
+    end
+end
+
+function DCAF_TrackedTarget:New(location, range, description, scoreDelegate)
     local tt = DCAF.clone(DCAF_TrackedTarget)
     tt.Name = location.Name
     tt.Description = description
     tt.RangeName = range.Name
     tt.Location = location
     tt.ScoreDelegate = scoreDelegate
-Debug("DCAF_TrackedTarget.New :: tt: " .. DumpPretty(tt))    
+    tt.ImpactMarks = {}
+-- Debug("DCAF_TrackedTarget:New :: tt: " .. DumpPretty(tt))
     return tt
 end
 
-function DCAF_TargetTracking.addTarget(location, range, description, scoreDelegate)
-    local tt = DCAF_TrackedTarget.New(location, range, description, scoreDelegate)
-    table.insert(DCAF_TargetTracking.Targets, tt)
-    if #DCAF_TargetTracking.Targets == 1 then
-        MissionEvents:OnUnitHit(trackHits)
-        MissionEvents:OnWeaponFired(trackMisses)
+function DCAF_TrackedTarget:markImpact(wpnTrack, distance, initiatior, success) -- success = 0.0 -> 1.0
+    local function fade()
+        local oldestTimestamp = 65535
+        local oldestImpactMarkIndex = nil
+        for i, impactMark in ipairs(self.ImpactMarks) do
+            if impactMark.Timestamp < oldestTimestamp then
+                oldestTimestamp = impactMark.Timestamp
+                oldestImpactMarkIndex = i
+            end
+            impactMark:fade()
+        end
+        return oldestImpactMarkIndex
+    end 
+
+    local oldestImpactMarkIndex = fade()
+    if #self.ImpactMarks == 4 then
+        self.ImpactMarks[oldestImpactMarkIndex]:erase()
+        self.ImpactMarks[oldestImpactMarkIndex] = nil
+    end
+    table.insert(self.ImpactMarks, DCAF_TargetImpactMark:New(self, wpnTrack, distance, success)) --self.Location:GetCoordinate(), coordinate, distance, initiatior, success))
+end
+
+function DCAF_TrackedTarget:removeImpactMarks()
+    for _, mark in pairs(self.ImpactMarks) do
+        mark:erase()
+    end
+end
+
+-- local function suppressWeaponImpact(wpnID)
+--     local now = UTILS.SecondsOfToday()
+--     local expired = {}
+--     for k, expire in pairs(DCAF_SuppressedImpacts) do
+--         if expire < now then
+--             table.insert(expired, k)
+--         end
+--     end
+--     for _, id in ipairs(expired) do
+--         DCAF_SuppressedImpacts[id] = nil
+--     end
+--     DCAF_SuppressedImpacts[wpnID] = now + 1
+-- end
+
+-- local function isWeaponImpactSuppressed(wpnID)
+--     return DCAF_SuppressedImpacts[wpnID]
+-- end
+
+local function trackHits(event)
+Debug("nisse - trackHits :: event: " .. DumpPretty(event) .. " :: weapon id: " .. DumpPretty(event.weapon))
+end
+
+local function wpnImpact(wpnTrack)
+    -- if isWeaponImpactSuppressed(wpnTrack.ID) then return end
+    local tt, distance = DCAF_TargetScoreTracking.findClosestTarget(wpnTrack.ImpactCoordinate, 200)
+    if not tt then return end
+
+    -- nisse ... 
+    local ttCoordinate = tt.Location:GetCoordinate()
+    tt:markImpact(wpnTrack, distance, wpnTrack.IniUnit:GetPlayerName() or wpnTrack.IniUnit.UnitName)
+-- Debug("nisse - wpnImpact :: track: " .. DumpPretty(wpnTrack))
+end
+
+local function startTargetScoringWpnTracker()
+    if DCAF_TargetScoreTracking.WpnTracker then
+        return end
+
+    DCAF_TargetScoreTracking.WpnTracker = DCAF.WpnTracker:New("Target Scoring"):Start(true)
+    function DCAF_TargetScoreTracking.WpnTracker:OnImpact(wpnTrack)
+        wpnImpact(wpnTrack)
+    end
+
+-- -- nisse
+-- function DCAF_TargetScoreTracking.WpnTracker:OnUpdate(wpnTrack)
+--     local weapon_desc = wpnTrack.Weapon:getDesc()
+--     Debug("nisse - startTargetScoringWpnTracker :: weapon_desc: " .. DumpPrettyDeep(weapon_desc))
+-- end
+-- -- Debug("nisse - startTargetScoringWpnTracker :: DCAF_TargetScoreTracking.WpnTracker: " .. Dump(DCAF_TargetScoreTracking.WpnTracker ~= nil))
+
+end
+
+local function stopTargetScoringWpnTracker()
+    if not DCAF_TargetScoreTracking.WpnTracker then
+        return end
+
+-- Debug("nisse - stopTargetScoringWpnTracker :: DCAF_TargetScoreTracking.WpnTracker: " .. Dump(DCAF_TargetScoreTracking.WpnTracker ~= nil))
+    DCAF_TargetScoreTracking.WpnTracker:End()
+    DCAF_TargetScoreTracking.WpnTracker = nil
+end
+
+function DCAF_TargetScoreTracking.addTarget(location, range, description, scoreDelegate)
+    local tt = DCAF_TrackedTarget:New(location, range, description, scoreDelegate)
+    table.insert(DCAF_TargetScoreTracking.Targets, tt)
+    if #DCAF_TargetScoreTracking.Targets == 1 then
+        startTargetScoringWpnTracker()
     end
     return tt
 end
 
-function DCAF_TargetTracking.removeTargetsForRange(range)
-    for i, tt in ipairs(DCAF_TargetTracking.Targets) do
+function DCAF_TargetScoreTracking.removeTargetsForRange(range)
+    for i, tt in ipairs(DCAF_TargetScoreTracking.Targets) do
         if range.Name == tt.RangeName then
-            table.remove(DCAF_TargetTracking.Targets, i)
+            tt:removeImpactMarks()
+            table.remove(DCAF_TargetScoreTracking.Targets, i)
         end
     end
-    if #DCAF_TargetTracking.Targets == 0 then
-        MissionEvents:EndOnUnitHit(trackHits)
-        MissionEvents:EndOnWeaponFired(trackMisses)
+    if #DCAF_TargetScoreTracking.Targets == 0 then
+        stopTargetScoringWpnTracker()
     end
 end
 
 --- Looks for and returns closest #DCAF_TrackedTarget from a coordinate
-function DCAF_TargetTracking.getClosestTarget(location, radius)
+function DCAF_TargetScoreTracking.findClosestTarget(coord, radius)
+    local distClosest = 65535
+    local ttClosest = nil
+    for _, tt in ipairs(DCAF_TargetScoreTracking.Targets) do
+        local distance = tt.Location:GetCoordinate():Get2DDistance(coord)
+        if distance < radius and distance < distClosest then
+            distClosest = distance
+            ttClosest = tt
+        end
+    end
+    return ttClosest, distClosest
 end
 
-function DCAF_TargetTracking.findByName(name)
-    for i, tt in ipairs(DCAF_TargetTracking.Targets) do
+function DCAF_TargetScoreTracking.findByName(name)
+    for i, tt in ipairs(DCAF_TargetScoreTracking.Targets) do
         if tt.Name == name then
             return tt, i
         end
     end
 end
 
-function DCAF.TrainingRange:TrackTargetScore(source, description, scoreDelegate)
+local function onTrainingRangeDeactivated(range)
+    Debug("DCAF.TrainingRange:TrackTargetScore :: range deactivated: " .. range.Name)        
+    DCAF_TargetScoreTracking.removeTargetsForRange(range)
+    -- remove tracked bomb target renditions...
+    for _, markId in ipairs(range._bombTargetMarkIDs) do
+        coord:RemoveMark(markId)
+    end
+    range._bombTargetMarkIDs = nil
+end
+
+
+function DCAF.TrainingRange:TrackBombTargetScore(source, description, scoreDelegate)
+Debug("nisse - DCAF.TrainingRange:TrackTargetScore...")
 
     local target = DCAF.Location.Resolve(source)
    
@@ -345,7 +612,7 @@ function DCAF.TrainingRange:TrackTargetScore(source, description, scoreDelegate)
     if not target:IsUnit() then
         error("DCAF.TrainingRange:TrackTargetScore :: target must be a unit, but was: " .. DumpPretty(target.Source.ClassName or target.Source)) end
 
-    if DCAF_TargetTracking.findByName(target.Name) then
+    if DCAF_TargetScoreTracking.findByName(target.Name) then
         error("DCAF.TrainingRange:TrackTargetScore :: `source` was already added: " .. DumpPretty(target.Name)) end
 
     if description == nil then
@@ -353,10 +620,22 @@ function DCAF.TrainingRange:TrackTargetScore(source, description, scoreDelegate)
     elseif not isAssignedString(description) then
         error("DCAF.TrainingRange:TrackTargetScore :: `description` must be string, but was: " .. type(description)) end
         
-    if scoreDelegate ~= nil and not isFunction(scoreDelegate) then
-        error("DCAF.TrainingRange:TrackTargetScore :: `scoreDelegate` must be function, but was: " .. type(scoreDelegate)) end
+    if scoreDelegate ~= nil and not isClass(scoreDelegate, DCAF.TrainingRangeScoreDelegate.ClassName) then
+        error("DCAF.TrainingRange:TrackTargetScore :: `scoreDelegate` must be #" .. DCAF.TrainingRangeScoreDelegate.ClassName .. ", but was: " .. type(scoreDelegate)) end
     
-    DCAF_TargetTracking.addTarget(target, self, description, scoreDelegate)
+    scoreDelegate = scoreDelegate or DCAF.TrainingRangeScoreDelegate:New()
+    DCAF_TargetScoreTracking.addTarget(target, self, description, scoreDelegate)
+
+    -- render tracked bomb target...
+    self._bombTargetMarkIDs = self._bombTargetMarkIDs or {}
+Debug("nisse - DCAF.TrainingRange:TrackBombTargetScore :: drawing target..")
+    local markIds = scoreDelegate:DrawBombTarget(target)
+    for _, markId in ipairs(markIds) do
+        table.insert(self._bombTargetMarkIDs, markId)
+    end
+
+    self._refCoordinate = target:GetCoordinate()
+    self:OnDeactivated(onTrainingRangeDeactivated)
     return self
 end
 
@@ -389,6 +668,12 @@ local function sort(ranges)
     return list
 end
 
+local function buildRangeDeactivateMenu(range)
+    MENU_COALITION_COMMAND:New(coalition.side.BLUE, "DEACTIVATE", range:GetMenu(), function() 
+        range:Deactivate()
+    end)
+end
+
 local _radioMenusCaption
 local function buildRangesMenus(caption)
     caption = caption or _radioMenusCaption
@@ -411,17 +696,14 @@ local function buildRangesMenus(caption)
         if not range.IsActive then
             menuText = menuText .. " (inactive)"
         end
-        local menuRange = menu:Blue(menuText)
-        TRAINING_RANGES_MENUS[range.Name] = menuRange
+        local mnuRange = menu:Blue(menuText)
+        TRAINING_RANGES_MENUS[range.Name] = mnuRange
         if range.IsActive then
-            MENU_COALITION_COMMAND:New(coalition.side.BLUE, "DEACTIVATE", menuRange, function() 
-                range:Deactivate()
-                -- _rebuildRadioMenus()
-            end)
+            buildRangeDeactivateMenu(range)
         else
-            MENU_COALITION_COMMAND:New(coalition.side.BLUE, "ACTIVATE", menuRange, function() 
+            MENU_COALITION_COMMAND:New(coalition.side.BLUE, "ACTIVATE", mnuRange, function() 
+Debug("nisse - range:Activate...")
                 range:Activate(.1)
-                -- _rebuildRadioMenus()
             end)
         end
     end
@@ -550,48 +832,58 @@ end
 
 -------------------------- ACTIVATION
 
+local KeyActivated = "_isActivated"
+local _text_activateAll = "Activate all"
+local rebuildRangeMenus
+
+local function sortedItems(items)
+    local list = {}
+    for _, item in ipairs(items) do
+        if not item[KeyActivated] then
+            table.insert(list, item)
+        end
+    end
+    table.sort(list, function(a, b)
+        return a.Text <= b.Text
+    end)
+    return list
+end
+
 local function activateAll(range, structure)
     for _, groupStruct in pairs(structure) do
+        groupStruct[KeyActivated] = true
         for _, groupName in ipairs(groupStruct.GroupNames) do
             range:Spawn(groupName)
         end
+        rebuildRangeMenus(range, structure)
     end
 end
 
-local _text_activateAll = "Activate all"
-
-local function menuActivateGroups(structure, groups, parentMenu)
+local function menuActivateGroups(range, structure, groups, parentMenu)
     local menu
     local range = structure.Range
-Debug("BBB" .. Dump(range ~= nil))    
-    menu = MENU_COALITION_COMMAND:New(coalition.side.BLUE, groups.Text, parentMenu or range:GetMenu(), function()
+
+    local function activateGroups()
+        groups[KeyActivated] = true
         for _, groupName in ipairs(groups.GroupNames) do
             range:Spawn(groupName)
         end
-        menu:Remove()
-        if parentMenu then
-            local parentMenuText = getMenuText(parentMenu)
-            local parentItemIndex = tableIndexOf(groups.Parent.Items, function(item) return item.Text == groups.Text end)
-            groups.Parent.Items[parentItemIndex] = nil
-            if #groups.Parent.Items == 0 then
-                parentMenu:Remove()
-            end
-        end
-    end)
+        rebuildRangeMenus(range, structure)
+    end
+
+    local mnuManager = parentMenu
+    menu = mnuManager:BlueCommand(groups.Text, activateGroups)
 end
 
-local function menuCategory(structure, category, parentMenu)
-Debug("nisse - menuCategory :: category.Text: " .. Dump(category.Text) .. " :: category.Items: " .. DumpPrettyDeep(category.Items))
-
-    local forCoalition = coalition.side.BLUE
+local function menuCategory(range, structure, category, parentMenu)
     local range = structure.Range
-    local mnuCat = MENU_COALITION:New(forCoalition, category.Text, parentMenu or range:GetMenu())
+    local mnuCat = parentMenu:Blue(category.Text)
+    local mnuManager = DCAF.MENU:New(mnuCat)
     for _, groups in ipairs(category.Items) do
-        MENU_COALITION_COMMAND:New(forCoalition, _text_activateAll, mnuCat, function()
+        mnuManager:BlueCommand(_text_activateAll, function()
             activateAll(range, category.Items)
-            mnuCat:Remove()
         end)
-        menuActivateGroups(structure, groups, mnuCat)
+        menuActivateGroups(range, structure, groups, mnuManager)
     end
 end
 
@@ -599,19 +891,27 @@ function DCAF.TrainingRange:BuildF10Menus(caption)
     buildRangesMenus(caption)
 end
 
+local function buildRangeMenus(range, structure)
+    local mnuRange = range:GetMenu()
+    mnuRange:RemoveSubMenus()
+    buildRangeDeactivateMenu(range)
+    local mnuManager = DCAF.MENU:New(range:GetMenu(), 7)
+    local items = sortedItems(structure.Items)
+    for _, item in ipairs(items) do
+        if isClass(item, DCAF.TrainingRangeSubMenuCategory) then
+            menuCategory(range, structure, item, mnuManager)
+        else
+            menuActivateGroups(range, structure, item, mnuManager)
+        end
+    end   
+end
+rebuildRangeMenus = buildRangeMenus
+
 function DCAF.TrainingRange:BuildSubMenus(structure)
     if not isClass(structure, DCAF.TrainingRangeSubMenuStructure) then
         error("DCAF.TrainingRange:BuildSubMenus :: structure was expected to be #" .. DCAF.TrainingRangeSubMenuStructure.ClassName .. ", but was: " .. DumpPretty(structure)) end
 
--- Debug("nisse - DCAF.TrainingRange:BuildSubMenus :: structure: " .. DumpPrettyDeep(structure))
-
-    for _, item in ipairs(structure.Items) do
-        if isClass(item, DCAF.TrainingRangeSubMenuCategory) then
-            menuCategory(structure, item)
-        else
-            menuActivateGroups(structure, item)
-        end
-    end   
+    buildRangeMenus(self, structure)
 end
 
 function DCAF.TrainingRange:GetMenu()

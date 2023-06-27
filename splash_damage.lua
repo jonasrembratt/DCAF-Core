@@ -422,7 +422,7 @@ splash_damage_options = {
             local intensity = (power * scaled_power_factor) / (4 * 3.14 * surface_distance * surface_distance )
             local surface_area = _length * height --Ideally we should roughly calculate the surface area facing the blast point, but we'll just find the largest side of the object for now
             local damage_for_surface = intensity * surface_area    
-            --debugMsg(obj:getTypeName().." sa:"..surface_area.." distance:"..surface_distance.." dfs:"..damage_for_surface)
+debugMsg(obj:getTypeName().." sa:"..surface_area.." distance:"..surface_distance.." dfs:"..damage_for_surface.." pw:"..power)
             if damage_for_surface > splash_damage_options.cascade_damage_threshold then
               local explosion_size = damage_for_surface
               if obj:getDesc().category == Unit.Category.STRUCTURE then

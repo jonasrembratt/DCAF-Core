@@ -63,13 +63,13 @@ DCAF.AirPictureSettings = {
     RequiresTarget = true,      -- true = no hostile picture generated unless (friendly) targets can be resolved
     Intensity = kvIntensityMedium,
     Forms = {
-        KeyValue:New(DCAF.BvrForms.Single, false),      -- light / heavy
-        KeyValue:New(DCAF.BvrForms.TwoGroups, false),   -- range / azimuth
-        KeyValue:New(DCAF.BvrForms.Wall, false),
-        KeyValue:New(DCAF.BvrForms.Box, false),
-        KeyValue:New(DCAF.BvrForms.Vic, false),
-        KeyValue:New(DCAF.BvrForms.Champagne, false),
-        KeyValue:New(DCAF.BvrForms.Ladder, false),
+        KeyValue:New(DCAF.BvrForms.Single, true),      -- light / heavy
+        KeyValue:New(DCAF.BvrForms.TwoGroups, true),   -- range / azimuth
+        KeyValue:New(DCAF.BvrForms.Wall, true),
+        KeyValue:New(DCAF.BvrForms.Box, true),
+        KeyValue:New(DCAF.BvrForms.Vic, true),
+        KeyValue:New(DCAF.BvrForms.Champagne, true),
+        KeyValue:New(DCAF.BvrForms.Ladder, true),
         KeyValue:New(DCAF.BvrForms.Stack, true),
     },
     Distance = {

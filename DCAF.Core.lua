@@ -1,6 +1,6 @@
 -- ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////  
 --                                     DCAF.Core - The DCAF Lua foundation (relies on MOOSE)  
---                                              Digital Coalition Air Force  
+--   Exists                                      Digital Coalition Air Force  
 --                                                        2022  
 -- ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////  
   
@@ -324,7 +324,7 @@ function DCAF.stopScheduler(id, bRemove)
   
     DCAF.Scheduler:Stop(id)  
     if isBoolean(bRemove) and bRemove then  
-        DCAF.Scheduler:Stop(id)  
+        DCAF.Scheduler:Stop(id)
     end  
 end  
   
@@ -624,12 +624,35 @@ function tableIndexOf( table, itemOrFunc )
   
     for index, value in ipairs(table) do  
         if isFunction(itemOrFunc) and itemOrFunc(value) then  
+
+-- Debug("nisse - tableIndexOf :: returns index: " .. index)
+
             return index  
         elseif itemOrFunc == value then  
             return index  
         end  
     end  
-end  
+end
+
+function tableRemoveWhere( tbl, func )
+    if not isTable(tbl) then  
+        error("tableRemoveWhere :: unexpected type for table: " .. type(tbl)) end  
+  
+    if func == nil then  
+        error("tableRemoveWhere :: item was unassigned") end  
+
+    local indices = {}
+    for idx, item in ipairs(tbl) do
+        if func(item) then
+            table.insert(indices, idx)
+        end
+    end
+    table.sort(indices, function(a, b) return  b < a end)
+-- Debug("nisse - tableRemoveWhere :: indices: " .. DumpPretty(indices))
+    for i = 1, #indices, 1 do
+        table.remove(tbl, indices[i])
+    end
+end
   
 function tableKeyOf( table, item )  
     if not isTable(table) then  
@@ -1683,7 +1706,7 @@ function getAirbase( source )
 end  
   
 function getZone( source )  
-Debug("nisse - getZone :: source: " .. DumpPretty(source))
+-- Debug("nisse - getZone :: source: " .. DumpPretty(source))
     if isZone(source) then  
         return source end  
   
@@ -1695,8 +1718,7 @@ Debug("nisse - getZone :: source: " .. DumpPretty(source))
         return zone end
 
     local group = getGroup(source)
-Debug("nisse - getZone :: source: " .. source .. " :: zone: " .. Dump(zone~=nil))
-
+-- Debug("nisse - getZone :: source: " .. source .. " :: zone: " .. Dump(zone~=nil))
     return zone  
 end  
   
@@ -1825,11 +1847,11 @@ function DCAF.Location:NewNamed(name, source, throwOnFail)
         if zone then return DCAF.Location:New(zone) end  
         local unit = getUnit(source)  
         if unit then 
-Debug("nisse - DCAF.Location:NewNamed :: UNIT: " .. DumpPretty(source))            
+-- Debug("nisse - DCAF.Location:NewNamed :: UNIT: " .. DumpPretty(source))            
             return DCAF.Location:New(unit) end
         local group = getGroup(source)  
         if group then 
-Debug("nisse - DCAF.Location:NewNamed :: GROUP: " .. DumpPretty(source))            
+-- Debug("nisse - DCAF.Location:NewNamed :: GROUP: " .. DumpPretty(source))            
             return DCAF.Location:New(group) end
         local airbase = getAirbase(source)  
         if airbase then return DCAF.Location:New(airbase) end  
@@ -2516,11 +2538,15 @@ Debug("nisse - MessageTo :: sound: " .. message)
         return  
     elseif isGroup(recipient) then  
         Trace("MessageTo :: group " .. recipient.GroupName .. " :: '" .. message .."'")  
-        msg:ToGroup(recipient)  
+        if recipient:GetCoordinate() then
+            msg:ToGroup(recipient) 
+        end
         return  
     elseif isUnit(recipient) then  
         Trace("MessageTo :: unit " .. recipient:GetName() .. " :: '" .. message .. "'")  
-        msg:ToUnit(recipient)  
+        if recipient:GetCoordinate() then
+            msg:ToUnit(recipient)  
+        end
         return  
     end  
     for k, v in pairs(recipient) do  
@@ -2814,7 +2840,11 @@ function DumpPretty(value, options)
                 if asJson then  
                     s = s .. indent..'"'..k..'"'..' : ' .. " {},\n"  
                 else   
-                    s = s .. indent..'["'..k..'"]'..' : ' .. " { --[[ recursive table ]] },\n"  
+                    if isNumber(k) then
+                        s = s .. indent..'['..k..']'..' = { --[[ recursive table ]] },\n'  
+                    else
+                        s = s .. indent..'["'..k..'"]'..' = { --[[ recursive table ]] },\n'  
+                    end
                 end  
             else -- if not options:IsSkipped(k) then  
                 if (asJson) then  
@@ -2946,26 +2976,67 @@ function GetRelativeLocation( source, target )
         end  
     }  
 end  
-   
-local _numbers = {  
-    [1] = "one",  
-    [2] = "two",  
-    [3] = "two",  
-    [4] = "three",  
-    [5] = "four",  
-    [6] = "five",  
-    [7] = "six",  
+
+local _numbers = {
+    [1] = "one",
+    [2] = "two",
+    [3] = "three",  
+    [4] = "four",  
+    [5] = "five",  
+    [6] = "six",  
+    [7] = "seven",  
     [8] = "eight",  
     [9] = "nine",  
     [10] = "ten",  
     [11] = "eleven",  
     [12] = "twelve"  
+}
+   
+local _clockPositions = {  
+     [0] = { Text = _numbers[12], Value = 12 },
+     [1] = { Text = _numbers[1],  Value = 1 },
+     [2] = { Text = _numbers[1],  Value = 1 },  
+     [3] = { Text = _numbers[2],  Value = 2 },  
+     [4] = { Text = _numbers[2],  Value = 2 },  
+     [5] = { Text = _numbers[2],  Value = 3 },  
+     [6] = { Text = _numbers[2],  Value = 3 },  
+     [7] = { Text = _numbers[4],  Value = 4 },
+     [8] = { Text = _numbers[4],  Value = 4 },
+     [9] = { Text = _numbers[5],  Value = 5 },
+    [10] = { Text = _numbers[5],  Value = 5 },
+    [11] = { Text = _numbers[6],  Value = 6 },
+    [12] = { Text = _numbers[6],  Value = 6 },
+    [13] = { Text = _numbers[7],  Value = 7 },
+    [14] = { Text = _numbers[7],  Value = 7 },
+    [15] = { Text = _numbers[8],  Value = 8 },
+    [16] = { Text = _numbers[8],  Value = 8 },
+    [17] = { Text = _numbers[9],  Value = 9 },
+    [18] = { Text = _numbers[9],  Value = 9 },
+    [19] = { Text = _numbers[10], Value = 10 },
+    [20] = { Text = _numbers[10], Value = 10 },
+    [21] = { Text = _numbers[11], Value = 11 },
+    [22] = { Text = _numbers[11], Value = 11 },
+    [23] = { Text = _numbers[12], Value = 12 },
 }  
+
+math.round = function(num)
+    local floor = math.floor(num)
+    local ceil = math.ceil(num)
+    if num - floor < ceil - num then
+        return floor
+    else
+        return ceil
+    end
+end
     
 function GetClockPosition( heading, bearing )  
-    local pos = UTILS.Round(((-heading + bearing) % 360) / 30, 0)  
-    if (pos == 0) then pos = 12 end  
-    return tostring(_numbers[pos]) .. " o'clock"  
+    local pos 
+    if not isNumber(heading) then
+        heading = 0
+    end
+    local brg = ((bearing + heading) % 360) / 15
+    pos = math.floor(brg)
+    return _clockPositions[pos].Value, _clockPositions[pos].Text .. " o'clock"
 end  
     
 function GetLevelPosition( coord1, coord2 )  
@@ -3443,7 +3514,7 @@ end
 -- @return #string A message describing the outcome (mainly intended for debugging purposes)  
 function CommandActivateTACAN(group, nChannel, sModeChannel, sIdent, bBearing, bAA, nsAttachToUnit)  
   
-Debug("nisse - CommandActivateTACAN :: group: " .. group.GroupName .. " :: nChannel: " .. Dump(nChannel) .. " :: sModeChannel: " .. sModeChannel .. " :: ident: " .. sIdent)  
+-- Debug("nisse - CommandActivateTACAN :: group: " .. group.GroupName .. " :: nChannel: " .. Dump(nChannel) .. " :: sModeChannel: " .. sModeChannel .. " :: ident: " .. sIdent)  
   
     local forGroup = getGroup(group)  
     if not forGroup then  
@@ -4052,17 +4123,7 @@ function _e:onEvent( event )
                 end
             end
         end
-    --    if event.initiator ~= nil and event.IniUnit ~= nil then  obsolete
-    --         event.IniGroup = event.IniUnit:GetGroup()  
-    --         if event.IniGroup then
-    --             event.IniGroupName = event.IniGroup.GroupName  
-    --         end
-    --         event.IniUnit = UNIT:Find(event.initiator)  
-    --         if event.IniUnit then
-    --             event.IniUnitName = event.IniUnit.UnitName  
-    --             event.IniPlayerName = event.IniUnit:GetPlayerName()  
-    --         end
-    --     end  
+
         local dcsTarget = getDCSTarget(event)  
         if event.TgtUnit == nil and dcsTarget ~= nil then  
             event.TgtUnit = UNIT:Find(dcsTarget)  
@@ -4085,13 +4146,13 @@ function _e:onEvent( event )
         if event.place == nil or event.Place ~= nil then  
             return event  
         end  
-        event.Place = AIRBASE:Find( event.place )  
-        event.PlaceName = event.Place:GetName()  
+        event.Place = AIRBASE:Find( event.place )
+        event.PlaceName = event.Place:GetName()
         return event  
     end  
   
-    if event.id == world.event.S_EVENT_BIRTH then  
-        -- todo consider supporting MissionEvents:UnitBirth(...)  
+    if event.id == world.event.S_EVENT_BIRTH then
+        -- todo consider supporting MissionEvents:UnitBirth(...)
           
         if isAssignedString(event.IniPlayerName) then  
             event.id = world.event.S_EVENT_PLAYER_ENTER_UNIT  
@@ -4130,9 +4191,12 @@ function _e:onEvent( event )
         })  
     end  
   
-    if event.id == world.event.S_EVENT_PLAYER_LEAVE_UNIT then  
-        PlayersAndUnits:Remove(event.IniUnitName)  
-        MissionEvents:Invoke( _missionEventsHandlers._playerLeftUnitHandlers, event )  
+    if event.id == world.event.S_EVENT_PLAYER_LEAVE_UNIT then 
+-- Debug("nisse - world.event.S_EVENT_PLAYER_LEAVE_UNIT :: event: " .. DumpPretty(event))
+        if event.IniUnitName then 
+            PlayersAndUnits:Remove(event.IniUnitName)  
+            MissionEvents:Invoke( _missionEventsHandlers._playerLeftUnitHandlers, event )  
+        end
     end  
   
     local function invokeUnitDestroyed(event)  
@@ -4186,7 +4250,7 @@ function _e:onEvent( event )
             if not dcsTarget and event.weapon then  
                 dcsTarget = event.weapon:getTarget()  
             end  
-Debug("nisse - world.event.S_EVENT_SHOT :: event: " .. DumpPrettyDeep(event, 2))            
+-- Debug("nisse - world.event.S_EVENT_SHOT :: event: " .. DumpPrettyDeep(event, 2))            
             MissionEvents:Invoke( _missionEventsHandlers._weaponFiredHandlers, addInitiatorAndTarget(event))  
         end  
         return  
@@ -6284,7 +6348,7 @@ function DCAF_ServiceTrack:Execute(direct) -- direct = service will proceed dire
     local wpOffset = 1  
     local startWpIndex = self.StartWpIndex  
     startWpIndex = startWpIndex + wpOffset -- this is to harmonize with WP numbers on map (1st WP on map is zero - 0)  
-Debug("nisse - DCAF_ServiceTrack:Execute :: waypoints: " .. DumpPrettyDeep(waypoints, 2))      
+-- Debug("nisse - DCAF_ServiceTrack:Execute :: waypoints: " .. DumpPrettyDeep(waypoints, 2))      
     if startWpIndex > #waypoints then  
         error("DCAF.Tanker:SetTrack :: start waypoint must be within route (route is " .. Dump(#waypoints) .. " waypoints, startWp was ".. Dump(startWpIndex) .. ")") end  
   
@@ -6474,7 +6538,7 @@ function SetAirServiceRoute(service, route)
     elseif isTable(route) then  
         service._waypoints = route  
     end  
-    service.Group:Route(service._waypoints)  
+    service.Group:SetRoute(service._waypoints)  
 end  
   
 local function getAirServiceWaypoints(service)  
@@ -6562,8 +6626,8 @@ function AttackHVAA(controllable, nRadius, callsign, callsignNo)
     end  
     if not isNumber(nRadius) then   
         nRadius = NauticalMiles(60)  
+        local coord = group:GetCoordinate()  
     end  
-    local coord = group:GetCoordinate()  
     local zone = ZONE_GROUP:New(group.GroupName, group, nRadius)  
     local set_groups = SET_GROUP:New():FilterZones({ zone }):FilterOnce()  
     local hvaaGroups = {}  
@@ -6720,7 +6784,7 @@ function UNIT:IsParked()
     local kmh = self:GetVelocityKMH()
     local agl = GetAGL(self)
 -- Debug("nisse - UNIT:IsParked :: agl: " .. DumpPretty(agl) .. " :: velocity: " .. DumpPretty(kmh))
-    return agl < 2 and kmh < 1
+    return agl < 4 and kmh < 1
 end
   
 function RTBNow(controllable, airbase, onLandedFunc, altitude, altitudeType)  
@@ -6747,7 +6811,7 @@ function RTBNow(controllable, airbase, onLandedFunc, altitude, altitudeType)
     end  
   
     local function buildRoute(airbase, wpLanding, enforce_alsoForShips) -- note the @enforce_alsoForShips is only a tamporary hack until we support CASE I, II, and III  
-Debug("nisse - buildRoute :: airbase:IsShip: " .. Dump(airbase:IsShip()))      
+-- Debug("nisse - buildRoute :: airbase:IsShip: " .. Dump(airbase:IsShip()))      
         if airbase:IsShip() and not enforce_alsoForShips then  
             return end -- Carriers require custom approach  
   
@@ -7619,8 +7683,9 @@ function DCAF.TankerTrack:Reassign(tankerInfo)
     local coord = tankerInfo.Group:GetCoordinate()  
     local alt = tankerInfo.Group:GetAltitude()  
     local revHdg = ReciprocalAngle(self.Heading)  
-    local coordIngress = self.CoordIP:Translate(NauticalMiles(15), revHdg):SetAltitude(alt) -- todo Consider setting correct entry altitude  
-    local heading = tankerInfo.Group:GetHeading() -- coord:GetHeadingTo(coordIngress)  
+    local block = getBlock(self) or tankerInfo.Tanker.TrackBlock
+    local coordIngress = self.CoordIP:Translate(NauticalMiles(15), revHdg):SetAltitude(Feet(block*1000))
+    local heading = tankerInfo.Group:GetHeading() 
     local group = tankerInfo.Group  
     local wp0 = coord:Translate(100, heading):SetAltitude(alt):WaypointAirFlyOverPoint(COORDINATE.WaypointAltType.BARO, speed) -- pointless "inital" waypoint  
     wp0.name = "INIT"  
@@ -7650,7 +7715,7 @@ function DCAF.TankerTrack:Reassign(tankerInfo)
         end  
         tankerInfo.Tanker:ActivateService(1)  
     end  
-    local block = getBlock(self) or tankerInfo.Tanker.TrackBlock  
+    -- local block = getBlock(self) or tankerInfo.Tanker.TrackBlock
     tankerInfo.Tanker:SetTrack(trackIP, self.Heading, self.Length, block):Start()  
     if tankerInfo.Track then  
         tankerInfo.Track:RemoveTanker(tankerInfo)  
@@ -8185,7 +8250,9 @@ end
 --                                                             MENU BUILDING - HELPERS  
 -- /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////  
   
-DCAF.MENU = {}  
+DCAF.MENU = {
+    ClassName = "DCAF.MENU"
+}  
   
 function getMenuText(menu)  
     if isList(menu.MenuPath) then  
@@ -8196,7 +8263,7 @@ end
 function DCAF.MENU:New(parentMenu, maxCount, count, nestedMenuCaption)  
     local menu = DCAF.clone(DCAF.MENU)  
     if not isNumber(maxCount) then  
-        maxCount = 9  
+        maxCount = 9
     end  
     if not isNumber(count) then  
         count = 0  
@@ -8206,8 +8273,8 @@ function DCAF.MENU:New(parentMenu, maxCount, count, nestedMenuCaption)
     menu._parentMenu = parentMenu  
     menu._nestedMenuCaption = "(more)"  
     return menu  
-end  
-  
+end
+
 function DCAF.MENU:Blue(text)  
     return self:Coalition(coalition.side.BLUE, text)  
 end  
@@ -8762,8 +8829,685 @@ function DCAF.CodewordTheme:GetNextRandom()
     end  
     return codeword  
 end  
+
+-- /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+--                                                      WEAPON TRACKING
+-- /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+local DCAF_TrackWeaponsScheduleID
+local DCAF_TrackHandlersCount = 0
+local DCAF_WpnTracksCount = 0
+local DCAF_WpnTrackersCount = 0
+
+local DCAF_WpnTrackers = {
+    -- list of #DCAF.WpnTracker (contains ALL Wpn trackers)
+}
+
+local DCAF_WpnTrajectoryTrackers = {
+    -- list of #DCAF.WpnTracker (only contains trackers that also tracks trajectories - for performance)
+}
+
+local DCAF_WeaponTracks = {
+    -- key   - #string (weapon id)
+    -- value - #DCAF.WpnTrack
+}
+
+DCAF.WpnTracking = {
+    Interval = .1,
+}
+
+DCAF.WpnTrack = {
+    ClassName = "DCAF.WpnTrack",
+    ID = nil,                   -- #string - weapon's ID
+    Weapon = nil,               -- DCS object - representing the tracked weapon
+    Type = nil,                 -- DCS weapon type
+    Category = nil,             -- DCS weapon category
+    Point = nil,                -- DCS object - last known position
+    Direction = nil,            -- DCS direction
+    Velocity = nil,             -- #number - weapon velocity
+    IniUnit = nil,              -- #UNIT - the unit who shot/dropped/launched the weapon
+    TgtUnit = nil               -- #UNIT - weapon's designated target (if any)
+}
+
+DCAF.WpnTracker = {
+    ClassName = "DCAF.WpnTracker",
+    Name = nil,
+}
+
+local function addWpnTracker(tracker)
+    table.insert(DCAF_WpnTrackers, tracker)
+    return #DCAF_WpnTrackers
+end
+
+local function removeWpnTrajectoryTracker(name)
+    local idx = tableIndexOf(DCAF_WpnTrajectoryTrackers, function(wt) return name == wt.Name end)
+    if idx then 
+Debug("nisse - removeWpnTrajectoryTracker :: name: " .. name .. " :: removes trajectory tracking")
+        table.remove(DCAF_WpnTrajectoryTrackers, idx)
+    end
+    return #DCAF_WpnTrajectoryTrackers
+end
+
+local function removeWpnTracker(name)
+    removeWpnTrajectoryTracker(name)
+    local idx = tableIndexOf(DCAF_WpnTrackers, function(wt) return name == wt.Name end)
+    if idx then 
+        table.remove(DCAF_WpnTrackers, idx)
+    end
+    return #DCAF_WpnTrackers
+end
+
+-- local nisse_Debug_trackWeapons_next
+
+local function trackWeapons()
+
+    local function vec3Mag(speedVec)
+        local mag = speedVec.x*speedVec.x + speedVec.y*speedVec.y+speedVec.z*speedVec.z
+        mag = math.sqrt(mag)
+        return mag
+    end
+
+    local function lookahead(speedVec)
+        local speed = vec3Mag(speedVec)
+        local dist = speed * DCAF.WpnTracking.Interval * 1.5 
+        return dist
+    end
+
+    for id, wpnTrack in pairs(DCAF_WeaponTracks) do
+        if wpnTrack.Weapon:isExist() then
+            wpnTrack.Point = wpnTrack.Weapon:getPosition().p
+            wpnTrack.Direction = wpnTrack.Weapon:getPosition().x
+            wpnTrack.Velocity = wpnTrack.Weapon:getVelocity()
+            for _, wpnTracker in ipairs(DCAF_WpnTrajectoryTrackers) do
+                wpnTracker:OnUpdate(wpnTrack)
+            end
+
+-- if UTILS.SecondsOfToday() > nisse_Debug_trackWeapons_next then
+--     Debug("nisse - trackWeapons :: " .. DumpPrettyDeep(wpnTrack, 2))
+--     nisse_Debug_trackWeapons_next = UTILS.SecondsOfToday() + .5
+-- end
+        else
+            -- we have impact...
+            local ip = land.getIP(wpnTrack.Point, wpnTrack.Direction, lookahead(wpnTrack.Velocity))  -- terrain intersection point with weapon's nose.  Only search out 20 meters though.
+            local impactPoint
+            if ip then 
+                impactPoint = ip
+            else
+                -- use last calculated Point for impact point
+                ip = wpnTrack.Point
+            end
+            wpnTrack.ImpactCoordinate = COORDINATE:New( ip.x, ip.y, ip.z )
+            wpnTrack.ImpactTime = UTILS.SecondsOfToday()
+            for _, wpnTracker in ipairs(DCAF_WpnTrackers) do
+                wpnTracker:OnImpact(wpnTrack)
+            end
+            -- wpnTrack:OnImpact(wpnTrack.ImpactCoordinate)
+            wpnTrack:End()
+        end
+    end
+end
+
+local function startScheduler()
+    DCAF_TrackWeaponsScheduleID = DCAF.startScheduler(trackWeapons, DCAF.WpnTracking.Interval)
+end
+
+local function stopScheduler()
+    if DCAF_TrackWeaponsScheduleID then
+-- Debug("nisse - DCAF.WpnTrack:Remove :: ENDS tracking scheduler...")
+        DCAF.stopScheduler(DCAF_TrackWeaponsScheduleID)
+        DCAF_TrackWeaponsScheduleID = nil
+    end
+end
+
+local function addWpnTrack(wpnTrack)
+    DCAF_WeaponTracks[wpnTrack.ID] = wpnTrack
+    DCAF_WpnTracksCount = DCAF_WpnTracksCount + 1
+    if DCAF_WpnTracksCount == 1 then
+-- Debug("nisse - DCAF.WpnTrack:New :: STARTS tracking scheduler...")
+-- nisse_Debug_trackWeapons_next = UTILS.SecondsOfToday() + .5
+        startScheduler()
+    end
+end
+
+local function removeTrackedWeapon(tw)
+    DCAF_WeaponTracks[tw.ID] = nil
+    DCAF_WpnTracksCount = DCAF_WpnTracksCount - 1
+    if DCAF_WpnTracksCount == 0 and DCAF_TrackWeaponsScheduleID then
+        stopScheduler()
+    end
+end
+
+local function newWpnTrack(event)
+    -- {
+    --     ["IniUnit"] = { --[[ data omitted ]] },
+    --     ["IniPlayerName"] = "Wife",
+    --     ["initiator"] = { --[[ data omitted ]] },
+    --     ["id"] = 1,
+    --     ["IniUnitName"] = "Aerial-2-1",
+    --     ["time"] = 47.261,
+    --     ["IniGroup"] = { --[[ data omitted ]] },
+    --     ["IniGroupName"] = "Aerial-2",
+    --     ["weapon"] = { --[[ data omitted ]] },
+    --     ["weapon_name"] = "BDU_33",
+    --    }
+
+    local wpnTrack = DCAF.clone(DCAF.WpnTrack)
+    wpnTrack.ID = event.weapon["id_"]
+    wpnTrack.Weapon = event.weapon
+    wpnTrack.Type = event.weapon:getTypeName()
+    wpnTrack.Category = event.weapon:getCategory()
+    wpnTrack.Point = event.weapon:getPoint()
+    wpnTrack.Direction = event.weapon:getPosition()
+    wpnTrack.Velocity = event.weapon:getVelocity()
+    wpnTrack.DeployCoordinate = event.IniUnit:GetCoordinate()
+    wpnTrack.DeployHeading = event.IniUnit:GetHeading()
+    wpnTrack.DeployPitch = event.IniUnit:GetPitch()
+    wpnTrack.DeployAltitudeMSL = event.IniUnit:GetAltitude()
+    wpnTrack.DeployVelocityKMH = event.IniUnit:GetVelocityKMH()
+    wpnTrack.DeployTime = UTILS.SecondsOfToday()
+    wpnTrack.IniUnit = event.IniUnit
+    wpnTrack.IniUnitType = event.IniUnit:GetTypeName()
+    wpnTrack.PlayerName = event.IniUnit:GetPlayerName()
+    addWpnTrack(wpnTrack)
+
+-- Debug("nisse - DCAF.WpnTrack:New :: DCAF_TrackWeaponsCount: " .. Dump(DCAF_WpnTracksCount))
+-- Debug("nisse - DCAF.WpnTrack:New :: " .. DumpPrettyDeep(wpnTrack, 2))
+
+    return wpnTrack
+end
+
+function DCAF.WpnTrack:End()
+    removeTrackedWeapon(self)
+end
+
+-- function DCAF.WpnTrack:OnImpact(coord)
+--     Debug("DCAF.WpnTrack:OnImpact :: " .. DumpPrettyDeep(self, 2))
+--     coord:CircleToAll()
+-- end
+
+function DCAF.WpnTracker:New(name)
+    if not isAssignedString(name) then 
+        error("DCAF.WpnTracker:New :: `name` must be string, but was: " .. DumpPretty(name)) end
+
+    if DCAF.WpnTracker:FindByName(name) then
+        error("DCAF.WpnTracker:New :: tracker with name '" .. name .. "' was already created") end
+
+    local tracker = DCAF.clone(DCAF.WpnTracker)
+    tracker.Name = name
+    addWpnTracker(tracker)
+    return tracker
+end
+
+--- Starts the weapon tracker
+-- @param #DCAF.WpnTracker self
+-- @param #any monitor bool or number specifies whether tracker should be sent weapon trajectry updates
+function DCAF.WpnTracker:Start(monitor)
+    if monitor == true then
+        table.insert(DCAF_WpnTrajectoryTrackers, self)
+    elseif isNumber(monitor) then
+        self._updateInterval = monitor
+        table.insert(DCAF_WpnTrajectoryTrackers, self)
+    end
+    DCAF.WpnTracking:Start(self)
+    self.IsRunning = true
+    return self
+end
+
+--- Looks up tracker with specified name
+-- @param #DCAF.WpnTracker self
+-- @param #string name Specifies name of tracker
+function DCAF.WpnTracker:FindByName(name)
+    if not isAssignedString(name) then 
+        error("DCAF.FindByName:New :: `name` must be string, but was: " .. DumpPretty(name)) end
+
+    for i, t in ipairs(DCAF_WpnTrackers) do
+        if t.Name == name then
+            return t end
+    end
+end
+
+--- For trackers that monitors trajectory (see DCAF.WpnTracker:IsTrackingTrajectory), this method will be called back once per update
+function DCAF.WpnTracker:OnUpdate(wpnTrack)
+    return true
+end
+
+function DCAF.WpnTracker:EndUpdate()
+    removeWpnTrajectoryTracker(self.Name)
+end
+
+--- Invoked when weapon impacts
+function DCAF.WpnTracker:OnImpact(wpnTrack)
+    -- to be overridden
+end
+
+function DCAF.WpnTracker:End()
+    self.IsRunning = false
+    local countTrackers = removeWpnTracker(self.Name)
+    if countTrackers == 0 then
+        -- no trackers remaining - stop tracking weapons
+        MissionEvents:EndOnWeaponFired(newWpnTrack)
+        stopScheduler()
+    end
+end
+
+function DCAF.WpnTracking:Start(tracker) -- name, newTrackFunc, interval)
+    if not isClass(tracker, DCAF.WpnTracker.ClassName) then
+        error("DCAF.WeaponTracking:Start :: `tracker` must be #" .. DCAF.WpnTracker.ClassName .. ", but was: " .. DumpPretty(tracker)) end
+
+    -- local countTrackers = addWpnTracker(tracker)
+    local isRunning = DCAF_TrackWeaponsScheduleID ~= nil
+    local interval = tracker._updateInterval
+    local restart
+    if isNumber(tracker._updateInterval) and tracker._updateInterval < DCAF.WpnTracking.Interval then
+        DCAF.WpnTracking.Interval = tracker._updateInterval
+        restart = true
+    end
+    if not isRunning then
+        MissionEvents:OnWeaponFired(newWpnTrack)
+    end
+    if not restart then
+        return end
+        
+    stopScheduler()
+    if DCAF_WpnTracksCount > 0 then
+        startScheduler()
+    end
+end
+
+function DCAF.WpnTracking:Stop(name)
+    if not isAssignedString(name) then
+        error("DCAF.WeaponTracking:Stop :: `name` must be string, but was: " .. DumpPretty(name)) end
+
+    removeWpnTracker(name)   
+end
+
+function DCAF.WpnTracking:OnImpact(func, ...)
+end
+
+
+-- //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Debug("\\\\\\\\\\\\\\\\\\\\ DCAF.WpnTracking.lua was loaded ///////////////////")
+
+
+
+
   
-  
+-- //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+--                                                   DCAF.SplashDamage
+--
+--                                                          ****
+--
+--  This functionality is just a DCAF adaptation/optimization of FrozenDroid's 'splash_damage.lua' script. 
+--  The reason DCAF opted to include the script into the "DCAF Core" library is becaise splash_damage.lua relies on
+--  internal schedulers to track weapon trajectories. This process can put strain on the sim engine and DCAF Core
+--  already does this through the internal #DCAF.WpnTracker system (used by other DCAF Core features, such as #DCAF.WpnSimulation
+--  and the target scoring in DCAF.TrainingRanges). So, instead of running a separate trajectory tracker in parallel with the
+--  ones used by DCAF Core, the splash damage logic embedded in DCAF Core instead relies on DCAF's weapon tracking mechanism.
+--
+--  All credits, and our cincere gratitude belongs to FrozenDroid!
+--
+--  Jonas 'Wife' Rembratt, 
+--    119th FS, DCAF
+--    June 19, 2023
+-- //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+--require("DCAF.WpnTracking.lua")
+
+DCAF.SplashDamageOptions = {
+    ClassName = "DCAF.SplashDamageOptions",
+    --
+    LargerExplosions = true,        -- secondary explosions on top of weapon impact points, dictated by the values in the explTable
+    RocketMultiplier = 1.3,         -- multiplied by the explTable value for rockets
+    BlastSearchRadius = 100,        -- this is the max size of any blast wave radius, since we will only find objects within this zone
+    BlastStun = false,              -- not implemented
+    WaveExplosions = true,          -- secondary explosions on top of game objects, radiating outward from the impact point and scaled based on size of object and distance from weapon impact point
+    DamageModel = false,            -- allow blast wave to affect ground unit movement and weapons
+    CascadeDamageThreshold = 0.1,   -- if the calculated blast damage doesn't exeed this value, there will be no secondary explosion damage on the unit.  If this value is too small, the appearance of explosions far outside of an expected radius looks incorrect.
+    StaticDamageBoost = 2000,       -- apply extra damage to Unit.Category.STRUCTUREs with wave explosions
+    InfantryCantFireHealth = 90,    -- if health is below this value after our explosions, set ROE to HOLD to simulate severe injury
+    UnitCantFireHealth = 50,        -- if health is below this value after our explosions, set ROE to HOLD to simulate damage weapon systems
+    UnitDisabledHealth = 30,        -- if health is below this value after our explosions, disable its movement 
+}
+
+DCAF.SplashDamage = {
+    ClassName = "DCAF.SplashDamage",
+    --
+    UpdateInterval = .1,
+    WpnTracker = DCAF.WpnTracker:New("Splash Damage")
+}
+
+local DCAF_Ordnance = {
+    Name = nil,                 -- #string - ordnance internal (DCS) name
+    Description = nil,          -- #string - a short description of the ordnance
+    Explosive = nil             -- #number - explosive power
+}
+
+function DCAF_Ordnance:New(name, explosive, description)
+    local o = DCAF.clone(DCAF_Ordnance)
+    o.Name = name
+    o.Explosive = explosive
+    o.Description = description
+    return o
+end
+
+local explTable = {
+    ["FAB_100"] = 45,
+    ["FAB_250"] = 100,
+    ["FAB_250M54TU"]= 100,
+    ["FAB_500"] = 213,
+    ["FAB_1500"]  = 675,
+    ["BetAB_500"] = 98,
+    ["BetAB_500ShP"]= 107,
+    ["KH-66_Grom"]  = 108,
+    ["M_117"] = 201,
+    ["Mk_81"] = 60,
+    ["Mk_82"] = 118,
+    ["AN_M64"]  = 121,
+    ["Mk_83"] = 274,
+    ["Mk_84"] = 582,
+    ["MK_82AIR"]  = 118,
+    ["MK_82SNAKEYE"]= 118,
+    ["GBU_10"]  = 582,
+    ["GBU_12"]  = 118,
+    ["GBU_16"]  = 274,
+    ["KAB_1500Kr"]  = 675,
+    ["KAB_500Kr"] = 213,
+    ["KAB_500"] = 213,
+    ["GBU_31"]  = 582,
+    ["GBU_31_V_3B"] = 582,
+    ["GBU_31_V_2B"] = 582,
+    ["GBU_31_V_4B"] = 582,
+    ["GBU_32_V_2B"] = 202,
+    ["GBU_38"]  = 118,
+    ["AGM_62"]  = 400,
+    ["GBU_24"]  = 582,
+    ["X_23"]  = 111,
+    ["X_23L"] = 111,
+    ["X_28"]  = 160,
+    ["X_25ML"]  = 89,
+    ["X_25MP"]  = 89,
+    ["X_25MR"]  = 140,
+    ["X_58"]  = 140,
+    ["X_29L"] = 320,
+    ["X_29T"] = 320,
+    ["X_29TE"]  = 320,
+    ["AGM_84E"] = 488,
+    ["AGM_88C"] = 89,
+    ["AGM_122"] = 15,
+    ["AGM_123"] = 274,
+    ["AGM_130"] = 582,
+    ["AGM_119"] = 176,
+    ["AGM_154C"]  = 305,
+    ["S-24A"] = 24,
+    --["S-24B"] = 123,
+    ["S-25OF"]  = 194,
+    ["S-25OFM"] = 150,
+    ["S-25O"] = 150,
+    ["S_25L"] = 190,
+    ["S-5M"]  = 1,
+    ["C_8"]   = 4,
+    ["C_8OFP2"] = 3,
+    ["C_13"]  = 21,
+    ["C_24"]  = 123,
+    ["C_25"]  = 151,
+    ["HYDRA_70M15"] = 3,
+    ["Zuni_127"]  = 5,
+    ["ARAKM70BHE"]  = 4,
+    ["BR_500"]  = 118,
+    ["Rb 05A"]  = 217,
+    ["HEBOMB"]  = 40,
+    ["HEBOMBD"] = 40,
+    ["MK-81SE"] = 60,
+    ["AN-M57"]  = 56,
+    ["AN-M64"]  = 180,
+    ["AN-M65"]  = 295,
+    ["AN-M66A2"]  = 536,
+    ["HYDRA_70_M151"] = 4,
+    ["HYDRA_70_MK5"] = 4,
+    ["Vikhr_M"] = 11,
+    ["British_GP_250LB_Bomb_Mk1"] = 100,           --("250 lb GP Mk.I")
+    ["British_GP_250LB_Bomb_Mk4"] = 100,           --("250 lb GP Mk.IV")
+    ["British_GP_250LB_Bomb_Mk5"] = 100,           --("250 lb GP Mk.V")
+    ["British_GP_500LB_Bomb_Mk1"] = 213,           --("500 lb GP Mk.I")
+    ["British_GP_500LB_Bomb_Mk4"] = 213,           --("500 lb GP Mk.IV")
+    ["British_GP_500LB_Bomb_Mk4_Short"] = 213,     --("500 lb GP Short tail")
+    ["British_GP_500LB_Bomb_Mk5"] = 213,           --("500 lb GP Mk.V")
+    ["British_MC_250LB_Bomb_Mk1"] = 100,           --("250 lb MC Mk.I")
+    ["British_MC_250LB_Bomb_Mk2"] = 100,           --("250 lb MC Mk.II")
+    ["British_MC_500LB_Bomb_Mk1_Short"] = 213,     --("500 lb MC Short tail")
+    ["British_MC_500LB_Bomb_Mk2"] = 213,           --("500 lb MC Mk.II")
+    ["British_SAP_250LB_Bomb_Mk5"] = 100,          --("250 lb S.A.P.")
+    ["British_SAP_500LB_Bomb_Mk5"] = 213,          --("500 lb S.A.P.")
+    ["British_AP_25LBNo1_3INCHNo1"] = 4,           --("RP-3 25lb AP Mk.I")
+    ["British_HE_60LBSAPNo2_3INCHNo1"] = 4,        --("RP-3 60lb SAP No2 Mk.I")
+    ["British_HE_60LBFNo1_3INCHNo1"] = 4,          --("RP-3 60lb F No1 Mk.I")
+    ["WGr21"] = 4,                                 --("Werfer-Granate 21 - 21 cm UnGd air-to-air rocket")
+    ["3xM8_ROCKETS_IN_TUBES"] = 4,                 --("4.5 inch M8 UnGd Rocket")
+    ["AN_M30A1"] = 45,                             --("AN-M30A1 - 100lb GP Bomb LD")
+    ["AN_M57"] = 100,                              --("AN-M57 - 250lb GP Bomb LD")
+    ["AN_M65"] = 400,                              --("AN-M65 - 1000lb GP Bomb LD")
+    ["AN_M66"] = 800,                              --("AN-M66 - 2000lb GP Bomb LD")
+    ["SC_50"] = 20,                                --("SC 50 - 50kg GP Bomb LD")
+    ["ER_4_SC50"] = 20,                            --("4 x SC 50 - 50kg GP Bomb LD")
+    ["SC_250_T1_L2"] = 100,                        --("SC 250 Type 1 L2 - 250kg GP Bomb LD")
+    ["SC_501_SC250"] = 100,                        --("SC 250 Type 3 J - 250kg GP Bomb LD")
+    ["Schloss500XIIC1_SC_250_T3_J"] = 100,         --("SC 250 Type 3 J - 250kg GP Bomb LD")
+    ["SC_501_SC500"] = 213,                        --("SC 500 J - 500kg GP Bomb LD")
+    ["SC_500_L2"] = 213,                           --("SC 500 L2 - 500kg GP Bomb LD")
+    ["SD_250_Stg"] = 100,                          --("SD 250 Stg - 250kg GP Bomb LD")
+    ["SD_500_A"] = 213,                            --("SD 500 A - 500kg GP Bomb LD")
+    ["AB_250_2_SD_2"] = 100,                       --("AB 250-2 - 144 x SD-2, 250kg CBU with HE submunitions")
+    ["AB_250_2_SD_10A"] = 100,                     --("AB 250-2 - 17 x SD-10A, 250kg CBU with 10kg Frag/HE submunitions")
+    ["AB_500_1_SD_10A"] = 213,                     --("AB 500-1 - 34 x SD-10A, 500kg CBU with 10kg Frag/HE submunitions")
+    ["AGM_114K"] = 10,
+    ["HYDRA_70_M229"] = 8,
+    ["AGM_65H"] = 130,
+    ["AGM_65D"] = 130,
+    ["AGM_65E"] = 300,
+    ["AGM_65F"] = 300,
+    ["HOT3"] = 15,
+    ["AGR_20A"] = 8,
+    ["GBU_54_V_1B"] = 118,
+}
+
+local function getDistance(point1, point2)
+    local x1 = point1.x
+    local y1 = point1.y
+    local z1 = point1.z
+    local x2 = point2.x
+    local y2 = point2.y
+    local z2 = point2.z
+    local dX = math.abs(x1-x2)
+    local dZ = math.abs(z1-z2)
+    local distance = math.sqrt(dX*dX + dZ*dZ)
+    return distance
+end
+
+local function vec3Mag(speedVec)
+    local mag = speedVec.x*speedVec.x + speedVec.y*speedVec.y + speedVec.z*speedVec.z
+    mag = math.sqrt(mag)
+    return mag
+end
+
+local function tableHasKey(table, key)
+    return table[key] ~= nil
+end
+
+local function explodeObject(table)
+    local point = table[1]
+    local distance = table[2]
+    local power = table[3]
+    trigger.action.explosion(point, power) 
+end
+
+local function getWeaponExplosive(name)
+    if explTable[name] then
+        return explTable[name]
+    else
+        return 0
+    end
+end
+
+local function lookahead(speedVec)
+    local speed = vec3Mag(speedVec)
+    local dist = speed * DCAF.SplashDamage.UpdateInterval * 1.5 
+    return dist
+end
+
+--controller is only at group level for ground units.  we should itterate over the group and only apply effects if health thresholds are met by all units in the group
+local function modelUnitDamage(units, options)
+    for i, unit in ipairs(units) do
+        if unit:isExist() then  --if units are not already dead
+            local health = (unit:getLife() / unit:getDesc().life) * 100 
+            -- Debug(unit:getTypeName() .. " health %" .. Dump(health))
+            if unit:hasAttribute("Infantry") == true and health > 0 then  --if infantry
+                if health <= options.InfantryCantFireHealth then
+                    ---disable unit's ability to fire---
+                    unit:getController():setOption(AI.Option.Ground.id.ROE , AI.Option.Ground.val.ROE.WEAPON_HOLD)
+                end
+            end
+            if unit:getDesc().category == Unit.Category.GROUND_UNIT == true and unit:hasAttribute("Infantry") == false and health > 0 then  --if ground unit but not infantry
+                if health <= options.UnitCantFireHealth then
+                    ---disable unit's ability to fire---
+                    unit:getController():setOption(AI.Option.Ground.id.ROE , AI.Option.Ground.val.ROE.WEAPON_HOLD)
+                    -- gameMsg(unit:getTypeName().." weapons disabled")
+                end
+                if health <= options.UnitDisabledHealth and health > 0 then
+                    ---disable unit's ability to move---
+                    unit:getController():setTask({ id = 'Hold', params = { } } )
+                    unit:getController():setOnOff(false) 
+                    -- gameMsg(unit:getTypeName().." disabled")
+                end
+            end
+        end
+    end
+end   
+
+local function blastWave(_point, _radius, weapon, power)
+    local foundUnits = {}
+    local volS = {
+        id = world.VolumeType.SPHERE,
+        params = {
+            point = _point,
+            radius = _radius
+        }
+    }
+    local options = DCAF.SplashDamage.Options
+   
+    local function ifFound(foundObject, val)
+        local obj = foundObject
+        if foundObject:getDesc().category == Unit.Category.GROUND_UNIT and foundObject:getCategory() == Object.Category.UNIT then
+            foundUnits[#foundUnits + 1] = foundObject
+        end
+        if foundObject:getDesc().category == Unit.Category.GROUND_UNIT then --if ground unit
+            if options.BlastStun == true then
+                --suppressUnit(foundObject, 2, weapon)
+            end
+        end
+        if options.WaveExplosions == true then
+            local obj_location = obj:getPoint()
+            local distance = getDistance(_point, obj_location)
+            local timing = distance/500      
+            if obj:isExist() then
+                if tableHasKey(obj:getDesc(), "box") then
+                    local length = (obj:getDesc().box.max.x + math.abs(obj:getDesc().box.min.x))
+                    local height = (obj:getDesc().box.max.y + math.abs(obj:getDesc().box.min.y))
+                    local depth = (obj:getDesc().box.max.z + math.abs(obj:getDesc().box.min.z))
+                    local _length = length
+                    local _depth = depth
+                    if depth > length then 
+                        _length = depth 
+                        _depth = length
+                    end
+                    local surface_distance = distance - _depth/2 
+                    local scaled_power_factor = 0.006 * power + 1 --this could be reduced into the calc on the next line
+                    local intensity = (power * scaled_power_factor) / (4 * 3.14 * surface_distance * surface_distance )
+                    local surface_area = _length * height --Ideally we should roughly calculate the surface area facing the blast point, but we'll just find the largest side of the object for now
+                    local damage_for_surface = intensity * surface_area    
+-- Debug(obj:getTypeName().." sa:"..surface_area.." distance:"..surface_distance.." dfs:"..damage_for_surface.." pw:"..power)
+                    if damage_for_surface > options.CascadeDamageThreshold then
+                        local explosion_size = damage_for_surface
+                        if obj:getDesc().category == Unit.Category.STRUCTURE then
+                            explosion_size = intensity * options.StaticDamageBoost --apply an extra damage boost for static objects. should we factor in surface_area?
+                            --debugMsg("static obj :"..obj:getTypeName())
+                        end
+                        if explosion_size > power then explosion_size = power end --secondary explosions should not be larger than the explosion that created it
+                        Delay(timing, function()
+                            --create the explosion on the object location
+                            explodeObject({ obj_location, distance, explosion_size })
+                        end)
+                        -- local id = timer.scheduleFunction(explodeObject, {obj_location, distance, explosion_size}, timer.getTime() + timing)  --create the explosion on the object location
+                    end
+                else 
+                    Debug("nisse - blastWave :: obj has no 'box' property: " .. obj:getTypeName())
+                    --debugMsg(obj:getTypeName().." object does not have box property")
+                end
+            end
+        end
+        return true
+    end
+   
+    world.searchObjects(Object.Category.UNIT, volS, ifFound)
+    world.searchObjects(Object.Category.STATIC, volS, ifFound)
+    world.searchObjects(Object.Category.SCENERY, volS, ifFound)
+    world.searchObjects(Object.Category.CARGO, volS, ifFound)
+    --world.searchObjects(Object.Category.BASE, volS, ifFound)
+   
+    if options.DamageModel == true then 
+        Delay(1.5, function() 
+            modelUnitDamage(foundUnits, options) -- allow some time for the game to adjust health levels before running our function
+        end)
+        -- local id = timer.scheduleFunction(modelUnitDamage, foundUnits, timer.getTime() + 1.5) --allow some time for the game to adjust health levels before running our function
+    end
+end
+
+function DCAF.SplashDamage.WpnTracker:OnImpact(wpnTrack)
+    if not wpnTrack._isUpdatingSpashDamage then
+        return end
+
+    local options = DCAF.SplashDamage.Options
+    local impactPoint = wpnTrack.ImpactCoordinate
+    if options.LarsgerExplosions == true then
+        trigger.action.explosion(impactPoint, getWeaponExplosive(wpnTrack.Type))
+    end
+    local explosive = getWeaponExplosive(wpnTrack.Type)
+    if options.RocketMultiplier > 0 and wpnTrack.Weapon.cat == Weapon.Category.ROCKET then
+        explosive = explosive * options.RocketMultiplier
+    end
+    blastWave(impactPoint, options.BlastSearchRadius, wpnTrack.Weapon.ordnance, explosive)
+end
+
+function DCAF.SplashDamage.WpnTracker:OnUpdate(wpnTrack)
+-- Debug("DCAF.SplashDamage.WpnTracker:OnUpdate (aaa) :: wpn: '" .. wpnTrack.Type .. "' :: _splashDamageExplosion: " .. Dump(wpnTrack._splashDamageExplosion))
+    if wpnTrack._splashDamageExplosion then
+        return
+    else
+        -- ensure we do not track trajectories for unsupported ordnance...
+        wpnTrack._splashDamageExplosion = getWeaponExplosive(wpnTrack.Type)
+-- Debug("DCAF.SplashDamage.WpnTracker:OnUpdate (bbb) :: wpn: '" .. wpnTrack.Type .. "' :: _splashDamageExplosion: " .. Dump(wpnTrack._splashDamageExplosion))
+        if wpnTrack._splashDamageExplosion > 0 then
+            return end
+
+        Debug("DCAF.SplashDamage.WpnTracker:OnUpdate :: ordnance '" .. wpnTrack.Type .. "' is not supported :: tracking ends")
+        self:EndUpdate()
+    end
+end
+
+function DCAF.SplashDamageOptions:New()
+    local o = DCAF.clone(DCAF.SplashDamageOptions)
+    return o
+end
+
+function DCAF.SplashDamage.Start(options)
+    if not isClass(options, DCAF.SplashDamageOptions.ClassName) then
+        DCAF.SplashDamage.Options = DCAF.SplashDamageOptions:New()
+    end
+    DCAF.SplashDamage.WpnTracker:Start(DCAF.SplashDamage.UpdateInterval)
+    Debug(DCAF.SplashDamage.ClassName .. " :: started :: options: " .. DumpPretty(DCAF.SplashDamage.Options))
+end
+
 -------------- LOADED  
   
 Trace("DCAF.Core was loaded")

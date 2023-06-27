@@ -5,7 +5,10 @@ local function defaultOnTaxi(unit, crew, distance)
 end
 
 DCAF.AircraftGroundAssets = {
-    AirplaneGroundCrewSpawn = nil,          -- #GROUP - template used for dynamically spawning ground crew
+    ClassName = "DCAF.AircraftGroundAssets",
+    AirplaneGroundCrewSpawn = {
+        -- list of #SPAWN - templates used for dynamically spawning ground crew
+    },         
     MonitorTaxiScheduleID = nil,            -- #number - set when a scheduler is running, to remove gound crew
     FuncOnTaxi = defaultOnTaxi
 }
@@ -34,30 +37,12 @@ local DCAF_ActiveGroundCrews = {
     -- key   = UNIT name
     -- value = #DCAF_ActiveGroundCrew
 }
+local DCAF_CountActiveGroundCrews = 0
 
-local function startMonitoringTaxi()
-    if DCAF.AircraftGroundAssets.MonitorTaxiScheduleID then
-        return end
-
-    local schedulerFunc
-    schedulerFunc = function()
-        local count = 0
-        for unitName, activeGroundCrew in pairs(DCAF_ActiveGroundCrews) do
-            count = count + 1
-            local coordUnit = activeGroundCrew.Unit:GetCoordinate()
-            if coordUnit then -- if unit was despawned, we'll get no coordinates
-                -- note: VTOL takeoffs amount to "vertical" taxi, so "taxi distance" wil be either hotizontal or vertical distance...
-                local taxiAltitude = math.abs(coordUnit.y - activeGroundCrew.ParkingCoordinate.y)
-                local taxiDistance = math.max(taxiAltitude, activeGroundCrew.ParkingCoordinate:Get2DDistance(coordUnit))
-                DCAF.AircraftGroundAssets.FuncOnTaxi(activeGroundCrew.Unit, activeGroundCrew, taxiDistance)
-            end
-        end
-        if count == 0 then
-            DCAF.stopScheduler(DCAF.AircraftGroundAssets.MonitorTaxiScheduleID)
-            DCAF.AircraftGroundAssets.MonitorTaxiScheduleID = nil
-        end
-    end 
-    DCAF.AircraftGroundAssets.MonitorTaxiScheduleID = DCAF.startScheduler(schedulerFunc, .5)
+local function stopMonitoringTaxiWhenLastGroundCrewRemoved()
+    Debug(DCAF.AircraftGroundAssets.ClassName .. " :: stops monitoring airplane taxi")
+    DCAF.stopScheduler(DCAF.AircraftGroundAssets.MonitorTaxiScheduleID)
+    DCAF.AircraftGroundAssets.MonitorTaxiScheduleID = nil
 end
 
 local function removeAirplaneGroundCrew(unit)
@@ -67,28 +52,56 @@ local function removeAirplaneGroundCrew(unit)
     end
 end
 
+local function startMonitoringTaxi()
+    if DCAF.AircraftGroundAssets.MonitorTaxiScheduleID then
+        return end
+
+    Debug(DCAF.AircraftGroundAssets.ClassName .. " :: starts monitoring airplane taxi")
+    local schedulerFunc
+    schedulerFunc = function()
+        local count = 0
+        for unitName, activeGroundCrew in pairs(DCAF_ActiveGroundCrews) do
+            count = count + 1
+            local coordUnit = activeGroundCrew.Unit:GetCoordinate()
+            if coordUnit then -- if unit was despawned, we'll get no coordinates
+                -- note: VTOL takeoffs amount to "vertical" taxi, so "taxi distance" will be either hotizontal or vertical distance...
+                local taxiAltitude = math.abs(coordUnit.y - activeGroundCrew.ParkingCoordinate.y)
+                local taxiDistance = math.max(taxiAltitude, activeGroundCrew.ParkingCoordinate:Get2DDistance(coordUnit))
+                DCAF.AircraftGroundAssets.FuncOnTaxi(activeGroundCrew.Unit, activeGroundCrew, taxiDistance)
+            else
+                removeAirplaneGroundCrew(activeGroundCrew.Unit)
+            end
+        end
+        -- stopMonitoringTaxiWhenLastGroundCrewRemoved()
+    end 
+    DCAF.AircraftGroundAssets.MonitorTaxiScheduleID = DCAF.startScheduler(schedulerFunc, .5)
+end
+
 local function addAirplaneGroundCrew(unit)
-    if not DCAF.AircraftGroundAssets.AirplaneGroundCrewSpawn then
-        Warning("DCAF.AircraftGroundAssets :: Cannot add airplane ground crew for " .. unit.UnitName .. " :: template is not specified")
+    if not DCAF.AircraftGroundAssets.AirplaneGroundCrewSpawn or #DCAF.AircraftGroundAssets.AirplaneGroundCrewSpawn == 0 then
+        Warning(DCAF.AircraftGroundAssets.ClassName .. " :: Cannot add airplane ground crew for " .. unit.UnitName .. " :: template is not specified")
         return
     end
 
     local typeName = unit:GetTypeName()
     local info = DCAF_GroundCrewDB[typeName]
     if not info then
-        Warning("DCAF.AircraftGroundAssets :: No ground crew information available for airplane type '" .. typeName .. "' :: IGNORES")
+        Warning(DCAF.AircraftGroundAssets.ClassName .. " :: No ground crew information available for airplane type '" .. typeName .. "' :: IGNORES")
         return 
     end
 
     local groundCrew = {}
     local coordUnit = unit:GetCoordinate()
     local hdgUnit = unit:GetHeading()
-    local offsetChief = (hdgUnit + info.ChiefOffset) % 360
-    local locChief = coordUnit:Translate(info.ChiefDistance, offsetChief) --:Rotate2D((hdgChief + info.ChiefHeading) % 360)
-    local hdgChief = (offsetChief + info.ChiefHeading) % 360
-    DCAF.AircraftGroundAssets.AirplaneGroundCrewSpawn:InitHeading(hdgChief)
-    local chief = DCAF.AircraftGroundAssets.AirplaneGroundCrewSpawn:SpawnFromCoordinate(locChief)
-    table.insert(groundCrew, chief)
+    local offsetCrew = (hdgUnit + info.ChiefOffset) % 360
+Debug("nisse - addAirplaneGroundCrew :: unit hdg: " .. Dump(hdgUnit) .. " :: offsetCrew: " .. Dump(offsetCrew))    
+    local locCrew = coordUnit:Translate(info.ChiefDistance, offsetCrew) --:Rotate2D((hdgChief + info.ChiefHeading) % 360)
+    local hdgCrew = (offsetCrew + info.ChiefHeading) % 360
+    local spawn = listRandomItem(DCAF.AircraftGroundAssets.AirplaneGroundCrewSpawn)
+    spawn:InitHeading(hdgCrew)
+    local crew = spawn:SpawnFromCoordinate(locCrew)
+    Debug(DCAF.AircraftGroundAssets.ClassName .. " :: spawns airplane ground crew: " .. crew.GroupName)
+    table.insert(groundCrew, crew)
 
     -- todo - consider adding more ground crew
 
@@ -97,43 +110,54 @@ local function addAirplaneGroundCrew(unit)
 -- todo - remove chief when aircraft is despawned or is 100 meters out
 end
 
-function DCAF.AircraftGroundAssets.AddAirplaneGroundCrew(groundCrew)
-    if DCAF.AircraftGroundAssets.AirplaneGroundCrewSpawn then 
-        Warning("DCAF.AircraftGroundAssets.AddAirplaneGroundCrew :: airplane ground crew was already added")
-        return 
+function DCAF.AircraftGroundAssets.AddAirplaneGroundCrew(...)
+
+    local function addGroundCrew(groundCrew)
+        local group = getGroup(groundCrew)
+        if not group then 
+            error("DCAF.AircraftGroundAssets.AddAirplaneGroundCrew :: cannot resolve `ground crew` from: " .. DumpPretty(groundCrew)) end
+
+        local spawn = getSpawn(group.GroupName)
+        if not spawn then
+            error("DCAF.AircraftGroundAssets.AddAirplaneGroundCrew :: cannot resolve `ground crew` from: " .. DumpPretty(groundCrew)) end
+
+        Debug("DCAF.AircraftGroundAssets.AddAirplaneGroundCrew :: adds airplane ground crew: " .. group.GroupName)
+        table.insert(DCAF.AircraftGroundAssets.AirplaneGroundCrewSpawn, spawn)
     end
 
-    local group = getGroup(groundCrew)
-    if not group then 
-        error("DCAF.AircraftGroundAssets.AddAirplaneGroundCrew :: cannot resolve `groundCrew` from: " .. DumpPretty(groundCrew)) end
-
-    local spawn = getSpawn(group.GroupName)
-    if not spawn then
-        error("DCAF.AircraftGroundAssets.AddAirplaneGroundCrew :: cannot resolve `groundCrew` from: " .. DumpPretty(groundCrew)) end
-
-    DCAF.AircraftGroundAssets.AirplaneGroundCrewSpawn = spawn
+    for i = 1, #arg, 1 do
+        addGroundCrew(arg[i])
+    end
 
     local _enteredAirplaneTimestamps = {
         -- key   = #string - player name
         -- value = #number - timestamp
     }
     MissionEvents:OnPlayerEnteredAirplane(function(event)
+Debug("nisse - " .. DCAF.AircraftGroundAssets.ClassName .. "_OnPlayerEnteredAirplane :: player enters airplane: " .. Dump(event.IniUnit:GetPlayerName()))
         local unit = event.IniUnit
         if not unit:IsParked() then
-            return end
-
-        addAirplaneGroundCrew(unit)
-
-        local leftAirplaneFunc
-        local function onPlayerLeftAirplane(event)
-            if unit.UnitName == event.IniUnitName then
-                removeAirplaneGroundCrew(unit)
-                MissionEvents:EndOnPlayerLeftAirplane(leftAirplaneFunc)
-            end
+            Debug(DCAF.AircraftGroundAssets.ClassName .. " :: player entered non-parked airplane :: EXITS")
+            return 
         end
-        leftAirplaneFunc = onPlayerLeftAirplane
-        MissionEvents:OnPlayerLeftAirplane(leftAirplaneFunc)
+
+        Delay(1.5, function() 
+Debug("nisse - " .. DCAF.AircraftGroundAssets.ClassName .. "_OnPlayerEnteredAirplane :: delayed :: adds ground crew...")
+            addAirplaneGroundCrew(unit)
+            startMonitoringTaxi()
+
+            local leftAirplaneFunc
+            local function onPlayerLeftAirplane(event)
+                if unit.UnitName == event.IniUnitName then
+                    removeAirplaneGroundCrew(unit)
+                    MissionEvents:EndOnPlayerLeftAirplane(leftAirplaneFunc)
+                end
+            end
+            leftAirplaneFunc = onPlayerLeftAirplane
+            MissionEvents:OnPlayerLeftAirplane(leftAirplaneFunc)
+        end)
     end)
+
     return DCAF.AircraftGroundAssets
 end
 
@@ -151,7 +175,6 @@ function DCAF_GroundCrewInfo:New(model, chiefDistance, chiefHeading, chiefOffset
     info.ChiefHeading = chiefHeading or DCAF_GroundCrewInfo.ChiefHeading
     info.ChiefOffset = chiefOffset or DCAF_GroundCrewInfo.ChiefOffset
     DCAF_GroundCrewDB[model] = info
-    startMonitoringTaxi()
     return info
 end
 
@@ -173,6 +196,7 @@ function DCAF_ActiveGroundCrew:Destroy()
     for _, group in ipairs(self.GroundCrew) do
         group:Destroy()
     end
+    stopMonitoringTaxiWhenLastGroundCrewRemoved()
     return self
 end
 
@@ -192,7 +216,10 @@ end
 
 DCAF_GroundCrewInfo:New("F-16C_50")
 DCAF_GroundCrewInfo:New("FA-18C_hornet", 8.5, 150)
-DCAF_GroundCrewInfo:New("AV8BNA") --, 8.5, 150)
+DCAF_GroundCrewInfo:New("AV8BNA")
+DCAF_GroundCrewInfo:New("F-14A-135-GR", 10, 115, 330)
+DCAF_GroundCrewInfo:New("F-14B", 10, 115, 330)
+DCAF_GroundCrewInfo:New("F-15ESE", 11, 120, 320)
 
 -- Debug("nisse - DCAF_GroundCrewDB: " .. DumpPretty(DCAF_GroundCrewDB))
 

@@ -3610,7 +3610,6 @@ function DCAF.CSAR.Mission:AddAirbases(tAirbases)
     local count = 0
 Debug("DCAF.CSAR.Mission:AddAirbases :: " .. self.Name .. " :: tAirbases: " .. DumpPretty(tAirbases))
     for i, item in ipairs(tAirbases) do
-
         local airbase
         if isAssignedString(item) then
             airbase = AIRBASE:FindByName(item) 
@@ -3984,3 +3983,6 @@ function DCAF.CSAR.BuildF10Menu(caption, scope, parentMenu)
     -- add 'CSAR' menu when distressed group is created
     -- start CSAR mission
 end
+
+
+
