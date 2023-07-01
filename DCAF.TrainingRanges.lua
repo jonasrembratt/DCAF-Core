@@ -48,6 +48,16 @@ local TRAINING_RANGES_GROUPS = { -- dinctionary (helps ensuring not two ranges c
     -- value :: #NTTR_RANGE
 }
 
+local DCAF_TrainingWeapons = {
+    ["BDU_33"] = false, -- note: these already make a small 'puff' of smoke
+    ["BDU_45"] = true,  -- high drag
+    ["BDU_45LD"] = true,
+    ["BDU_45LGB"] = true,
+    ["BDU_50LD"] = true,
+    ["BDU_50HD"] = true,
+    ["BDU_50LGB"] = true
+}
+
 function DCAF.TrainingRange:New(name)
     local range = DCAF.clone(DCAF.TrainingRange)
     range.Name = name
@@ -308,33 +318,42 @@ function DCAF.TrainingRangeScoreDelegate:New()
     return DCAF.clone(DCAF.TrainingRangeScoreDelegate)
 end
 
-function DCAF.TrainingRangeScoreDelegate:GetSuccessLevel() --trackedTarget, wpnTrack, distance, success)
-    if self._success then
-        return self._success end
-
-    local MaxAllowedDistance = 150
-
-    local hdg = self.WpnTrack.DeployCoordinate:HeadingTo(self.WpnTrack.ImpactCoordinate)
-    self._targetCoordinate = self.TrackedTarget.Location:GetCoordinate()
-    self._brgFromTarget = self._targetCoordinate:HeadingTo(self.WpnTrack.ImpactCoordinate)
-    self._relBrgFromTarget = (self._brgFromTarget - hdg) % 360
-    self.WpnTrack.RelBrgFromTarget = self._relBrgFromTarget
-    local clockPos, clockPosText = GetClockPosition(nil, self._relBrgFromTarget)
-    self._clockPosText = clockPosText
-    self.WpnTrack.ClockPosText = clockPosText
-    local maxAllowedDistance = MaxAllowedDistance
-    if clockPos > 4 and clockPos < 8 then
-        maxAllowedDistance = 30
+function DCAF.TrainingRangeScoreDelegate:Inherit(base)
+    setmetatable(base, self)
+    self.__index = function(table, key)
+        return self[key]
     end
-    self._success = math.max(0, (maxAllowedDistance - self.ImpactDistance)) / 100
+    self._base = base
+    return self
+end
 
-    -- extra info ...
-    self._coordTarget = self.TrackedTarget.Location:GetCoordinate()
-    self._coordImpact = self.WpnTrack.ImpactCoordinate
-    self._ripDistance = self._coordTarget:Get2DDistance(self.WpnTrack.DeployCoordinate)  -- meters
-    self._ripAgl = self.WpnTrack.DeployAltitudeMSL - self._coordTarget:GetLandHeight()   -- meters
-    self._slantRange = self.WpnTrack.DeployCoordinate:Get3DDistance(self._coordTarget)   -- meters
-    return self._success
+function DCAF.TrainingRangeScoreDelegate:GetSuccessLevel()
+    if self._success then 
+        return self._success end 
+ 
+    local MaxAllowedDistance = 150 
+ 
+    local hdg = self.WpnTrack.DeployCoordinate:HeadingTo(self.WpnTrack.ImpactCoordinate) 
+    self._targetCoordinate = self.TrackedTarget.Location:GetCoordinate() 
+    self._brgFromTarget = self._targetCoordinate:HeadingTo(self.WpnTrack.ImpactCoordinate) 
+    self._relBrgFromTarget = (self._brgFromTarget - hdg) % 360 
+    self.WpnTrack.RelBrgFromTarget = self._relBrgFromTarget 
+    local clockPos, clockPosText = GetClockPosition(nil, self._relBrgFromTarget) 
+    self._clockPosText = clockPosText 
+    self.WpnTrack.ClockPosText = clockPosText 
+    local maxAllowedDistance = MaxAllowedDistance 
+    if clockPos > 4 and clockPos < 8 then 
+        maxAllowedDistance = 30 
+    end 
+    self._success = math.max(0, (maxAllowedDistance - self.ImpactDistance)) / 100 
+ 
+    -- extra info ... 
+    self._coordTarget = self.TrackedTarget.Location:GetCoordinate() 
+    self._coordImpact = self.WpnTrack.ImpactCoordinate 
+    self._ripDistance = self._coordTarget:Get2DDistance(self.WpnTrack.DeployCoordinate)  -- meters 
+    self._ripAgl = self.WpnTrack.DeployAltitudeMSL - self._coordTarget:GetLandHeight()   -- meters 
+    self._slantRange = self.WpnTrack.DeployCoordinate:Get3DDistance(self._coordTarget)   -- meters 
+    return self._success 
 end
 
 function DCAF.TrainingRangeScoreDelegate:ClearCache()
@@ -343,38 +362,38 @@ function DCAF.TrainingRangeScoreDelegate:ClearCache()
 end
 
 function DCAF.TrainingRangeScoreDelegate:GetResultMapText()
-    if self._mapText then
-        return self._mapText end
-    -- local trackedTarget = self.TrackedTarget
-    local wpnTrack = self.WpnTrack
-    local distance = self.ImpactDistance
-    local success = self:GetSuccessLevel()
-
-    local initiator = wpnTrack.IniUnit:GetPlayerName() or wpnTrack.IniUnit.UnitName
-    local slantRange = wpnTrack.DeployCoordinate:Get3DDistance(self._targetCoordinate)
-    local diveAngle = wpnTrack.DeployPitch
-
--- RIP:    12.5Kft AGL / SR 2.5 NMI
--- Dive:  Steep Wire  / Slightly Right
--- Impact: 4 O'Clock
-
-    self._mapText = initiator .. " -- " .. wpnTrack.Type .. "\n" 
-                              .. "RIP:       " .. string.format('%.1f', UTILS.MetersToFeet(self._ripAgl)/1000) .. "Kft AGL / SR " .. string.format('%.1f', UTILS.MetersToNM(self._slantRange)) .." NMI\n"
-                              .. "Dive:     --- / ---\n"
-                              .. "Impact: " .. self._clockPosText .. ", " .. string.format('%.1f', distance) .. " m"
-    return self._mapText
+    if self._mapText then 
+        return self._mapText end 
+    -- local trackedTarget = self.TrackedTarget 
+    local wpnTrack = self.WpnTrack 
+    local distance = self.ImpactDistance 
+    local success = self:GetSuccessLevel() 
+ 
+    local initiator = wpnTrack.IniUnit:GetPlayerName() or wpnTrack.IniUnit.UnitName 
+    local slantRange = wpnTrack.DeployCoordinate:Get3DDistance(self._targetCoordinate) 
+    local diveAngle = wpnTrack.DeployPitch 
+ 
+-- RIP:    12.5Kft AGL / SR 2.5 NMI 
+-- Dive:  Steep Wire  / Slightly Right 
+-- Impact: 4 O'Clock 
+ 
+    self._mapText = initiator .. " -- " .. wpnTrack.Type .. " [" .. UTILS.SecondsToClock(wpnTrack.DeployTime) .. "]\n"  
+                              .. "RP:        " .. string.format('%.1f', UTILS.MetersToFeet(self._ripAgl)/1000) .. "Kft AGL / SR " .. string.format('%.1f', UTILS.MetersToNM(self._slantRange)) .." NMI\n" 
+                              .. "Dive:     --- / ---\n" 
+                              .. "Impact: " .. self._clockPosText .. ", " .. string.format('%.1f', distance) .. " m" 
+    return self._mapText 
 end
 
 function DCAF.TrainingRangeScoreDelegate:GetResultMessageText()
     return self:GetResultMapText()
 end
-
-function DCAF.TrainingRangeScoreDelegate:GetMarkColor()
-    local success = self:GetSuccessLevel()
-    local color = { 1 - success, success, 0 }
--- Debug("nisse - DCAF.TrainingRangeScoreDelegate:GetMarkColor :: success: " .. success .. " :: color: " .. DumpPretty(color))
-    return { 1 - success, success, 0 }
-end
+ 
+function DCAF.TrainingRangeScoreDelegate:GetMarkColor() 
+    local success = self:GetSuccessLevel() 
+    local color = { 1 - success, success, 0 } 
+-- Debug("nisse - DCAF.TrainingRangeScoreDelegate:GetMarkColor :: success: " .. success .. " :: color: " .. DumpPretty(color)) 
+    return { 1 - success, success, 0 } 
+end 
 
 function DCAF.TrainingRangeScoreDelegate:GetMarkAlpha()
     if not self._markAlpha then
@@ -384,7 +403,7 @@ function DCAF.TrainingRangeScoreDelegate:GetMarkAlpha()
 end
 
 function DCAF.TrainingRangeScoreDelegate:Fade()
-local nisse_alpha = self:GetMarkAlpha()
+local nisse_alpha = (self._this or self):GetMarkAlpha()
     self._markAlpha = math.max(0, nisse_alpha - .1)
 end
 
@@ -414,39 +433,39 @@ function DCAF.TrainingRangeScoreDelegate:DrawBombTarget(target, interval, radius
     return markIds
 end
 
-function DCAF.TrainingRangeScoreDelegate:DrawImpactPoint()
--- Debug("nisse - DCAF.TrainingRangeScoreDelegate:DrawImpactPoint :: self: " .. DumpPrettyDeep(self, 1))    
-    local coordImpact = self.WpnTrack.ImpactCoordinate
-    local coordTarget = self.TrackedTarget.Location:GetCoordinate()
-    local wpnTrack = self.WpnTrack
-    local distance = self.ImpactDistance
-    local success = self:GetSuccessLevel()
-    local color = self:GetMarkColor(self.TrackedTarget, wpnTrack, distance, success)
-    local alpha = self:GetMarkAlpha()
-    local text = self:GetResultMapText()
-    return {
-        coordTarget:LineToAll(coordImpact, nil, color, alpha, 3),
-        coordImpact:CircleToAll(5, nil, color, alpha),    
-        coordImpact:Translate(6, 130):TextToAll(text, coalition.side.BLUE, color, alpha, nil, 0, 12),
-    }
-end
+function DCAF.TrainingRangeScoreDelegate:DrawImpactPoint() 
+-- Debug("nisse - DCAF.TrainingRangeScoreDelegate:DrawImpactPoint :: self: " .. DumpPrettyDeep(self, 1))     
+    local coordImpact = self.WpnTrack.ImpactCoordinate 
+    local coordTarget = self.TrackedTarget.Location:GetCoordinate() 
+    local wpnTrack = self.WpnTrack 
+    local distance = self.ImpactDistance 
+    local success = self:GetSuccessLevel() 
+    local color = self:GetMarkColor(self.TrackedTarget, wpnTrack, distance, success) 
+    local alpha = self:GetMarkAlpha() 
+    local text = self:GetResultMapText() 
+    return { 
+        coordTarget:LineToAll(coordImpact, nil, color, alpha, 3), 
+        coordImpact:CircleToAll(5, nil, color, alpha),     
+        coordImpact:Translate(6, 130):TextToAll(text, coalition.side.BLUE, color, alpha, nil, 0, 12), 
+    } 
+end 
 
-function DCAF_TargetImpactMark:New(trackedTarget, wpnTrack, distance, success, alpha) -- coordTarget, coordImpact, distance, initiatior, success, alpha)
-    local im = DCAF.clone(DCAF_TargetImpactMark)
-    if not isNumber(success) then
-        success = 0
-    end
-    im.ImpactCoordinate = wpnTrack.ImpactCoordinate
-    im.Delegate = trackedTarget.ScoreDelegate
-    im.Delegate:ClearCache()
-    im.Delegate.TrackedTarget = trackedTarget
-    im.Delegate.WpnTrack = wpnTrack
-    im.Delegate.ImpactDistance = distance
-    im.Timestamp = UTILS.SecondsOfToday()
-    im:draw()
-    MessageTo(wpnTrack.IniUnit:GetGroup(), im.Delegate:GetResultMessageText(), 12)
-    return im
-end
+function DCAF_TargetImpactMark:New(trackedTarget, wpnTrack, distance, success, alpha) -- coordTarget, coordImpact, distance, initiatior, success, alpha) 
+    local im = DCAF.clone(DCAF_TargetImpactMark) 
+    if not isNumber(success) then 
+        success = 0 
+    end 
+    im.ImpactCoordinate = wpnTrack.ImpactCoordinate 
+    im.Delegate = trackedTarget.ScoreDelegate 
+    im.Delegate:ClearCache() 
+    im.Delegate.TrackedTarget = trackedTarget 
+    im.Delegate.WpnTrack = wpnTrack 
+    im.Delegate.ImpactDistance = distance 
+    im.Timestamp = UTILS.SecondsOfToday() 
+    im:draw() 
+    MessageTo(wpnTrack.IniUnit:GetGroup(), im.Delegate:GetResultMessageText(), 12) 
+    return im 
+end 
 
 function DCAF_TargetImpactMark:draw()
     self.MarkIDs = self.Delegate:DrawImpactPoint()
@@ -709,18 +728,24 @@ local function trackHits(event)
     end
 end
 
+local function isTrainingWeapon(wpnTrack)
+    return DCAF_TrainingWeapons[wpnTrack.Type]
+end
+
 local function wpnImpact(wpnTrack)
     -- if isWeaponImpactSuppressed(wpnTrack.ID) then return end
     local tt, distance = DCAF_TargetScoreTracking.findClosestTarget(wpnTrack.ImpactCoordinate, 200)
     if not tt then return end
     local ttCoordinate = tt.Location:GetCoordinate()
-    wpnTrack.TargetName = tt.Name
+    wpnTrack.TargetName = trimSpawnIndex(tt.Name)
     wpnTrack.TargetCoordinate = tt.Location:GetCoordinate()
     local unit = wpnTrack.IniUnit
     local unitCoordinate = unit:GetCoordinate()
     wpnTrack.DeploySlantRange = unitCoordinate:Get3DDistance(wpnTrack.TargetCoordinate)
     wpnTrack.DeployDistance = unitCoordinate:Get2DDistance(wpnTrack.TargetCoordinate)
-    tt:markImpact(wpnTrack, distance, wpnTrack.IniUnit:GetPlayerName() or wpnTrack.IniUnit.UnitName)
+    wpnTrack.IsTrainingWeapon = isTrainingWeapon(wpnTrack)
+    tt:markImpact(wpnTrack, distance, wpnTrack.IniUnit:GetPlayerName())
+-- Debug("nisse - wpnImpact :: wpnTrack: " .. DumpPretty(wpnTrack))
     for name, handler in pairs(DCAF_WpnTrack_WpnImpactHandlers) do
         handler(wpnTrack)
     end
@@ -814,8 +839,16 @@ local function onTrainingRangeDeactivated(range)
     range._bombTargetMarkIDs = nil
 end
 
+function DCAF.TrainingRange:SetScoreDelegate(scoreDelegate)
+    if scoreDelegate ~= nil and not isClass(scoreDelegate, DCAF.TrainingRangeScoreDelegate.ClassName) then
+        error("DCAF.TrainingRange:SetScoreDelegate :: `scoreDelegate` must be #" .. DCAF.TrainingRangeScoreDelegate.ClassName .. ", but was: " .. DumpPretty(scoreDelegate)) end
+            
+    self.DefaultScoreDelegate = scoreDelegate
+    return self
+end
+
 function DCAF.TrainingRange:TrackBombTargetScore(source, description, scoreDelegate)
--- Debug("nisse - DCAF.TrainingRange:TrackTargetScore...")
+-- Debug("nisse - DCAF.TrainingRange:TrackBombTargetScore...")
 
     local target = DCAF.Location.Resolve(source)
    
@@ -833,7 +866,9 @@ function DCAF.TrainingRange:TrackBombTargetScore(source, description, scoreDeleg
     if scoreDelegate ~= nil and not isClass(scoreDelegate, DCAF.TrainingRangeScoreDelegate.ClassName) then
         error("DCAF.TrainingRange:TrackTargetScore :: `scoreDelegate` must be #" .. DCAF.TrainingRangeScoreDelegate.ClassName .. ", but was: " .. type(scoreDelegate)) end
     
-    scoreDelegate = scoreDelegate or DCAF.TrainingRangeScoreDelegate:New()
+    scoreDelegate = scoreDelegate or self.DefaultScoreDelegate or DCAF.TrainingRangeScoreDelegate:New()
+Debug("nisse - DCAF.TrainingRange:TrackBombTargetScore :: scoreDelegate: " .. DumpPretty(scoreDelegate))
+
     if DCAF_TargetScoreTracking.findByName(target.Name) then
         error("DCAF.TrainingRange:TrackTargetScore :: `source` was already added: " .. DumpPretty(target.Name))  end
 
@@ -841,7 +876,6 @@ function DCAF.TrainingRange:TrackBombTargetScore(source, description, scoreDeleg
 
     -- render tracked bomb target...
     self._bombTargetMarkIDs = self._bombTargetMarkIDs or {}
--- Debug("nisse - DCAF.TrainingRange:TrackBombTargetScore :: drawing target..")
     local markIds = scoreDelegate:DrawBombTarget(target)
     for _, markId in ipairs(markIds) do
         table.insert(self._bombTargetMarkIDs, markId)

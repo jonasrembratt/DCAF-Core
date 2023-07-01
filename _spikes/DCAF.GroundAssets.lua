@@ -1,5 +1,5 @@
 local function defaultOnTaxi(unit, crew, distance)
-    if distance > 50 then
+    if distance > 50 or not unit:GetCoordinate() then
         crew:Destroy()
     end
 end
@@ -39,10 +39,12 @@ local DCAF_ActiveGroundCrews = {
 }
 local DCAF_CountActiveGroundCrews = 0
 
-local function stopMonitoringTaxiWhenLastGroundCrewRemoved()
-    Debug(DCAF.AircraftGroundAssets.ClassName .. " :: stops monitoring airplane taxi")
-    DCAF.stopScheduler(DCAF.AircraftGroundAssets.MonitorTaxiScheduleID)
-    DCAF.AircraftGroundAssets.MonitorTaxiScheduleID = nil
+local function stopMonitoringGroundCrew(leftAirplaneFunc)
+    if DCAF_CountActiveGroundCrews == 0 then 
+        Debug(DCAF.AircraftGroundAssets.ClassName .. " :: stops monitoring airplane taxi")
+        DCAF.stopScheduler(DCAF.AircraftGroundAssets.MonitorTaxiScheduleID)
+        DCAF.AircraftGroundAssets.MonitorTaxiScheduleID = nil
+    end
 end
 
 local function removeAirplaneGroundCrew(unit)
@@ -52,7 +54,7 @@ local function removeAirplaneGroundCrew(unit)
     end
 end
 
-local function startMonitoringTaxi()
+local function startMonitoringGroundCrew()
     if DCAF.AircraftGroundAssets.MonitorTaxiScheduleID then
         return end
 
@@ -72,7 +74,6 @@ local function startMonitoringTaxi()
                 removeAirplaneGroundCrew(activeGroundCrew.Unit)
             end
         end
-        -- stopMonitoringTaxiWhenLastGroundCrewRemoved()
     end 
     DCAF.AircraftGroundAssets.MonitorTaxiScheduleID = DCAF.startScheduler(schedulerFunc, .5)
 end
@@ -95,7 +96,7 @@ local function addAirplaneGroundCrew(unit)
     local hdgUnit = unit:GetHeading()
     local offsetCrew = (hdgUnit + info.ChiefOffset) % 360
 Debug("nisse - addAirplaneGroundCrew :: unit hdg: " .. Dump(hdgUnit) .. " :: offsetCrew: " .. Dump(offsetCrew))    
-    local locCrew = coordUnit:Translate(info.ChiefDistance, offsetCrew) --:Rotate2D((hdgChief + info.ChiefHeading) % 360)
+    local locCrew = coordUnit:Translate(info.ChiefDistance, offsetCrew)
     local hdgCrew = (offsetCrew + info.ChiefHeading) % 360
     local spawn = listRandomItem(DCAF.AircraftGroundAssets.AirplaneGroundCrewSpawn)
     spawn:InitHeading(hdgCrew)
@@ -106,8 +107,6 @@ Debug("nisse - addAirplaneGroundCrew :: unit hdg: " .. Dump(hdgUnit) .. " :: off
     -- todo - consider adding more ground crew
 
     DCAF_ActiveGroundCrew:New(unit, groundCrew)
-   
--- todo - remove chief when aircraft is despawned or is 100 meters out
 end
 
 function DCAF.AircraftGroundAssets.AddAirplaneGroundCrew(...)
@@ -144,17 +143,7 @@ Debug("nisse - " .. DCAF.AircraftGroundAssets.ClassName .. "_OnPlayerEnteredAirp
         Delay(1.5, function() 
 Debug("nisse - " .. DCAF.AircraftGroundAssets.ClassName .. "_OnPlayerEnteredAirplane :: delayed :: adds ground crew...")
             addAirplaneGroundCrew(unit)
-            startMonitoringTaxi()
-
-            local leftAirplaneFunc
-            local function onPlayerLeftAirplane(event)
-                if unit.UnitName == event.IniUnitName then
-                    removeAirplaneGroundCrew(unit)
-                    MissionEvents:EndOnPlayerLeftAirplane(leftAirplaneFunc)
-                end
-            end
-            leftAirplaneFunc = onPlayerLeftAirplane
-            MissionEvents:OnPlayerLeftAirplane(leftAirplaneFunc)
+            startMonitoringGroundCrew(unit)
         end)
     end)
 
@@ -184,6 +173,8 @@ function DCAF_ActiveGroundCrew:New(unit, groundCrew)
     info.ParkingCoordinate = unit:GetCoordinate()
     info.GroundCrew = groundCrew
     DCAF_ActiveGroundCrews[unit.UnitName] = info
+    DCAF_CountActiveGroundCrews = DCAF_CountActiveGroundCrews + 1
+    startMonitoringGroundCrew(unit)
     return info
 end
 
@@ -192,11 +183,12 @@ function DCAF_ActiveGroundCrew:Get(unit)
 end
 
 function DCAF_ActiveGroundCrew:Destroy()
-    DCAF_ActiveGroundCrews[self.Unit.UnitName] = nil
     for _, group in ipairs(self.GroundCrew) do
         group:Destroy()
     end
-    stopMonitoringTaxiWhenLastGroundCrewRemoved()
+    DCAF_ActiveGroundCrews[self.Unit.UnitName] = nil
+    DCAF_CountActiveGroundCrews = DCAF_CountActiveGroundCrews-1
+    stopMonitoringGroundCrew()
     return self
 end
 

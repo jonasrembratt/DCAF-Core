@@ -496,6 +496,17 @@ end
 function trim(s)  
     return (s:gsub("^%s*(.-)%s*$", "%1"))  
 end  
+
+function trimSpawnIndex(s)
+    local start, stop = string.find(s, "#%d+[-]%d+$")
+Debug("nisse - trimSpawnIndex :: s: " .. Dump(s) .. " :: start: " .. Dump(start))
+    if not start then
+        return s end
+
+    local trimmed = string.sub(s, 1, start-1)
+Debug("nisse - trimSpawnIndex :: trimmed: " .. Dump(trimmed))
+    return trimmed
+end
   
 function inString( s, pattern )  
     return string.find(s, pattern ) ~= nil   
@@ -4095,6 +4106,7 @@ local _enteredUnitTimestamps = {
 
 function _e:onEvent( event )  
 ---Debug("nisse - _e:onEvent-? :: event: " .. Dump(event))  
+Debug("nisse - _e:onEvent :: world.event.S_EVENT_MAX: " .. Dump(world.event.S_EVENT_MAX))
   
     if event.id == world.event.S_EVENT_MISSION_END then  
         MissionEvents:Invoke( _missionEventsHandlers._missionEndHandlers, event )  
