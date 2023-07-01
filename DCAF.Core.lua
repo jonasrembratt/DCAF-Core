@@ -7912,6 +7912,7 @@ rebuildTankerMenus = buildControllerTankerMenus
 local function buildPlayerTankerMenus(playerUnitName) 
 
     local function displayTankerState(group, tanker) 
+        local noTankers = true
         for _, track in ipairs(sortedTracks()) do
             for _, tankerInfo in ipairs(track.Tankers) do
                 local tanker = tankerInfo.Tanker
@@ -7935,8 +7936,10 @@ local function buildPlayerTankerMenus(playerUnitName)
                                 bingoFuel, 
                                 remainingFuel - bingoFuel)
                 MESSAGE:New(msg, 15):ToGroup(group)
+                noTankers = false
             end
         end
+        if noTankers then MESSAGE:New("No active tankers available", 5):ToGroup(group) end
     end
 
     local playerGroup = UNIT:FindByName(playerUnitName):GetGroup()
