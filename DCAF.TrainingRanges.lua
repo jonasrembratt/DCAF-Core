@@ -2,10 +2,13 @@
 --                                                   DCAF.TrainingRange
 -- /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+-- https://static.e-publishing.af.mil/production/1/nellisafb/publication/afi13-212v1_accsup_nttrsup_add_a/afman13-212v1_nttr_add_a.pdf
+
 DCAF.TrainingRange = {
     ClassName = "DCAF.TrainingRange",
     Name = "TrainingRange",
     IsActive = false,
+    SpawnInterval = .5,             -- #number - interval used when spawning multiple range assets (prevents lag spikes)
     Spawns = {
         -- list of #SPAWN
     },
@@ -168,7 +171,7 @@ function DCAF.TrainingRange:Activate(name, interval)
     end
 
     if not isNumber(interval) then
-        interval = 0
+        interval = DCAF.TrainingRange.SpawnInterval or .5
     end
 
     self._groups = {}
@@ -941,7 +944,7 @@ local function sort(ranges)
 end
 
 local function buildRangeDeactivateMenu(range)
-    MENU_COALITION_COMMAND:New(coalition.side.BLUE, "DEACTIVATE", range:GetMenu(), function() 
+    MENU_COALITION_COMMAND:New(coalition.side.BLUE, "CLOSE RANGE", range:GetMenu(), function() 
         range:Deactivate()
     end)
 end
@@ -973,7 +976,7 @@ local function buildRangesMenus(caption)
         if range.IsActive then
             buildRangeDeactivateMenu(range)
         else
-            MENU_COALITION_COMMAND:New(coalition.side.BLUE, "ACTIVATE", mnuRange, function() 
+            MENU_COALITION_COMMAND:New(coalition.side.BLUE, "OPEN RANGE", mnuRange, function() 
                 range:Activate(.1)
             end)
         end

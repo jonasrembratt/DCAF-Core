@@ -171,18 +171,20 @@ local function spawnGroup(generator, info, count, locTarget, coordinate, altitud
     coordinate:SetAltitude(Feet(altitude))
     locTarget = locTarget or info.TargetLocation
     local heading = coordinate:HeadingTo(locTarget:GetCoordinate())
-    spawn:InitGroupHeading(heading)
-    local group = spawn:SpawnFromCoordinate(coordinate)
-    table.insert(generator.Groups, group)
-    local units = group:GetUnits()
     if not count then
         count = math.random(generator.Settings.GroupSize.Min, generator.Settings.GroupSize.Max)
     end
-    local units = group:GetUnits()
-    for i = #units, count+1, -1 do
-        local unit = units[i]
-        unit:Destroy()
-    end
+    spawn:InitGroupHeading(heading)
+         :InitGrouping(count)
+
+    local group = spawn:SpawnFromCoordinate(coordinate)
+    table.insert(generator.Groups, group)
+    -- local units = group:GetUnits() obsolete
+    -- local units = group:GetUnits()
+    -- for i = #units, count+1, -1 do
+    --     local unit = units[i]
+    --     unit:Destroy()
+    -- end
     return group
 end
 

@@ -9,16 +9,6 @@
 -- commercial for CSR (radio): https://calibersales.com/search-%26-rescue-radios
 --                             https://gdmissionsystems.com/products/communications/radios/combat-search-and-rescue-radios/hook2-prc-112g-transceiver
 
-DCAF.Weather = {
-    Factor = 1,
-}
-
-DCAF.Precipitation = {
-    None = "None",
-    Light = "Light",
-    Medium = "Heavy"
-}
-
 local CSAR_Pickups = {
     ["CH-47D"] = true,
     ["CH-53E"] = true,
@@ -299,16 +289,6 @@ local function setRescueMissionState(csar, state)
             Mission = csar.ActiveRescueMission
         })
     end
-end
-
-function DCAF.Weather:Static()
-    if DCAF.Weather._static then
-        return DCAF.Weather._static
-    end
-    local w = DCAF.clone(DCAF.Weather)
-    Debug("nisse - DCAF.Weather :: env.mission.weather: " .. DumpPrettyDeep(env.mission.weather))
-    DCAF.Weather._static = w
-    return w
 end
 
 local function getNextMissionName(isAirforce, pin)
@@ -3106,6 +3086,9 @@ function DCAF.CSAR.NewOnPilotEjects(options, funcOnCreated)
     }
 
     MissionEvents:OnUnitHit(function(event) 
+        if not event.TgtUnit then
+            return end
+            
         unitsHit[event.TgtUnitName] = { 
             Coordinate = event.TgtUnit:GetCoordinate(), 
             Coalition = event.TgtUnit:GetCoalition()

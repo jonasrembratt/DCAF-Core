@@ -4,6 +4,11 @@ local function defaultOnTaxi(unit, crew, distance)
     end
 end
 
+DCAF.AircraftGroundAssetLocation = {
+    ColdStartAircraft = "Cold Start",
+    ArmDearmArea = "Arm/De-arm Area",
+}
+
 DCAF.AircraftGroundAssets = {
     ClassName = "DCAF.AircraftGroundAssets",
     AirplaneGroundCrewSpawn = {
@@ -106,10 +111,10 @@ Debug("nisse - addAirplaneGroundCrew :: unit hdg: " .. Dump(hdgUnit) .. " :: off
 
     -- todo - consider adding more ground crew
 
-    DCAF_ActiveGroundCrew:New(unit, groundCrew)
+    DCAF_ActiveGroundCrew:New(unit, groundCrew, DCAF.AircraftGroundAssetLocation.ColdStartAircraft)
 end
 
-function DCAF.AircraftGroundAssets.AddAirplaneGroundCrew(...)
+function DCAF.AircraftGroundAssets.SpawnAirplaneGroundCrew(...)
 
     local function addGroundCrew(groundCrew)
         local group = getGroup(groundCrew)
@@ -141,9 +146,68 @@ Debug("nisse - " .. DCAF.AircraftGroundAssets.ClassName .. "_OnPlayerEnteredAirp
         end
 
         Delay(1.5, function() 
-Debug("nisse - " .. DCAF.AircraftGroundAssets.ClassName .. "_OnPlayerEnteredAirplane :: delayed :: adds ground crew...")
+-- Debug("nisse - " .. DCAF.AircraftGroundAssets.ClassName .. "_OnPlayerEnteredAirplane :: delayed :: adds ground crew...")
             addAirplaneGroundCrew(unit)
             startMonitoringGroundCrew(unit)
+        end)
+    end)
+
+    return DCAF.AircraftGroundAssets
+end
+
+local function onUnitStopped(unit, func)
+    unit._onUnitStoppedSheduleID = DCAF.startScheduler(function()
+        local speed = unit:GetVelocityKMH()
+        if speed > 0.1 then
+            return end
+
+        func(unit)
+        DCAF.stopScheduler(unit._onUnitStoppedSheduleID)
+        unit._onUnitStoppedSheduleID = nil
+    end, 1)
+
+end
+
+local _activatingArmDearmAreaOfficer = {
+    -- key   = UNIT.UnitName
+    -- value = true
+}
+
+function DCAF.AircraftGroundAssets.ActivateArmDearmAreaOfficer(groundCrew, zone)
+    local grpCrew = getGroup(groundCrew)
+    if not grpCrew then
+        return Warning("DCAF.AircraftGroundAssets.Activate :: cannot resolve ground crew from: " .. DumpPretty(groundCrew)) end
+
+    if not isZone(zone) then
+        return Warning("DCAF.AircraftGroundAssets.Activate :: cannot resolve zone from: " .. DumpPretty(zone)) end
+
+    if not grpCrew:IsActive() then
+        grpCrew:Activate()
+    end
+    local coord = grpCrew:GetCoordinate()
+    if not coord then
+        return Warning("DCAF.AircraftGroundAssets.Activate :: cannot get a coordinate from: " .. DumpPretty(groundCrew)) end
+
+    MissionEvents:OnGroupEntersZone(nil, zone, function(event)
+-- Debug("nisse - MissionEvents:OnGroupEntersZone :: group: " .. DumpPrettyDeep(event, 2))
+        local group = event.IniGroups[1]
+        if not group or not group:IsAir() then
+            return end
+
+        local aircraft = group:GetClosestUnit(coord)
+        if not aircraft then
+-- Debug("nisse - DCAF.AircraftGroundAssets.Activate :: zone triggered but could not resolve group's closest aircraft")            
+            return end
+
+        if _activatingArmDearmAreaOfficer[aircraft.UnitName] then
+            return end
+            
+-- MessageTo(nil, "Activated " .. aircraft.UnitName)
+        _activatingArmDearmAreaOfficer[aircraft.UnitName] = true
+        onUnitStopped(aircraft, function()
+-- MessageTo(nil, aircraft.UnitName .. " stopped")
+            DCAF_ActiveGroundCrew:New(aircraft, grpCrew, DCAF.AircraftGroundAssetLocation.ArmDearmArea)
+            _activatingArmDearmAreaOfficer[aircraft.UnitName] = nil
         end)
     end)
 
@@ -167,11 +231,15 @@ function DCAF_GroundCrewInfo:New(model, chiefDistance, chiefHeading, chiefOffset
     return info
 end
 
-function DCAF_ActiveGroundCrew:New(unit, groundCrew)
+function DCAF_ActiveGroundCrew:New(unit, groundCrew, location)
     local info = DCAF.clone(DCAF_ActiveGroundCrew)
     info.Unit = unit
     info.ParkingCoordinate = unit:GetCoordinate()
+    if isGroup(groundCrew) then
+        groundCrew = { groundCrew }
+    end
     info.GroundCrew = groundCrew
+    info.Location = location
     DCAF_ActiveGroundCrews[unit.UnitName] = info
     DCAF_CountActiveGroundCrews = DCAF_CountActiveGroundCrews + 1
     startMonitoringGroundCrew(unit)
@@ -182,13 +250,21 @@ function DCAF_ActiveGroundCrew:Get(unit)
     return DCAF_ActiveGroundCrews[unit.UnitName]
 end
 
+function DCAF_ActiveGroundCrew:Deactivate()
+    DCAF_ActiveGroundCrews[self.Unit.UnitName] = nil
+    DCAF_CountActiveGroundCrews = DCAF_CountActiveGroundCrews-1
+    stopMonitoringGroundCrew()
+    return self
+end
+
 function DCAF_ActiveGroundCrew:Destroy()
     for _, group in ipairs(self.GroundCrew) do
         group:Destroy()
     end
-    DCAF_ActiveGroundCrews[self.Unit.UnitName] = nil
-    DCAF_CountActiveGroundCrews = DCAF_CountActiveGroundCrews-1
-    stopMonitoringGroundCrew()
+    self:Deactivate()
+    -- DCAF_ActiveGroundCrews[self.Unit.UnitName] = nil
+    -- DCAF_CountActiveGroundCrews = DCAF_CountActiveGroundCrews-1
+    -- stopMonitoringGroundCrew()
     return self
 end
 

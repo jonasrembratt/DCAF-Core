@@ -38,7 +38,7 @@ DCAF.Flares = {
     Color = SMOKECOLOR.Red,  
     Remaining = 1  
 }  
-  
+
 local _debugId = 0  
 local function get_next_debugId()  
     _debugId = _debugId + 1  
@@ -962,6 +962,34 @@ end
 function DCAF.DateTime:ToString()  
     return Dump(self.Year) .. "/" .. Dump(self.Month) .. "/" ..Dump(self.Day) .. " " .. Dump(self.Hour) .. ":" .. Dump(self.Minute) .. ":" .. Dump(self.Second)  
 end  
+
+-- ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+--                                                                           WEATHER
+-- ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DCAF.Weather = {
+    Factor = 1,
+}
+
+DCAF.Precipitation = {
+    None = "None",
+    Light = "Light",
+    Medium = "Heavy"
+}
+
+function DCAF.Weather:Static()
+    if DCAF.Weather._static then
+        return DCAF.Weather._static
+    end
+    local w = DCAF.clone(DCAF.Weather)
+    Debug("nisse - DCAF.Weather :: env.mission.weather: " .. DumpPrettyDeep(env.mission.weather))
+    DCAF.Weather._static = w
+    return w
+end
+
+-- ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+--                                                                   COORDINATE - extensions
+-- ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   
 local Deg2Rad = math.pi / 180.0;  
 local Rad2Deg = 180.0 / math.pi  
@@ -2106,8 +2134,8 @@ function COORDINATE:GetHeadingTo(location)
         return self:GetCoordinate():GetBearingTo(d:GetCoordinate()) end  
   
     return errorOnDebug("COORDINATE:GetHeadingTo :: cannot resolve location: " .. DumpPretty(location))  
-end  
-  
+end
+
 -- returns : #COORDINATE (or nil)  
 function COORDINATE:ScanSurfaceType(surfaceType, startAngle, maxDistance, scanOutward, angleInterval, scanInterval)  
     -- surfaceTye = land.SurfaceType (numeric: LAND=1, SHALLOW_WATER=2, WATER=3, ROAD=4, RUNWAY=5)  
@@ -3678,7 +3706,9 @@ function ActivateUncontrolled(controllable)
     if not isClass(group, GROUP.ClassName) then  
         error("ActivateUncontrolled :: could not resolve group from `controllable`: " .. DumpPretty(controllable)) end  
   
-    if isNumber(delayStart) and group:IsGround() then  
+    -- if isNumber(delayStart) and group:IsGround() then  
+    if group:IsGround() then  
+Debug("nisse - sets AI off for: " .. group.GroupName)        
         group:SetAIOff()  
     end  
   
@@ -4120,6 +4150,22 @@ Debug("nisse - _e:onEvent :: world.event.S_EVENT_MAX: " .. Dump(world.event.S_EV
         end  
         return dcsTarget  
     end  
+
+    local function safeGetPlayerName(unit)
+        local playerName 
+        pcall(function() 
+            playerName = unit:GetPlayerName()
+        end)
+        return playerName
+    end
+  
+    local function safeGetGroup(unit)
+        local group 
+        pcall(function() 
+            group = unit:GetGroup()
+        end)
+        return group
+    end
   
     local function addInitiatorAndTarget( event )  
         if event.initiator then
@@ -4128,8 +4174,8 @@ Debug("nisse - _e:onEvent :: world.event.S_EVENT_MAX: " .. Dump(world.event.S_EV
             end
             if event.IniUnit then
                 event.IniUnitName = event.IniUnit.UnitName  
-                event.IniPlayerName = event.IniUnit:GetPlayerName()  
-                event.IniGroup = event.IniUnit:GetGroup()  
+                event.IniPlayerName = safeGetPlayerName(event.IniUnit) --:GetPlayerName()  
+                event.IniGroup = safeGetGroup(event.IniUnit)-- event.IniUnit:GetGroup()  
                 if event.IniGroup then
                     event.IniGroupName = event.IniGroup.GroupName  
                 end
@@ -4515,6 +4561,28 @@ end
   
 function GROUP:GetRoute(waypoints)
     return self._route or self:CopyRoute()
+end
+
+--- Gets the unit that is closest to a specified coordinate
+function GROUP:GetClosestUnit(location)
+    local loc = DCAF.Location.Resolve(location)
+    if not loc then
+        error("GROUP:GetClosestUnit :: cannot resolve #DCAF.Location from: " .. DumpPretty(location)) end
+
+    local coord = loc:GetCoordinate()
+    local minDistance = 65535
+    local closestUnit
+    for _, unit in ipairs(self:GetUnits()) do
+        local coordUnit = unit:GetCoordinate()
+        if coordUnit then
+            local distance = coord:Get2DDistance(coordUnit)
+            if distance < minDistance then
+                minDistance = distance
+                closestUnit = unit
+            end
+        end
+    end
+    return closestUnit    
 end
   
 function _missionEventsAircraftFielStateMonitor:Start(key, units, fuelState, func)  
