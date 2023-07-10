@@ -9,16 +9,6 @@
 -- commercial for CSR (radio): https://calibersales.com/search-%26-rescue-radios
 --                             https://gdmissionsystems.com/products/communications/radios/combat-search-and-rescue-radios/hook2-prc-112g-transceiver
 
-DCAF.Weather = {
-    Factor = 1,
-}
-
-DCAF.Precipitation = {
-    None = "None",
-    Light = "Light",
-    Medium = "Heavy"
-}
-
 local CSAR_Pickups = {
     ["CH-47D"] = true,
     ["CH-53E"] = true,
@@ -76,7 +66,7 @@ function CSAR_Trigger.IsValid(value)
     return value == CSAR_Trigger.Ejection or value == CSAR_Trigger.Landing or value == CSAR_Trigger.Random
 end
 
-local CSAR_DefaultCodewords = { "Cinderella", "Pocahontas", "Ariel", "Anastasia", "Leia", "Astrid", "Fiona" }
+local CSAR_DefaultCodewords = DCAF.Codewords.Princesses -- { "Cinderella", "Pocahontas", "Ariel", "Anastasia", "Leia", "Astrid", "Fiona" }
 
 local AirForceMissionNames = {
     ["Balin"] = { Count = 0 },
@@ -299,16 +289,6 @@ local function setRescueMissionState(csar, state)
             Mission = csar.ActiveRescueMission
         })
     end
-end
-
-function DCAF.Weather:Static()
-    if DCAF.Weather._static then
-        return DCAF.Weather._static
-    end
-    local w = DCAF.clone(DCAF.Weather)
-    Debug("nisse - DCAF.Weather :: env.mission.weather: " .. DumpPrettyDeep(env.mission.weather))
-    DCAF.Weather._static = w
-    return w
 end
 
 local function getNextMissionName(isAirforce, pin)
@@ -840,8 +820,12 @@ function DCAF.CSAR.DistressedGroup:NewTemplate(sTemplate, bCanBeCaptured, smoke,
         error("DCAF.CSAR.DistressedGroup:NewTemplate :: cannot resolve group from: " .. DumpPretty(sTemplate)) end
 
     local template = DCAF.clone(DCAF.CSAR.DistressedGroup)
-    if not isBoolean(gpsRadio) then
-        gpsRadio = nil 
+    if isNumber(gpsRadio) then
+        if gpsRadio > 1 then
+            gpsRadio = gpsRadio / 100
+        end
+    else
+        gpsRadio = nil
     end
     template.Template = sTemplate
     template.Smoke = smoke or DCAF.Smoke:New(2)
@@ -861,6 +845,9 @@ function DCAF.CSAR.DistressedGroup:New(name, csar, sTemplate, location, bCanBeCa
     if not isClass(csar, DCAF.CSAR.ClassName) then
         csar = DCAF.CSAR
     end
+
+Debug("nisse - DCAF.CSAR.DistressedGroup:New :: gpsRadio: " .. Dump(gpsRadio))
+
     if not group then
         error("DCAF.CSAR.DistressedGroup:New :: cannot resolve group from: " .. DumpPretty(sTemplate)) end
 
@@ -909,6 +896,12 @@ function DCAF.CSAR.DistressedGroup:NewFromTemplate(name, csar, location)
         t = CSAR_DistressedGroupTemplates.GroundTemplate
         if not t then
             error("DCAF.CSAR.DistressedGroup:NewFromTemplate :: no ground template was specified") end
+    end
+    local gpsRadio
+    if isNumber(t.GpsRadio) then
+        local dice = math.random(100)
+Debug("nisse - DCAF.CSAR.DistressedGroup:NewFromTemplate :: t.GpsRadio: " .. Dump(t.GpsRadio) .. " :: dice: " .. Dump(dice))
+        t.GpsRadio = dice <= t.GpsRadio * 100
     end
     local dg = DCAF.CSAR.DistressedGroup:New(name, csar, t.Template, location, t.CanBeCatured, t.Smoke, t.Flares, t.GpsRadio)
     if isClass(DCAF.CSAR.DistressBeaconTemplate, CSAR_DistressBeaconTemplate.ClassName) then
@@ -2000,7 +1993,6 @@ local function startSearchAir(sg)
             end
             protectCSAR(sg, searchPattern)
             sg:SetRoute(searchPattern)
-            -- group:Route(searchPattern)
             debug_drawSearchArea(sg)
         end)
     end
@@ -2231,11 +2223,11 @@ local function hoverAndPickup(sg, destroyDG)
 
     local waypoints = { wpIngress, wpHover1, wpHoverEnd }
     sg:SetRoute(waypoints)
-    -- sg.Group:Route(waypoints)
 end
 
 local function landAndPickup(sg)
-    local coord = sg.DistressedGroup._lastCoordinate:GetFlatArea(20, 400, true)
+    -- note: Each flat spot gets blocked for 5 mins, avoiding choppers trying to land on same coordinate
+    local coord = sg.DistressedGroup._lastCoordinate:GetFlatArea(20, 400, true, nil):Occupy(Minutes(5))
     if not coord then
         -- could not find a spot to land - hover and pickup instead
         hoverAndPickup(sg)
@@ -2271,7 +2263,6 @@ local function landAndPickup(sg)
     end)
     protectCSAR(sg, waypoints, nil, NauticalMiles(1))
     sg:SetRoute(waypoints)
-    -- sg.Group:Route(waypoints)
 end
 
 local function rtbGroundNow(sg, location)
@@ -2420,7 +2411,7 @@ local function directCapableGroupsToPickup(groups)
     end
 
     local countPickups = 0
-    local maxCountPickups = math.random(1, #groups)
+    local maxCountPickups = 2 -- math.random(1, #groups)
 
     local function extractDistressedGroup(sg)
         if sg:IsRescueGroup() and sg.CSAR.RescueMissionState == CSAR_MissionState.Fetching then
@@ -2950,6 +2941,14 @@ function DCAF.CSAR.MapControlled(menuCaption, scope, options, parentMenu)
     options.IsMarkControlled = true
 
     MissionEvents:OnMapMarkChanged(function(event)
+-- NISSE
+-- local coord = event.Location.Source
+-- local units, statics, scenery = coord:ScanObjects(40)
+-- local scenery = coord:ScanScenery(40)
+-- local closestScenery = coord:FindClosestScenery(40)
+-- Debug("nisse - TEST SCAN SCENERY :: closest: " .. DumpPretty(closestScenery) .. " scenery: " .. DumpPrettyDeep({Units = units, Statics = statics, Scenery = scenery}, 2))
+-- Debug("nisse - TEST SCAN SCENERY :: closest: " .. DumpPretty(closestScenery) .. " scenery: " .. DumpPrettyDeep(scenery, 2))
+
         local tokens = {}
         for word in event.Text:gmatch("%w+") do
             table.insert(tokens, word)
@@ -3016,7 +3015,7 @@ Debug("nisse - MissionEvents:OnMapMarkChanged :: useCodeword: " .. Dump(useCodew
     end)
     DCAF.CSAR.OnScenario(options, function(csar) 
         CSAR_UnmarkedMissions[string.upper(csar.Name)] = csar
-        DCAF.CSAR.BuildMenus(menuCaption, scope, parentMenu)
+        DCAF.CSAR.BuildF10Menu(menuCaption, scope, parentMenu)
      end)
 end
 
@@ -3087,6 +3086,9 @@ function DCAF.CSAR.NewOnPilotEjects(options, funcOnCreated)
     }
 
     MissionEvents:OnUnitHit(function(event) 
+        if not event.TgtUnit then
+            return end
+            
         unitsHit[event.TgtUnitName] = { 
             Coordinate = event.TgtUnit:GetCoordinate(), 
             Coalition = event.TgtUnit:GetCoalition()
@@ -3591,7 +3593,6 @@ function DCAF.CSAR.Mission:AddAirbases(tAirbases)
     local count = 0
 Debug("DCAF.CSAR.Mission:AddAirbases :: " .. self.Name .. " :: tAirbases: " .. DumpPretty(tAirbases))
     for i, item in ipairs(tAirbases) do
-
         local airbase
         if isAssignedString(item) then
             airbase = AIRBASE:FindByName(item) 
@@ -3957,7 +3958,7 @@ local function buildCSARMenus(caption, scope, parentMenu)
 end
 rebuildCSARMenus = buildCSARMenus
 
-function DCAF.CSAR.BuildMenus(caption, scope, parentMenu)
+function DCAF.CSAR.BuildF10Menu(caption, scope, parentMenu)
     if scope == nil then
         scope = Coalition.Blue
     end
@@ -3965,3 +3966,6 @@ function DCAF.CSAR.BuildMenus(caption, scope, parentMenu)
     -- add 'CSAR' menu when distressed group is created
     -- start CSAR mission
 end
+
+
+

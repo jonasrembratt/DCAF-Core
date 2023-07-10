@@ -156,6 +156,7 @@ end
 local TracePrefix = "BadLand :: "             -- used for traces
 
 local function teardownMantisIADS(area, force)
+Debug("nisse - teardownMantisIADS :: area.IADS: " .. DumpPretty(area.IADS))
     if not area.IADS then
         return end
     
@@ -230,6 +231,11 @@ local function buildMANTIS_IADS(area)
     end
     area.IADS:SetAdvancedMode(isAdvanced)
     area.IADS:SetDetectInterval(10)
+
+function area.IADS:OnAfterSeadSuppressionPlanned(From, Event, To, Group, Name, SuppressionStartTime, SuppressionEndTime)
+    Debug("nisse - GBAD / buildMANTIS_IADS :: SAM Suppression planned for '" .. Name  .. "'")
+end
+
     if info.Debug then
         area.IADS:Debug(true)
     end
@@ -575,8 +581,9 @@ function SAM_AREA:Spawn(template, destroyExisting)
     local zone = self.Zones[zoneIndex]
     local vec2 = zone:GetRandomVec2()
     local coord = COORDINATE:NewFromVec2(vec2)
-    -- only spawn on land and no closer to "scenery" than 400 meters (right now I don't know how to filter on different types of scenery -Jonas)
-    while not coord:IsSurfaceTypeLand() or coord:FindClosestScenery(400) do
+
+    -- only spawn on land and no closer to "scenery" than 100 meters (right now I don't know how to filter on different types of scenery -Jonas)
+    while not coord:IsSurfaceTypeLand() or coord:FindClosestScenery(100) do
         vec2 = zone:GetRandomVec2()
         coord = COORDINATE:NewFromVec2(vec2)
     end
@@ -890,7 +897,7 @@ function DCAF.GBAD:BuildF10CoalitionIADSMenus(area, menuText, parentMenu, forCoa
     if not area.IADS_Type or area.IADS_Type == IADS_Types.Skynet then
         buildSkynetCoalitionMenu(area, forCoalition, parentMenu, rebuildMenusFunc)
     end
-Debug("nisse - DCAF.GBAD:BuildF10CoalitionIADSMenus :: parentMenu: " .. DumpPrettyDeep(parentMenu, 2))
+-- Debug("nisse - DCAF.GBAD:BuildF10CoalitionIADSMenus :: parentMenu: " .. DumpPrettyDeep(parentMenu, 2))
 end
 
 function DCAF.GBAD:BuildF10GroupIADSMenus(area, menuText, parentMenu, forGroup, rebuildMenusFunc)
